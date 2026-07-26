@@ -121,6 +121,10 @@ input,select{font-family:inherit;}
     <span>🔍</span>
     <input type="text" id="search-input" placeholder="Search documents..." oninput="handleSearch()"/>
   </div>
+  <div style="text-align:right;margin:-8px 0 14px">
+    <button class="link-btn" onclick="document.getElementById('pdf-import-input').click()">📥 Import PDF</button>
+    <input type="file" id="pdf-import-input" accept="application/pdf" style="display:none" onchange="onPdfImportSelected(event)"/>
+  </div>
 
   <!-- FOLDERS HOME VIEW -->
   <div id="view-home">
@@ -219,6 +223,7 @@ input,select{font-family:inherit;}
       <button class="mode-pill active" data-mode="color" onclick="setColorMode('color')">Color</button>
       <button class="mode-pill" data-mode="gray" onclick="setColorMode('gray')">Grayscale</button>
       <button class="mode-pill" data-mode="bw" onclick="setColorMode('bw')">B&amp;W</button>
+      <button class="mode-pill" data-mode="enhance" onclick="setColorMode('enhance')">✨ Auto Enhance</button>
     </div>
     <div id="pages-strip" style="display:flex;gap:8px;overflow-x:auto;margin-bottom:8px"></div>
     <div class="cap-actions">
@@ -234,7 +239,10 @@ input,select{font-family:inherit;}
   <div class="viewer-top">
     <button onclick="closeViewer()">‹ Close</button>
     <div id="viewer-title" style="font-size:0.85rem;font-weight:600"></div>
-    <button onclick="shareCurrentDoc()">Share ⤴</button>
+    <div style="display:flex;gap:6px">
+      <button onclick="exportCurrentDocAsPDF()">📄 PDF</button>
+      <button onclick="shareCurrentDoc()">Share ⤴</button>
+    </div>
   </div>
   <div class="viewer-img-wrap"><img id="viewer-img" src=""/></div>
   <div style="display:flex;justify-content:center;gap:8px;padding:10px;overflow-x:auto" id="viewer-pages"></div>
@@ -244,6 +252,8 @@ input,select{font-family:inherit;}
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js/dist/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script>
 // ═══════════════════════════════
 //  INDEXEDDB
@@ -503,6 +513,56 @@ async function shareDocument(doc){
     }
   }catch(e){
     if(e.name!=='AbortError')showToast('Could not share — try again.');
+  }
+}
+
+// ═══════════════════════════════
+//  PDF EXPORT
+// ═══════════════════════════════
+async function buildPdfBlobFromDoc(doc){
+  const{jsPDF}=window.jspdf;
+  const pdf=new jsPDF({unit:'pt'});
+  for(let i=0;i<doc.pages.length;i++){
+    const img=await loadImageEl(doc.pages[i].dataUrl);
+    const pageW=pdf.internal.pageSize.getWidth();
+    const pageH=pdf.internal.pageSize.getHeight();
+    const imgRatio=img.width/img.height;
+    const pageRatio=pageW/pageH;
+    let w,h;
+    if(imgRatio>pageRatio){w=pageW;h=pageW/imgRatio;}else{h=pageH;w=pageH*imgRatio;}
+    const x=(pageW-w)/2,y=(pageH-h)/2;
+    if(i>0)pdf.addPage();
+    pdf.addImage(img,'JPEG',x,y,w,h);
+  }
+  return pdf.output('blob');
+}
+function loadImageEl(src){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=reject;
+    img.src=src;
+  });
+}
+async function exportCurrentDocAsPDF(){
+  const doc=currentFolderDocs.find(d=>d.id===viewerDocId)||await dbGetOne('documents',viewerDocId);
+  if(!doc)return;
+  showToast('Building PDF...');
+  try{
+    const blob=await buildPdfBlobFromDoc(doc);
+    const file=new File([blob],`${doc.title}.pdf`,{type:'application/pdf'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:doc.title});
+    } else {
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=`${doc.title}.pdf`;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('PDF downloaded ✅');
+    }
+  }catch(e){
+    if(e.name!=='AbortError')showToast('Could not build PDF — try again.');
   }
 }
 function downloadDocument(doc){
@@ -808,11 +868,42 @@ function renderColorMode(){
     cv.cvtColor(warpedMat,gray,cv.COLOR_RGBA2GRAY);
     cv.adaptiveThreshold(gray,out,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY,25,15);
     gray.delete();
+  } else if(currentColorMode==='enhance'){
+    out.delete();
+    out=autoEnhance(warpedMat);
   }
   const dispCanvas=document.getElementById('crop-canvas');
   dispCanvas.width=out.cols;dispCanvas.height=out.rows;
   cv.imshow(dispCanvas,out);
   out.delete();
+}
+
+// One-tap "Auto Enhance": shadow/uneven-lighting removal (divide by a heavily
+// blurred estimate of the background), contrast boost (CLAHE), then a light
+// unsharp-mask sharpen — combined into one clean result, like real scanner apps.
+function autoEnhance(srcMat){
+  let gray=new cv.Mat(),bg=new cv.Mat(),grayF=new cv.Mat(),bgF=new cv.Mat(),normF=new cv.Mat(),norm8=new cv.Mat();
+  let contrasted=new cv.Mat(),blur2=new cv.Mat(),sharpened=new cv.Mat();
+  let clahe=null;
+  try{
+    cv.cvtColor(srcMat,gray,cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray,bg,new cv.Size(0,0),21);
+    gray.convertTo(grayF,cv.CV_32F);
+    bg.convertTo(bgF,cv.CV_32F);
+    cv.divide(grayF,bgF,normF);
+    normF.convertTo(norm8,cv.CV_8U,255.0,0);
+    clahe=new cv.CLAHE(2.0,new cv.Size(8,8));
+    clahe.apply(norm8,contrasted);
+    cv.GaussianBlur(contrasted,blur2,new cv.Size(0,0),3);
+    cv.addWeighted(contrasted,1.5,blur2,-0.5,0,sharpened);
+    const result=new cv.Mat();
+    sharpened.copyTo(result);
+    return result;
+  } finally {
+    gray.delete();bg.delete();grayF.delete();bgF.delete();normF.delete();norm8.delete();
+    contrasted.delete();blur2.delete();sharpened.delete();
+    if(clahe)clahe.delete();
+  }
 }
 function setColorMode(mode){
   currentColorMode=mode;
@@ -873,6 +964,46 @@ async function confirmSaveDocument(){
   showToast('Document saved ✅');
   await renderFoldersGrid();
   if(currentFolderId===folderId)await renderDocsGrid();
+}
+
+// ═══════════════════════════════
+//  PDF IMPORT
+// ═══════════════════════════════
+if(typeof pdfjsLib!=='undefined'){
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
+
+async function onPdfImportSelected(event){
+  const file=event.target.files[0];
+  event.target.value='';
+  if(!file)return;
+  if(typeof pdfjsLib==='undefined'){showToast('PDF import engine still loading — try again in a moment.');return;}
+  showToast('Reading PDF...');
+  try{
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    capturedPages=[];
+    const maxDim=1800;
+    for(let i=1;i<=pdf.numPages;i++){
+      const page=await pdf.getPage(i);
+      const viewport1=page.getViewport({scale:1});
+      const scale=Math.min(2,maxDim/Math.max(viewport1.width,viewport1.height));
+      const viewport=page.getViewport({scale:Math.max(scale,0.5)});
+      const canvas=document.createElement('canvas');
+      canvas.width=viewport.width;canvas.height=viewport.height;
+      await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+      capturedPages.push({dataUrl:canvas.toDataURL('image/jpeg',0.88)});
+    }
+    showToast(`Imported ${pdf.numPages} page(s) — choose a folder to save into`);
+    // Suggest the PDF's filename (minus extension) as the default title
+    document.getElementById('capture-screen').classList.remove('open');
+    await openSaveDocModal();
+    const titleEl=document.getElementById('save-doc-title');
+    if(titleEl)titleEl.value=file.name.replace(/\.pdf$/i,'');
+  }catch(e){
+    console.error(e);
+    showToast('Could not read that PDF — it may be corrupted or password-protected.');
+  }
 }
 
 // ═══════════════════════════════
