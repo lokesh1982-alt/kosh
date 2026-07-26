@@ -550,24 +550,31 @@ let draggingCornerIdx=-1;
 let cvReady=false;
 let warpedMat=null;
 
-// OpenCV.js is a large WASM download and different builds signal "ready" slightly
-// differently — poll for cv.Mat directly as a robust fallback alongside the
-// standard callback, so we don't silently get stuck if one method doesn't fire.
-function pollCvReady(){
-  if(cvReady)return;
-  if(typeof cv!=='undefined'&&cv.Mat){
+// @techstark/opencv-js exposes the global `cv` as a PROMISE that resolves to the
+// actual library object — not the ready-to-use module directly. Reassign `cv` to
+// the resolved value once it settles, so the rest of the code (cv.Mat, cv.imread,
+// etc.) keeps working exactly as written.
+function initCv(){
+  if(typeof cv==='undefined'){setTimeout(initCv,300);return;}
+  if(cv&&typeof cv.then==='function'){
+    cv.then(resolvedCv=>{
+      cv=resolvedCv;
+      cvReady=true;
+      updateEngineStatus();
+    }).catch(err=>{
+      console.error('OpenCV failed to load:',err);
+      const el=document.getElementById('engine-status');
+      if(el)el.textContent='⚠️ Scanner engine failed to load — check your connection and reload the app.';
+    });
+  } else if(cv&&cv.Mat){
+    // Already resolved / a different build that exposes the module directly
     cvReady=true;
     updateEngineStatus();
-    return;
+  } else {
+    setTimeout(initCv,300);
   }
-  setTimeout(pollCvReady,300);
 }
-pollCvReady();
-if(typeof cv!=='undefined'){
-  try{
-    cv['onRuntimeInitialized']=()=>{cvReady=true;updateEngineStatus();};
-  }catch(e){}
-}
+initCv();
 function updateEngineStatus(){
   const el=document.getElementById('engine-status');
   if(el)el.style.display='none';
