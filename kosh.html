@@ -226,27 +226,49 @@ button{cursor:pointer;}
 // ═══════════════════════════════
 const SUPABASE_URL='https://eayzeqhuegdnudzzxksy.supabase.co';
 const SUPABASE_ANON_KEY='sb_publishable_tgqt8-_nPLz97H-BfV0a4A_L1YtHcWJ';
-const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+let sb=null;
+try{
+  if(typeof supabase==='undefined')throw new Error('Supabase SDK did not load — check your internet connection and reload.');
+  sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+}catch(e){
+  console.error('Supabase init failed:',e);
+  document.addEventListener('DOMContentLoaded',()=>{
+    const el=document.getElementById('auth-error');
+    if(el){el.textContent='App failed to start: '+e.message;el.style.display='block';}
+  });
+}
 let currentUser=null;
 
 async function handleSignUp(){
+  if(!sb){showAuthError('App did not start correctly — please reload the page.');return;}
   const email=document.getElementById('auth-email').value.trim();
   const password=document.getElementById('auth-password').value;
   const errEl=document.getElementById('auth-error');
   errEl.style.display='none';
   if(!email||!password){showAuthError('Enter an email and password.');return;}
-  const{data,error}=await sb.auth.signUp({email,password});
-  if(error){showAuthError(error.message);return;}
-  if(data.user&&!data.session){showAuthError('Check your email to confirm your account, then sign in.');return;}
-  await onAuthed(data.user);
+  try{
+    const{data,error}=await sb.auth.signUp({email,password});
+    if(error){showAuthError(error.message);return;}
+    if(data.user&&!data.session){showAuthError('Check your email to confirm your account, then sign in.');return;}
+    await onAuthed(data.user);
+  }catch(e){
+    console.error('Sign up failed:',e);
+    showAuthError('Something went wrong: '+(e.message||e));
+  }
 }
 async function handleSignIn(){
+  if(!sb){showAuthError('App did not start correctly — please reload the page.');return;}
   const email=document.getElementById('auth-email').value.trim();
   const password=document.getElementById('auth-password').value;
   if(!email||!password){showAuthError('Enter an email and password.');return;}
-  const{data,error}=await sb.auth.signInWithPassword({email,password});
-  if(error){showAuthError(error.message);return;}
-  await onAuthed(data.user);
+  try{
+    const{data,error}=await sb.auth.signInWithPassword({email,password});
+    if(error){showAuthError(error.message);return;}
+    await onAuthed(data.user);
+  }catch(e){
+    console.error('Sign in failed:',e);
+    showAuthError('Something went wrong: '+(e.message||e));
+  }
 }
 async function handleSignOut(){
   await sb.auth.signOut();
@@ -734,8 +756,13 @@ async function seedDefaultPortfolio(){
 //  INIT
 // ═══════════════════════════════
 window.addEventListener('DOMContentLoaded',async()=>{
-  const{data:{session}}=await sb.auth.getSession();
-  if(session){await onAuthed(session.user);}
+  if(!sb)return;
+  try{
+    const{data:{session}}=await sb.auth.getSession();
+    if(session){await onAuthed(session.user);}
+  }catch(e){
+    console.error('Session check failed:',e);
+  }
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('kosh-sw.js').catch(()=>{});
   }
