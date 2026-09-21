@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+<title>Kosh</title>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="theme-color" content="#14181D"/>
+<link rel="apple-touch-icon" href="kosh-icon-192.png"/>
+<link rel="manifest" href="kosh-manifest.json"/>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@500;600;700&display=swap');
+:root{
+  --bg:#F1F3F5;--card:#FFFFFF;--card2:#EDEFF1;
+  --border:#E1E4E8;
+  --ink:#14181D;--ink2:#5A6270;--ink3:#8B93A1;
+  --teal:#17B6A7;--teal-dark:#0F6E56;
+  --amber:#E8A93E;--amber-dark:#8A5A0F;--amber-bg:#FEF0E0;
+  --red:#DC4C4C;--red-dark:#8B2020;--red-bg:#FBEAEA;
+  --green:#1E9E6E;--green-bg:#E5F1EA;
+  --radius:14px;--radius-sm:9px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;}
+button,input,select{font-family:inherit;}
+button{cursor:pointer;}
+.serif{font-family:'Fraunces',serif;}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;}
+.topbar-left{display:flex;align-items:center;gap:10px;}
+.logo-box{width:36px;height:36px;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--teal);font-weight:700;}
+.topbar-title{font-size:1.1rem;}
+.topbar-sub{font-size:0.6rem;color:var(--ink3);letter-spacing:0.05em;text-transform:uppercase;}
+
+.main{max-width:520px;margin:0 auto;padding:0 16px 90px;}
+
+.tabs-row{display:flex;gap:4px;background:var(--card2);border-radius:12px;padding:4px;margin-bottom:16px;overflow-x:auto;}
+.tab-btn{flex-shrink:0;background:none;border:none;padding:8px 14px;border-radius:9px;font-size:0.78rem;color:var(--ink2);font-weight:500;white-space:nowrap;}
+.tab-btn.active{background:var(--ink);color:#fff;font-weight:600;}
+
+.section{display:none;}
+.section.active{display:block;}
+
+.card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
+.hero-card{background:var(--ink);border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;}
+.hero-label{font-size:11px;letter-spacing:0.04em;opacity:0.65;text-transform:uppercase;}
+.hero-val{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:600;margin:6px 0 4px;color:var(--teal);}
+.hero-sub{font-size:0.76rem;color:#7FE0D4;}
+
+.card-title{font-size:0.82rem;font-weight:600;color:var(--ink);margin-bottom:10px;}
+
+.alert-box{border-radius:10px;padding:11px 13px;margin-bottom:10px;display:flex;gap:8px;align-items:flex-start;}
+.alert-box.warn{background:var(--amber-bg);}
+.alert-box.danger{background:var(--red-bg);}
+.alert-title{font-size:0.76rem;font-weight:600;}
+.alert-sub{font-size:0.68rem;margin-top:1px;}
+
+.drift-row{margin-bottom:9px;}
+.drift-head{display:flex;justify-content:space-between;font-size:0.74rem;margin-bottom:3px;}
+.drift-bar-track{height:6px;background:var(--card2);border-radius:3px;position:relative;}
+.drift-bar-fill{height:6px;border-radius:3px;}
+.drift-marker{position:absolute;top:-2px;width:2px;height:10px;background:var(--ink);}
+
+.coin-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);}
+.coin-row:last-child{border-bottom:none;}
+.coin-name{font-size:0.82rem;font-weight:600;color:var(--ink);}
+.coin-sub{font-size:0.68rem;color:var(--ink3);margin-top:2px;}
+.coin-val{font-size:0.82rem;font-weight:600;text-align:right;}
+.coin-drift{font-size:0.68rem;text-align:right;margin-top:2px;}
+
+.tier-chip{font-size:0.64rem;padding:2px 8px;border-radius:6px;font-weight:600;}
+
+.btn-primary{background:var(--teal);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
+.btn-outline{background:#fff;color:var(--ink);border:1px solid var(--border);border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
+.btn-dark{background:var(--ink);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
+.link-btn{background:none;border:none;font-size:0.76rem;font-weight:600;color:var(--teal-dark);padding:4px;}
+
+.form-group{margin-bottom:12px;}
+.form-label{font-size:0.76rem;color:var(--ink2);margin-bottom:5px;display:block;font-weight:500;}
+.form-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:#fff;}
+.form-select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:#fff;}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(20,24,29,0.5);z-index:300;display:none;align-items:flex-end;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal{background:#fff;border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;}
+.modal-title{font-size:1.05rem;font-weight:700;margin-bottom:14px;}
+
+.tier-header{display:flex;justify-content:space-between;align-items:center;padding:10px 0;cursor:pointer;}
+.tier-header .name{font-size:0.88rem;font-weight:700;}
+.tier-header .pct{font-size:0.78rem;color:var(--ink2);}
+.tier-coins{padding-left:4px;}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:20px;font-size:0.8rem;z-index:400;opacity:0;transition:opacity 0.3s;pointer-events:none;}
+.toast.show{opacity:1;}
+
+.auth-wrap{max-width:360px;margin:60px auto;padding:0 20px;text-align:center;}
+.auth-wrap .form-input{margin-bottom:10px;}
+
+.empty-state{text-align:center;padding:40px 20px;color:var(--ink3);}
+.empty-state .ic{font-size:2rem;margin-bottom:8px;}
+
+.hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<div id="auth-screen" class="auth-wrap">
+  <div class="logo-box serif" style="width:56px;height:56px;font-size:24px;margin:0 auto 14px;border-radius:16px">क</div>
+  <div class="serif" style="font-size:1.6rem;font-weight:600;margin-bottom:2px">कोष</div>
+  <div style="font-size:0.72rem;color:var(--ink3);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:24px">Kosh &middot; Crypto Portfolio</div>
+  <input class="form-input" type="email" id="auth-email" placeholder="Email"/>
+  <input class="form-input" type="password" id="auth-password" placeholder="Password"/>
+  <div id="auth-error" style="color:var(--red);font-size:0.78rem;margin-bottom:10px;display:none"></div>
+  <button class="btn-primary" style="width:100%;margin-bottom:10px" onclick="handleSignIn()">Sign In</button>
+  <button class="btn-outline" style="width:100%" onclick="handleSignUp()">Create Account</button>
+</div>
+
+<div id="app-root" class="hidden">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="logo-box serif">क</div>
+      <div>
+        <div class="topbar-title serif">कोष</div>
+        <div class="topbar-sub">Kosh</div>
+      </div>
+    </div>
+    <button class="link-btn" onclick="handleSignOut()">Sign out</button>
+  </div>
+
+  <div class="main">
+    <div class="tabs-row">
+      <button class="tab-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
+      <button class="tab-btn" onclick="switchTab('tiers',this)">Tiers &amp; Coins</button>
+      <button class="tab-btn" onclick="switchTab('holdings',this)">Holdings</button>
+      <button class="tab-btn" onclick="switchTab('settings',this)">Settings</button>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="section active" id="sec-dashboard">
+      <div id="dash-content"></div>
+    </div>
+
+    <!-- TIERS & COINS -->
+    <div class="section" id="sec-tiers">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Tiers &amp; coins</div>
+        <button class="link-btn" onclick="openTierModal()">+ New tier</button>
+      </div>
+      <div id="tiers-content"></div>
+    </div>
+
+    <!-- HOLDINGS -->
+    <div class="section" id="sec-holdings">
+      <div id="holdings-content"></div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="section" id="sec-settings">
+      <div class="card">
+        <div class="card-title">Total capital</div>
+        <div class="form-group">
+          <label class="form-label">Total capital to invest (USD)</label>
+          <input class="form-input" type="number" id="settings-capital" step="0.01"/>
+        </div>
+        <button class="btn-primary" onclick="saveCapital()">Save</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Data</div>
+        <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
+        <button class="btn-outline" style="width:100%" onclick="seedDefaultPortfolio()">📋 Load starter portfolio (5 tiers, 25 coins)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER MODAL -->
+<div class="modal-overlay" id="tier-modal">
+  <div class="modal">
+    <div class="modal-title" id="tier-modal-title">New Tier</div>
+    <div class="form-group"><label class="form-label">Tier name</label><input class="form-input" id="tier-name" placeholder="e.g. Safe (Large-Cap)"/></div>
+    <div class="form-group"><label class="form-label">Target % of portfolio</label><input class="form-input" type="number" id="tier-target" step="0.1" placeholder="e.g. 25"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('tier-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="saveTier()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- COIN MODAL -->
+<div class="modal-overlay" id="coin-modal">
+  <div class="modal">
+    <div class="modal-title" id="coin-modal-title">New Coin</div>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="coin-name" placeholder="e.g. Bitcoin"/></div>
+    <div class="form-group"><label class="form-label">Ticker</label><input class="form-input" id="coin-ticker" placeholder="e.g. BTC"/></div>
+    <div class="form-group"><label class="form-label">CoinGecko ID <span style="font-size:0.68rem;color:var(--ink3)">(for live price — see coingecko.com/en/coins/...)</span></label><input class="form-input" id="coin-geckoid" placeholder="e.g. bitcoin"/></div>
+    <div class="form-group"><label class="form-label">Weight within tier (%)</label><input class="form-input" type="number" id="coin-weight" step="0.1" placeholder="e.g. 48"/></div>
+    <div class="form-group"><label class="form-label">Exchanges</label><input class="form-input" id="coin-exchanges" placeholder="e.g. Binance, CoinDCX"/></div>
+    <div class="form-group"><label class="form-label">Rationale (optional)</label><input class="form-input" id="coin-rationale" placeholder="Why this coin is in the portfolio"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('coin-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="saveCoin()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- HOLDINGS EDIT MODAL -->
+<div class="modal-overlay" id="holding-modal">
+  <div class="modal">
+    <div class="modal-title" id="holding-modal-title">Update Holding</div>
+    <div class="form-group"><label class="form-label">Units held</label><input class="form-input" type="number" id="holding-units" step="0.00000001"/></div>
+    <div class="form-group"><label class="form-label">Average cost per unit (USD, optional)</label><input class="form-input" type="number" id="holding-cost" step="0.01"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('holding-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="saveHolding()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ═══════════════════════════════
+//  SUPABASE SETUP
+// ═══════════════════════════════
+const SUPABASE_URL='https://eayzeqhuegdnudzzxksy.supabase.co';
+const SUPABASE_ANON_KEY='sb_publishable_tgqt8-_nPLz97H-BfV0a4A_L1YtHcWJ';
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+let currentUser=null;
+
+async function handleSignUp(){
+  const email=document.getElementById('auth-email').value.trim();
+  const password=document.getElementById('auth-password').value;
+  const errEl=document.getElementById('auth-error');
+  errEl.style.display='none';
+  if(!email||!password){showAuthError('Enter an email and password.');return;}
+  const{data,error}=await sb.auth.signUp({email,password});
+  if(error){showAuthError(error.message);return;}
+  if(data.user&&!data.session){showAuthError('Check your email to confirm your account, then sign in.');return;}
+  await onAuthed(data.user);
+}
+async function handleSignIn(){
+  const email=document.getElementById('auth-email').value.trim();
+  const password=document.getElementById('auth-password').value;
+  if(!email||!password){showAuthError('Enter an email and password.');return;}
+  const{data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error){showAuthError(error.message);return;}
+  await onAuthed(data.user);
+}
+async function handleSignOut(){
+  await sb.auth.signOut();
+  currentUser=null;
+  document.getElementById('app-root').classList.add('hidden');
+  document.getElementById('auth-screen').classList.remove('hidden');
+}
+function showAuthError(msg){
+  const el=document.getElementById('auth-error');
+  el.textContent=msg;el.style.display='block';
+}
+async function onAuthed(user){
+  currentUser=user;
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app-root').classList.remove('hidden');
+  await loadAllData();
+  await fetchLivePrices();
+  fetchBtcHigh(); // don't block initial render on this
+  renderAll();
+}
+
+// ═══════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+function fmtUsd(v){
+  if(v==null||isNaN(v))return'—';
+  return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(v);
+}
+function fmtPct(v){return(v*100).toFixed(1)+'%';}
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer=setTimeout(()=>t.classList.remove('show'),2400);
+}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function switchTab(name,btn){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById('sec-'+name).classList.add('active');
+  if(name==='dashboard')renderDashboard();
+  if(name==='tiers')renderTiersSection();
+  if(name==='holdings')renderHoldings();
+  if(name==='settings')document.getElementById('settings-capital').value=settings.total_capital||'';
+}
+
+// ═══════════════════════════════
+//  DATA LAYER
+// ═══════════════════════════════
+let tiers=[];
+let coins=[];
+let settings={total_capital:0};
+let livePrices={};
+let btc90dHigh=null;
+
+async function loadAllData(){
+  const[tiersRes,coinsRes,settingsRes]=await Promise.all([
+    sb.from('tiers').select('*').order('sort_order'),
+    sb.from('coins').select('*').order('sort_order'),
+    sb.from('kosh_settings').select('*').eq('user_id',currentUser.id).maybeSingle()
+  ]);
+  tiers=tiersRes.data||[];
+  coins=coinsRes.data||[];
+  settings=settingsRes.data||{total_capital:0};
+}
+
+async function fetchLivePrices(){
+  const ids=[...new Set(coins.map(c=>c.coingecko_id).filter(Boolean))];
+  if(!ids.length)return;
+  try{
+    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=usd`);
+    if(!res.ok)throw new Error('bad response');
+    const data=await res.json();
+    ids.forEach(id=>{if(data[id])livePrices[id]=data[id].usd;});
+  }catch(e){console.error('price fetch failed',e);}
+}
+async function fetchBtcHigh(){
+  try{
+    const res=await fetch('https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90');
+    if(!res.ok)throw new Error('bad response');
+    const data=await res.json();
+    btc90dHigh=Math.max(...data.prices.map(p=>p[1]));
+    renderDashboard();
+  }catch(e){console.error('btc high fetch failed',e);}
+}
+async function refreshPrices(){
+  showToast('Refreshing prices...');
+  await fetchLivePrices();
+  await fetchBtcHigh();
+  renderAll();
+  showToast('Prices updated ✅');
+}
+
+function renderAll(){
+  renderDashboard();
+  renderTiersSection();
+  renderHoldings();
+}
+
+// ═══════════════════════════════
+//  CALCULATIONS
+// ═══════════════════════════════
+function coinValue(coin){
+  const price=livePrices[coin.coingecko_id];
+  if(price==null)return null;
+  return(coin.units_held||0)*price;
+}
+function totalActualValue(){
+  return coins.reduce((s,c)=>{const v=coinValue(c);return s+(v||0);},0);
+}
+function calcTierStats(){
+  const total=totalActualValue();
+  return tiers.map(t=>{
+    const tierCoins=coins.filter(c=>c.tier_id===t.id);
+    const actualValue=tierCoins.reduce((s,c)=>{const v=coinValue(c);return s+(v||0);},0);
+    const actualPct=total>0?actualValue/total:0;
+    const targetPct=t.target_pct||0;
+    const driftPP=(actualPct-targetPct)*100;
+    const targetUsd=(settings.total_capital||0)*targetPct;
+    return{...t,tierCoins,actualValue,actualPct,targetPct,driftPP,targetUsd};
+  });
+}
+function calcCoinStats(coin){
+  const price=livePrices[coin.coingecko_id];
+  const value=coinValue(coin);
+  const tier=tiers.find(t=>t.id===coin.tier_id);
+  const targetPctOfPortfolio=tier?(tier.target_pct||0)*(coin.weight_in_tier||0):0;
+  const targetUsd=(settings.total_capital||0)*targetPctOfPortfolio;
+  const total=totalActualValue();
+  const actualPctOfPortfolio=(total>0&&value!=null)?value/total:null;
+  return{price,value,targetPctOfPortfolio,targetUsd,actualPctOfPortfolio};
+}
+function findConcentrationWarnings(){
+  const total=totalActualValue();
+  if(total<=0)return[];
+  return coins.filter(c=>{
+    const ticker=(c.ticker||'').toUpperCase();
+    if(ticker==='BTC'||ticker==='ETH')return false;
+    const v=coinValue(c);
+    if(v==null)return false;
+    return(v/total)>0.10;
+  }).map(c=>({coin:c,pct:coinValue(c)/total}));
+}
+function calcBearishLadder(){
+  const total=totalActualValue();
+  const stableTier=tiers.find(t=>/stable/i.test(t.name));
+  const stableValue=stableTier?coins.filter(c=>c.tier_id===stableTier.id).reduce((s,c)=>{const v=coinValue(c);return s+(v||0);},0):0;
+  const btcCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='BTC');
+  const btcPrice=btcCoin?livePrices[btcCoin.coingecko_id]:null;
+  let drawdownPct=null;
+  if(btcPrice!=null&&btc90dHigh){drawdownPct=((btc90dHigh-btcPrice)/btc90dHigh)*100;}
+  const triggers=[20,35,50].map(t=>({threshold:t,hit:drawdownPct!=null&&drawdownPct>=t}));
+  return{drawdownPct,stableValue,triggers};
+}
+
+// ═══════════════════════════════
+//  DASHBOARD
+// ═══════════════════════════════
+function renderDashboard(){
+  const el=document.getElementById('dash-content');
+  if(!coins.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">💼</div><div>No portfolio set up yet.</div><div style="margin-top:10px"><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
+    return;
+  }
+  const total=totalActualValue();
+  const capital=settings.total_capital||0;
+  const gainLoss=total-capital;
+  const gainLossPct=capital>0?(gainLoss/capital)*100:0;
+  const tierStats=calcTierStats();
+  const driftedTiers=tierStats.filter(t=>Math.abs(t.driftPP)>=5);
+  const concentrationWarnings=findConcentrationWarnings();
+  const ladder=calcBearishLadder();
+  const stablePct=total>0?ladder.stableValue/total*100:0;
+
+  let html=`<div class="hero-card">
+    <div class="hero-label">Total portfolio value</div>
+    <div class="hero-val">${fmtUsd(total)}</div>
+    <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs capital deployed (${fmtUsd(capital)})</div>
+    <div style="display:flex;gap:16px;margin-top:14px">
+      <div><div style="font-size:10px;opacity:0.6">Capital in</div><div style="font-size:0.82rem;font-weight:600">${fmtUsd(capital)}</div></div>
+      <div><div style="font-size:10px;opacity:0.6">Stablecoin reserve</div><div style="font-size:0.82rem;font-weight:600">${fmtUsd(ladder.stableValue)} (${stablePct.toFixed(0)}%)</div></div>
+    </div>
+  </div>`;
+
+  driftedTiers.forEach(t=>{
+    html+=`<div class="alert-box warn">
+      <span>⚠️</span>
+      <div>
+        <div class="alert-title" style="color:var(--amber-dark)">${escapeHtml(t.name)} has drifted ${Math.abs(t.driftPP).toFixed(1)}pp ${t.driftPP>0?'above':'below'} target</div>
+        <div class="alert-sub" style="color:var(--amber-dark)">${fmtPct(t.actualPct)} actual vs ${fmtPct(t.targetPct)} target — consider rebalancing</div>
+      </div>
+    </div>`;
+  });
+  concentrationWarnings.forEach(w=>{
+    html+=`<div class="alert-box danger">
+      <span>🚨</span>
+      <div>
+        <div class="alert-title" style="color:var(--red-dark)">${escapeHtml(w.coin.name)} is ${(w.pct*100).toFixed(1)}% of your portfolio</div>
+        <div class="alert-sub" style="color:var(--red-dark)">Exceeds the ~10% single-coin concentration cap (outside BTC/ETH)</div>
+      </div>
+    </div>`;
+  });
+
+  html+=`<div class="card"><div class="card-title">Tier allocation — actual vs target</div>`;
+  tierStats.forEach(t=>{
+    const barColor=Math.abs(t.driftPP)>=5?'var(--amber)':'var(--teal)';
+    const fillPct=Math.min(100,t.actualPct*100*2); // scale so 50% actual = full bar width, gives headroom
+    html+=`<div class="drift-row">
+      <div class="drift-head"><span style="font-weight:500">${escapeHtml(t.name)}</span><span style="font-weight:600;color:${Math.abs(t.driftPP)>=5?'var(--amber-dark)':'var(--ink2)'}">${fmtPct(t.actualPct)} / ${fmtPct(t.targetPct)}</span></div>
+      <div class="drift-bar-track"><div class="drift-bar-fill" style="width:${fillPct}%;background:${barColor}"></div><div class="drift-marker" style="left:${Math.min(100,t.targetPct*100*2)}%"></div></div>
+    </div>`;
+  });
+  html+='</div>';
+
+  html+=`<div class="card">
+    <div class="card-title">Bearish deployment ladder</div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">${ladder.drawdownPct!=null?`BTC is ${ladder.drawdownPct.toFixed(1)}% below its 90-day high`:'Loading BTC drawdown...'}</div>
+    <div style="display:flex;gap:6px">
+      ${ladder.triggers.map(tr=>`<div style="flex:1;text-align:center;background:${tr.hit?'var(--red-bg)':'var(--card2)'};padding:8px 4px;border-radius:8px">
+        <div style="font-size:0.68rem;color:${tr.hit?'var(--red-dark)':'var(--ink2)'}">-${tr.threshold}%</div>
+        <div style="font-size:0.6rem;margin-top:2px;color:${tr.hit?'var(--red-dark)':'var(--ink3)'};font-weight:${tr.hit?'700':'400'}">${tr.hit?'Triggered!':'Not triggered'}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+
+  el.innerHTML=html;
+}
+
+// ═══════════════════════════════
+//  TIERS & COINS
+// ═══════════════════════════════
+let expandedTiers=new Set();
+function toggleTierExpand(id){
+  if(expandedTiers.has(id))expandedTiers.delete(id);else expandedTiers.add(id);
+  renderTiersSection();
+}
+function renderTiersSection(){
+  const el=document.getElementById('tiers-content');
+  if(!tiers.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">📊</div><div>No tiers yet.</div></div>`;
+    return;
+  }
+  const targetSum=tiers.reduce((s,t)=>s+(t.target_pct||0),0);
+  let html='';
+  if(Math.abs(targetSum-1)>0.001){
+    html+=`<div class="alert-box warn"><span>⚠️</span><div><div class="alert-title" style="color:var(--amber-dark)">Tier targets sum to ${fmtPct(targetSum)}, not 100%</div></div></div>`;
+  }
+  tiers.forEach(t=>{
+    const tierCoins=coins.filter(c=>c.tier_id===t.id);
+    const weightSum=tierCoins.reduce((s,c)=>s+(c.weight_in_tier||0),0);
+    const expanded=expandedTiers.has(t.id);
+    html+=`<div class="card" style="padding:10px 14px">
+      <div class="tier-header" onclick="toggleTierExpand('${t.id}')">
+        <div><span style="display:inline-block;width:14px">${expanded?'▼':'▶'}</span><span class="name">${escapeHtml(t.name)}</span> <span style="font-size:0.7rem;color:var(--ink3)">(${tierCoins.length})</span></div>
+        <div class="pct">${fmtPct(t.target_pct||0)}</div>
+      </div>
+      ${expanded?`
+        <div class="tier-coins">
+          ${weightSum>0&&Math.abs(weightSum-1)>0.001?`<div style="font-size:0.68rem;color:var(--amber-dark);margin-bottom:8px">⚠️ Coin weights in this tier sum to ${fmtPct(weightSum)}, not 100%</div>`:''}
+          ${tierCoins.map(c=>`<div class="coin-row">
+            <div>
+              <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+              <div class="coin-sub">${fmtPct(c.weight_in_tier||0)} of tier · ${escapeHtml(c.exchanges||'')}</div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="link-btn" onclick="openCoinModal('${t.id}','${c.id}')">Edit</button>
+              <button class="link-btn" style="color:var(--red)" onclick="deleteCoin('${c.id}')">Delete</button>
+            </div>
+          </div>`).join('')||'<div style="font-size:0.76rem;color:var(--ink3);padding:8px 0">No coins in this tier yet.</div>'}
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="link-btn" onclick="openCoinModal('${t.id}')">+ Add coin</button>
+            <button class="link-btn" onclick="openTierModal('${t.id}')">Edit tier</button>
+            <button class="link-btn" style="color:var(--red)" onclick="deleteTier('${t.id}')">Delete tier</button>
+          </div>
+        </div>
+      `:''}
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+function openTierModal(tierId){
+  document.getElementById('tier-modal-title').textContent=tierId?'Edit Tier':'New Tier';
+  document.getElementById('tier-modal').dataset.tierId=tierId||'';
+  const t=tierId?tiers.find(x=>x.id===tierId):null;
+  document.getElementById('tier-name').value=t?t.name:'';
+  document.getElementById('tier-target').value=t?(t.target_pct*100):'';
+  openModal('tier-modal');
+}
+async function saveTier(){
+  const tierId=document.getElementById('tier-modal').dataset.tierId;
+  const name=document.getElementById('tier-name').value.trim();
+  const targetPct=parseFloat(document.getElementById('tier-target').value)/100;
+  if(!name||isNaN(targetPct)){showToast('Please fill in both fields.');return;}
+  if(tierId){
+    await sb.from('tiers').update({name,target_pct:targetPct}).eq('id',tierId);
+  } else {
+    await sb.from('tiers').insert({user_id:currentUser.id,name,target_pct:targetPct,sort_order:tiers.length});
+  }
+  closeModal('tier-modal');
+  await loadAllData();
+  renderAll();
+  showToast('Tier saved ✅');
+}
+async function deleteTier(tierId){
+  const t=tiers.find(x=>x.id===tierId);
+  const tierCoins=coins.filter(c=>c.tier_id===tierId);
+  if(!confirm(`Delete "${t.name}" and all ${tierCoins.length} coin(s) in it? This can't be undone.`))return;
+  await sb.from('tiers').delete().eq('id',tierId);
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast('Tier deleted');
+}
+
+function openCoinModal(tierId,coinId){
+  document.getElementById('coin-modal-title').textContent=coinId?'Edit Coin':'New Coin';
+  document.getElementById('coin-modal').dataset.tierId=tierId;
+  document.getElementById('coin-modal').dataset.coinId=coinId||'';
+  const c=coinId?coins.find(x=>x.id===coinId):null;
+  document.getElementById('coin-name').value=c?c.name:'';
+  document.getElementById('coin-ticker').value=c?c.ticker:'';
+  document.getElementById('coin-geckoid').value=c?(c.coingecko_id||''):'';
+  document.getElementById('coin-weight').value=c?(c.weight_in_tier*100):'';
+  document.getElementById('coin-exchanges').value=c?(c.exchanges||''):'';
+  document.getElementById('coin-rationale').value=c?(c.rationale||''):'';
+  openModal('coin-modal');
+}
+async function saveCoin(){
+  const tierId=document.getElementById('coin-modal').dataset.tierId;
+  const coinId=document.getElementById('coin-modal').dataset.coinId;
+  const name=document.getElementById('coin-name').value.trim();
+  const ticker=document.getElementById('coin-ticker').value.trim().toUpperCase();
+  const geckoId=document.getElementById('coin-geckoid').value.trim().toLowerCase();
+  const weight=parseFloat(document.getElementById('coin-weight').value)/100;
+  const exchanges=document.getElementById('coin-exchanges').value.trim();
+  const rationale=document.getElementById('coin-rationale').value.trim();
+  if(!name||!ticker||isNaN(weight)){showToast('Name, ticker and weight are required.');return;}
+  const payload={name,ticker,coingecko_id:geckoId||null,weight_in_tier:weight,exchanges,rationale,tier_id:tierId};
+  if(coinId){
+    await sb.from('coins').update(payload).eq('id',coinId);
+  } else {
+    await sb.from('coins').insert({...payload,user_id:currentUser.id,units_held:0,sort_order:coins.length});
+  }
+  closeModal('coin-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast('Coin saved ✅');
+}
+async function deleteCoin(coinId){
+  if(!confirm('Delete this coin? This cannot be undone.'))return;
+  await sb.from('coins').delete().eq('id',coinId);
+  await loadAllData();
+  renderAll();
+  showToast('Coin deleted');
+}
+
+// ═══════════════════════════════
+//  HOLDINGS
+// ═══════════════════════════════
+function renderHoldings(){
+  const el=document.getElementById('holdings-content');
+  if(!coins.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">🪙</div><div>No coins yet — add some under Tiers &amp; Coins first.</div></div>`;
+    return;
+  }
+  let html='';
+  tiers.forEach(t=>{
+    const tierCoins=coins.filter(c=>c.tier_id===t.id);
+    if(!tierCoins.length)return;
+    html+=`<div class="card">
+      <div class="card-title">${escapeHtml(t.name)}</div>`;
+    tierCoins.forEach(c=>{
+      const stats=calcCoinStats(c);
+      const driftPP=stats.actualPctOfPortfolio!=null?(stats.actualPctOfPortfolio-stats.targetPctOfPortfolio)*100:null;
+      html+=`<div class="coin-row">
+        <div>
+          <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+          <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg cost ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="coin-val">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
+          <div class="coin-drift" style="color:${driftPP!=null&&Math.abs(driftPP)>=5?'var(--amber-dark)':'var(--ink3)'}">${stats.actualPctOfPortfolio!=null?fmtPct(stats.actualPctOfPortfolio):'0%'} / ${fmtPct(stats.targetPctOfPortfolio)}</div>
+          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Edit</button>
+        </div>
+      </div>`;
+    });
+    html+='</div>';
+  });
+  el.innerHTML=html;
+}
+function openHoldingModal(coinId){
+  document.getElementById('holding-modal').dataset.coinId=coinId;
+  const c=coins.find(x=>x.id===coinId);
+  document.getElementById('holding-modal-title').textContent='Update '+c.name+' Holding';
+  document.getElementById('holding-units').value=c.units_held||'';
+  document.getElementById('holding-cost').value=c.avg_cost_usd||'';
+  openModal('holding-modal');
+}
+async function saveHolding(){
+  const coinId=document.getElementById('holding-modal').dataset.coinId;
+  const units=parseFloat(document.getElementById('holding-units').value)||0;
+  const costEl=document.getElementById('holding-cost').value;
+  const avgCost=costEl!==''?parseFloat(costEl):null;
+  await sb.from('coins').update({units_held:units,avg_cost_usd:avgCost}).eq('id',coinId);
+  closeModal('holding-modal');
+  await loadAllData();
+  renderAll();
+  showToast('Holding updated ✅');
+}
+
+// ═══════════════════════════════
+//  SETTINGS
+// ═══════════════════════════════
+async function saveCapital(){
+  const val=parseFloat(document.getElementById('settings-capital').value)||0;
+  await sb.from('kosh_settings').upsert({user_id:currentUser.id,total_capital:val,updated_at:new Date().toISOString()});
+  settings.total_capital=val;
+  renderAll();
+  showToast('Capital saved ✅');
+}
+
+// ═══════════════════════════════
+//  SEED DATA — matches the uploaded proposal spreadsheet
+// ═══════════════════════════════
+const SEED_TIERS=[
+  {name:'Safe (Large-Cap)',target_pct:0.25,coins:[
+    {name:'Bitcoin',ticker:'BTC',coingecko_id:'bitcoin',weight_in_tier:0.48,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Deepest liquidity, longest track record, portfolio anchor'},
+    {name:'Ethereum',ticker:'ETH',coingecko_id:'ethereum',weight_in_tier:0.28,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Dominant smart-contract platform, staking yield optionality'},
+    {name:'BNB',ticker:'BNB',coingecko_id:'binancecoin',weight_in_tier:0.12,exchanges:'Binance',rationale:'Exchange utility token with real fee-discount/burn demand'},
+    {name:'XRP',ticker:'XRP',coingecko_id:'ripple',weight_in_tier:0.12,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Cross-border payments use case, top-5 by market cap'}
+  ]},
+  {name:'Mid Risk',target_pct:0.25,coins:[
+    {name:'Solana',ticker:'SOL',coingecko_id:'solana',weight_in_tier:0.24,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'High-throughput L1, strong dev activity, still 2-3x BTC beta'},
+    {name:'Cardano',ticker:'ADA',coingecko_id:'cardano',weight_in_tier:0.16,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Research-driven L1, large long-term holder base'},
+    {name:'TRON',ticker:'TRX',coingecko_id:'tron',weight_in_tier:0.16,exchanges:'Binance, CoinDCX; verify CoinSwitch',rationale:'High transaction volume, dominant USDT settlement rail'},
+    {name:'Chainlink',ticker:'LINK',coingecko_id:'chainlink',weight_in_tier:0.16,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Oracle infrastructure layer used across most major DeFi protocols'},
+    {name:'Litecoin',ticker:'LTC',coingecko_id:'litecoin',weight_in_tier:0.14,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Oldest BTC fork, deep liquidity, lower relative volatility than alts'},
+    {name:'Polkadot',ticker:'DOT',coingecko_id:'polkadot',weight_in_tier:0.14,exchanges:'Binance, CoinDCX',rationale:'Interoperability/parachain thesis, well below 2021 cycle highs'}
+  ]},
+  {name:'High Risk',target_pct:0.15,coins:[
+    {name:'Avalanche',ticker:'AVAX',coingecko_id:'avalanche-2',weight_in_tier:0.2,exchanges:'Binance, CoinDCX',rationale:'Subnet/enterprise chain thesis; down >90% from ATH = value or trap'},
+    {name:'NEAR Protocol',ticker:'NEAR',coingecko_id:'near',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Sharded L1 with AI/agent narrative exposure'},
+    {name:'Sui',ticker:'SUI',coingecko_id:'sui',weight_in_tier:0.166667,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Newer high-throughput L1; smaller cap, materially higher volatility'},
+    {name:'Cosmos',ticker:'ATOM',coingecko_id:'cosmos',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Interchain hub token; cap well below prior cycle highs'},
+    {name:'Aptos',ticker:'APT',coingecko_id:'aptos',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Move-language L1 from ex-Meta Diem team; smallest cap in this tier'},
+    {name:'Arbitrum',ticker:'ARB',coingecko_id:'arbitrum',weight_in_tier:0.133333,exchanges:'Binance; verify CoinDCX',rationale:'Leading Ethereum L2 by TVL; token price has lagged usage growth'}
+  ]},
+  {name:'Very High Risk (Meme Coins)',target_pct:0.15,coins:[
+    {name:'Dogecoin',ticker:'DOGE',coingecko_id:'dogecoin',weight_in_tier:0.266667,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Largest, most liquid meme coin; 10+ year track record'},
+    {name:'Shiba Inu',ticker:'SHIB',coingecko_id:'shiba-inu',weight_in_tier:0.2,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Second-largest meme by cap; large but fading ecosystem'},
+    {name:'Pepe',ticker:'PEPE',coingecko_id:'pepe',weight_in_tier:0.2,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Pure attention/liquidity play with no utility claim'},
+    {name:'Bonk',ticker:'BONK',coingecko_id:'bonk',weight_in_tier:0.133333,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Solana-ecosystem meme, community/airdrop driven'},
+    {name:'Pudgy Penguins',ticker:'PENGU',coingecko_id:'pudgy-penguins',weight_in_tier:0.1,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'NFT-community-linked meme, newer and thinner liquidity'},
+    {name:'Floki',ticker:'FLOKI',coingecko_id:'floki',weight_in_tier:0.1,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Marketing-heavy meme brand; tiny unit price, huge supply'}
+  ]},
+  {name:'Stablecoins (Bearish Reserve)',target_pct:0.20,coins:[
+    {name:'Tether',ticker:'USDT',coingecko_id:'tether',weight_in_tier:0.5,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Deepest stablecoin liquidity/pairs across all exchanges'},
+    {name:'USD Coin',ticker:'USDC',coingecko_id:'usd-coin',weight_in_tier:0.35,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'More transparent reserve reporting; diversifies issuer risk'},
+    {name:'Dai',ticker:'DAI',coingecko_id:'dai',weight_in_tier:0.15,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Decentralized, over-collateralized design; not a single-company IOU'}
+  ]}
+];
+
+async function seedDefaultPortfolio(){
+  if(tiers.length&&!confirm('You already have tiers set up. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
+  showToast('Loading starter portfolio...');
+  for(let ti=0;ti<SEED_TIERS.length;ti++){
+    const st=SEED_TIERS[ti];
+    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,name:st.name,target_pct:st.target_pct,sort_order:tiers.length+ti}).select().single();
+    if(error){showToast('Error creating tier: '+error.message);continue;}
+    const coinRows=st.coins.map((c,ci)=>({...c,user_id:currentUser.id,tier_id:tierRow.id,units_held:0,sort_order:ci}));
+    await sb.from('coins').insert(coinRows);
+  }
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast('Starter portfolio loaded ✅');
+}
+
+// ═══════════════════════════════
+//  INIT
+// ═══════════════════════════════
+window.addEventListener('DOMContentLoaded',async()=>{
+  const{data:{session}}=await sb.auth.getSession();
+  if(session){await onAuthed(session.user);}
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('kosh-sw.js').catch(()=>{});
+  }
+});
+
+</script>
+</body>
+</html>
