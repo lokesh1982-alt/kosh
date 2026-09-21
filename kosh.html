@@ -232,10 +232,9 @@ try{
   sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
 }catch(e){
   console.error('Supabase init failed:',e);
-  document.addEventListener('DOMContentLoaded',()=>{
-    const el=document.getElementById('auth-error');
-    if(el){el.textContent='App failed to start: '+e.message;el.style.display='block';}
-  });
+  const el=document.getElementById('auth-error');
+  if(el){el.textContent='App failed to start: '+e.message;el.style.display='block';}
+  else alert('App failed to start: '+e.message);
 }
 let currentUser=null;
 
