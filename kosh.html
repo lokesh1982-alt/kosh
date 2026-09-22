@@ -133,6 +133,7 @@ button{cursor:pointer;}
       <button class="tab-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
       <button class="tab-btn" onclick="switchTab('tiers',this)">Tiers &amp; Coins</button>
       <button class="tab-btn" onclick="switchTab('holdings',this)">Holdings</button>
+      <button class="tab-btn" onclick="switchTab('journal',this)">Journal</button>
       <button class="tab-btn" onclick="switchTab('settings',this)">Settings</button>
     </div>
 
@@ -153,6 +154,15 @@ button{cursor:pointer;}
     <!-- HOLDINGS -->
     <div class="section" id="sec-holdings">
       <div id="holdings-content"></div>
+    </div>
+
+    <!-- JOURNAL -->
+    <div class="section" id="sec-journal">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Buy/Sell journal</div>
+        <button class="link-btn" onclick="openManualTradeModal()">+ Log trade</button>
+      </div>
+      <div id="journal-content"></div>
     </div>
 
     <!-- SETTINGS -->
@@ -213,6 +223,40 @@ button{cursor:pointer;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('holding-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="saveHolding()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- REBALANCE MODAL -->
+<div class="modal-overlay" id="rebalance-modal">
+  <div class="modal">
+    <div class="modal-title">⚖️ Rebalance Proposal</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px">Based on tiers that have drifted 5pp+ from target, bringing coins back toward their target share of your <b>current</b> portfolio value. Edit quantities before confirming — nothing executes until you tap Confirm on a row.</div>
+    <div id="rebalance-content"></div>
+    <div style="margin-top:10px">
+      <button class="btn-outline" style="width:100%" onclick="closeModal('rebalance-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANUAL TRADE MODAL -->
+<div class="modal-overlay" id="manual-trade-modal">
+  <div class="modal">
+    <div class="modal-title">Log a Trade</div>
+    <div class="form-group"><label class="form-label">Coin</label>
+      <select class="form-select" id="trade-coin-select"></select>
+    </div>
+    <div class="form-group"><label class="form-label">Action</label>
+      <select class="form-select" id="trade-action">
+        <option value="buy">Buy</option>
+        <option value="sell">Sell</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="trade-units" step="0.00000001"/></div>
+    <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="trade-price" step="0.01"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('manual-trade-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmManualTrade()">Log Trade</button>
     </div>
   </div>
 </div>
@@ -314,6 +358,7 @@ function switchTab(name,btn){
   if(name==='dashboard')renderDashboard();
   if(name==='tiers')renderTiersSection();
   if(name==='holdings')renderHoldings();
+  if(name==='journal')renderJournal();
   if(name==='settings')document.getElementById('settings-capital').value=settings.total_capital||'';
 }
 
@@ -325,16 +370,19 @@ let coins=[];
 let settings={total_capital:0};
 let livePrices={};
 let btc90dHigh=null;
+let trades=[];
 
 async function loadAllData(){
-  const[tiersRes,coinsRes,settingsRes]=await Promise.all([
+  const[tiersRes,coinsRes,settingsRes,tradesRes]=await Promise.all([
     sb.from('tiers').select('*').order('sort_order'),
     sb.from('coins').select('*').order('sort_order'),
-    sb.from('kosh_settings').select('*').eq('user_id',currentUser.id).maybeSingle()
+    sb.from('kosh_settings').select('*').eq('user_id',currentUser.id).maybeSingle(),
+    sb.from('trades').select('*').order('trade_date',{ascending:false})
   ]);
   tiers=tiersRes.data||[];
   coins=coinsRes.data||[];
   settings=settingsRes.data||{total_capital:0};
+  trades=tradesRes.data||[];
 }
 
 async function fetchLivePrices(){
@@ -368,6 +416,7 @@ function renderAll(){
   renderDashboard();
   renderTiersSection();
   renderHoldings();
+  renderJournal();
 }
 
 // ═══════════════════════════════
@@ -484,6 +533,10 @@ function renderDashboard(){
     </div>`;
   });
   html+='</div>';
+
+  if(driftedTiers.length){
+    html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
+  }
 
   html+=`<div class="card">
     <div class="card-title">Bearish deployment ladder</div>
@@ -681,6 +734,154 @@ async function saveHolding(){
   await loadAllData();
   renderAll();
   showToast('Holding updated ✅');
+}
+
+// ═══════════════════════════════
+//  REBALANCE PROPOSALS
+// ═══════════════════════════════
+// Proposes trades only for tiers that have drifted 5pp+ from target (matching
+// the stated rebalancing rule), bringing each coin in those tiers back toward
+// its target share of the CURRENT total portfolio value (not the original
+// capital figure — a rebalance should target what you have now, not what you
+// started with).
+function generateRebalanceProposals(){
+  const total=totalActualValue();
+  if(total<=0)return[];
+  const tierStats=calcTierStats();
+  const driftedTierIds=new Set(tierStats.filter(t=>Math.abs(t.driftPP)>=5).map(t=>t.id));
+  const proposals=[];
+  coins.forEach(c=>{
+    if(!driftedTierIds.has(c.tier_id))return;
+    const price=livePrices[c.coingecko_id];
+    if(price==null)return;
+    const tier=tiers.find(t=>t.id===c.tier_id);
+    const targetPctOfPortfolio=tier?(tier.target_pct||0)*(c.weight_in_tier||0):0;
+    const targetUsd=total*targetPctOfPortfolio;
+    const actualValue=coinValue(c)||0;
+    const diffUsd=targetUsd-actualValue;
+    if(Math.abs(diffUsd)<1)return;
+    const diffUnits=Math.abs(diffUsd)/price;
+    proposals.push({coin:c,price,action:diffUsd>0?'buy':'sell',units:diffUnits,usd:Math.abs(diffUsd)});
+  });
+  return proposals.sort((a,b)=>b.usd-a.usd);
+}
+
+function openRebalanceModal(){
+  const proposals=generateRebalanceProposals();
+  window._rebalanceProposals=proposals;
+  renderRebalanceContent();
+  openModal('rebalance-modal');
+}
+function renderRebalanceContent(){
+  const el=document.getElementById('rebalance-content');
+  const proposals=window._rebalanceProposals||[];
+  if(!proposals.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">✅</div><div>Nothing to propose — priced coins in drifted tiers are already within $1 of target.</div></div>`;
+    return;
+  }
+  el.innerHTML=proposals.map((p,i)=>`<div class="card" style="padding:10px 12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="coin-name">${p.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(p.coin.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(p.coin.ticker)}</span></div>
+      <div style="font-size:0.72rem;color:var(--ink3)">@ ${fmtUsd(p.price)}</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input class="form-input" type="number" step="0.00000001" id="prop-units-${i}" value="${p.units}" style="flex:1"/>
+      <button class="btn-primary" style="flex-shrink:0;padding:10px 14px" onclick="confirmProposal(${i})">Confirm</button>
+    </div>
+    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Suggested: ${p.units.toFixed(8)} units (~${fmtUsd(p.usd)})</div>
+  </div>`).join('');
+}
+async function confirmProposal(idx){
+  const p=(window._rebalanceProposals||[])[idx];
+  if(!p)return;
+  const unitsInput=document.getElementById('prop-units-'+idx);
+  const units=parseFloat(unitsInput.value);
+  if(!units||units<=0){showToast('Enter a valid quantity.');return;}
+  await executeTrade(p.coin.id,p.action,units,p.price,'rebalance');
+  window._rebalanceProposals=window._rebalanceProposals.filter((_,i)=>i!==idx);
+  renderRebalanceContent();
+  await loadAllData();
+  renderDashboard();renderHoldings();renderJournal();
+  showToast(`${p.action==='buy'?'Bought':'Sold'} ${units} ${p.coin.ticker} ✅`);
+}
+
+// Shared trade execution — used by both the rebalance flow and manual entry.
+// On a buy: recomputes the weighted-average cost basis. On a sell: computes
+// realized P&L against the current average cost, then logs it to the journal.
+async function executeTrade(coinId,action,units,pricePerUnit,notes){
+  const coin=coins.find(c=>c.id===coinId);
+  if(!coin)return;
+  let newUnitsHeld,newAvgCost,realizedPnl=null,actualUnits=units;
+  if(action==='buy'){
+    newUnitsHeld=(coin.units_held||0)+units;
+    const oldCostTotal=(coin.units_held||0)*(coin.avg_cost_usd||0);
+    newAvgCost=newUnitsHeld>0?(oldCostTotal+units*pricePerUnit)/newUnitsHeld:pricePerUnit;
+  } else {
+    actualUnits=Math.min(units,coin.units_held||0);
+    newUnitsHeld=(coin.units_held||0)-actualUnits;
+    newAvgCost=coin.avg_cost_usd;
+    realizedPnl=coin.avg_cost_usd!=null?(pricePerUnit-coin.avg_cost_usd)*actualUnits:null;
+  }
+  await sb.from('coins').update({units_held:newUnitsHeld,avg_cost_usd:newAvgCost}).eq('id',coinId);
+  await sb.from('trades').insert({
+    user_id:currentUser.id,coin_id:coinId,action,units:actualUnits,
+    price_per_unit:pricePerUnit,total_usd:actualUnits*pricePerUnit,
+    realized_pnl:realizedPnl,notes:notes||null
+  });
+}
+
+// ═══════════════════════════════
+//  JOURNAL
+// ═══════════════════════════════
+function renderJournal(){
+  const el=document.getElementById('journal-content');
+  if(!trades.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
+    return;
+  }
+  const totalRealized=trades.reduce((s,t)=>s+(t.realized_pnl||0),0);
+  let html=`<div class="card" style="text-align:center">
+    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L</div>
+    <div class="serif" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
+  </div>`;
+  html+='<div class="card" style="padding:0 14px">';
+  trades.forEach(t=>{
+    const coin=coins.find(c=>c.id===t.coin_id);
+    const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+    html+=`<div class="coin-row">
+      <div>
+        <div class="coin-name">${t.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(coin?coin.name:'(deleted coin)')} <span style="color:var(--ink3);font-weight:400">${coin?escapeHtml(coin.ticker):''}</span></div>
+        <div class="coin-sub">${date} · ${t.units} units @ ${fmtUsd(t.price_per_unit)}${t.notes?` · ${escapeHtml(t.notes)}`:''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="coin-val">${fmtUsd(t.total_usd)}</div>
+        ${t.realized_pnl!=null?`<div class="coin-drift" style="color:${t.realized_pnl>=0?'var(--green)':'var(--red)'}">${t.realized_pnl>=0?'+':''}${fmtUsd(t.realized_pnl)}</div>`:''}
+      </div>
+    </div>`;
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+function openManualTradeModal(){
+  if(!coins.length){showToast('Add some coins first under Tiers & Coins.');return;}
+  const sel=document.getElementById('trade-coin-select');
+  sel.innerHTML=coins.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker)})</option>`).join('');
+  document.getElementById('trade-units').value='';
+  const firstCoin=coins[0];
+  document.getElementById('trade-price').value=firstCoin?(livePrices[firstCoin.coingecko_id]||''):'';
+  openModal('manual-trade-modal');
+}
+async function confirmManualTrade(){
+  const coinId=document.getElementById('trade-coin-select').value;
+  const action=document.getElementById('trade-action').value;
+  const units=parseFloat(document.getElementById('trade-units').value);
+  const price=parseFloat(document.getElementById('trade-price').value);
+  if(!coinId||!units||units<=0||!price||price<=0){showToast('Please fill in all fields with valid numbers.');return;}
+  await executeTrade(coinId,action,units,price,'manual');
+  closeModal('manual-trade-modal');
+  await loadAllData();
+  renderAll();
+  showToast('Trade logged ✅');
 }
 
 // ═══════════════════════════════
