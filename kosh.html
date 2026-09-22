@@ -98,6 +98,22 @@ button{cursor:pointer;}
 .auth-wrap .form-input{margin-bottom:10px;}
 
 .empty-state{text-align:center;padding:40px 20px;color:var(--ink3);}
+
+.wiz-step-label{font-size:0.7rem;color:var(--ink3);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;}
+.wiz-question{font-size:0.92rem;font-weight:600;margin-bottom:12px;}
+.wiz-tier-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
+.wiz-tier-row .form-input{margin-bottom:0;}
+.wiz-sum-note{font-size:0.74rem;margin-top:6px;margin-bottom:14px;}
+.wiz-coin-search-wrap{position:relative;margin-bottom:10px;}
+.wiz-search-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:10;max-height:200px;overflow-y:auto;}
+.wiz-search-item{padding:9px 12px;font-size:0.82rem;border-bottom:1px solid var(--border);cursor:pointer;}
+.wiz-search-item:last-child{border-bottom:none;}
+.wiz-search-item:hover{background:var(--card2);}
+.wiz-coin-card{background:var(--card2);border-radius:10px;padding:10px 12px;margin-bottom:10px;}
+.wiz-tier-suggest{font-size:0.7rem;margin-top:6px;padding:5px 8px;border-radius:6px;}
+.wiz-tier-suggest.match{background:var(--green-bg);color:var(--green);}
+.wiz-tier-suggest.mismatch{background:var(--amber-bg);color:var(--amber-dark);}
+.wiz-nav{display:flex;gap:10px;margin-top:14px;}
 .empty-state .ic{font-size:2rem;margin-bottom:8px;}
 
 .hidden{display:none!important;}
@@ -180,6 +196,11 @@ button{cursor:pointer;}
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
         <button class="btn-outline" style="width:100%" onclick="seedDefaultPortfolio()">📋 Load starter portfolio (5 tiers, 25 coins)</button>
       </div>
+      <div class="card">
+        <div class="card-title">Build your own</div>
+        <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">Answer a few questions and the app builds your tier/coin structure — including live market-cap-based tier suggestions as you search each coin.</div>
+        <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
+      </div>
     </div>
   </div>
 </div>
@@ -258,6 +279,14 @@ button{cursor:pointer;}
       <button class="btn-outline" style="flex:1" onclick="closeModal('manual-trade-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="confirmManualTrade()">Log Trade</button>
     </div>
+  </div>
+</div>
+
+<!-- SETUP WIZARD MODAL -->
+<div class="modal-overlay" id="wizard-modal">
+  <div class="modal">
+    <div class="modal-title">🧙 Setup Wizard</div>
+    <div id="wizard-content"></div>
   </div>
 </div>
 
@@ -412,6 +441,231 @@ async function refreshPrices(){
   showToast('Prices updated ✅');
 }
 
+// ═══════════════════════════════
+//  COIN SEARCH & TIER CLASSIFICATION (used by the Setup Wizard)
+// ═══════════════════════════════
+async function searchCoinGecko(query){
+  try{
+    const res=await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`);
+    if(!res.ok)return[];
+    const data=await res.json();
+    return(data.coins||[]).slice(0,8).map(c=>({id:c.id,name:c.name,symbol:c.symbol,rank:c.market_cap_rank}));
+  }catch(e){return[];}
+}
+const STABLECOIN_TICKERS=new Set(['USDT','USDC','DAI','BUSD','TUSD','USDP','GUSD','FRAX','USDD','FDUSD']);
+// Classifies a coin by market-cap rank (a live, objective signal) into the kind
+// of tier it would typically sit in — this is what "suggest the relevant tier"
+// is built on, not a guess.
+function classifyCoin(symbol,rank){
+  const upperSym=(symbol||'').toUpperCase();
+  if(STABLECOIN_TICKERS.has(upperSym))return{keyword:'stable',label:'Stablecoin'};
+  if(rank==null)return{keyword:'veryhigh',label:'Very High Risk / Unranked'};
+  if(rank<=10)return{keyword:'safe',label:'Safe (Large-Cap)'};
+  if(rank<=50)return{keyword:'mid',label:'Mid Risk'};
+  if(rank<=150)return{keyword:'high',label:'High Risk'};
+  return{keyword:'veryhigh',label:'Very High Risk'};
+}
+function tierNameMatchesKeyword(tierName,keyword){
+  const lower=(tierName||'').toLowerCase();
+  if(keyword==='stable')return lower.includes('stable');
+  if(keyword==='safe')return lower.includes('safe')||lower.includes('large');
+  if(keyword==='mid')return lower.includes('mid');
+  if(keyword==='veryhigh')return lower.includes('very high')||lower.includes('meme');
+  if(keyword==='high')return lower.includes('high')&&!lower.includes('very high');
+  return false;
+}
+
+// ═══════════════════════════════
+//  SETUP WIZARD
+// ═══════════════════════════════
+let wizardState=null;
+
+function openWizard(){
+  wizardState={step:1,tierCount:5,tierDefs:[],tierCoinCounts:[],tierCoinSlots:[]};
+  renderWizardStep1();
+  openModal('wizard-modal');
+}
+function renderWizardStep1(){
+  const el=document.getElementById('wizard-content');
+  el.innerHTML=`
+    <div class="wiz-step-label">Step 1 of 4</div>
+    <div class="wiz-question">How many tiers would you like to create?</div>
+    <input class="form-input" type="number" id="wiz-tier-count" min="1" max="10" value="${wizardState.tierCount}"/>
+    <div style="font-size:0.72rem;color:var(--ink3);margin-top:6px">e.g. Safe, Mid Risk, High Risk, Meme, Stablecoins — or organize however you like.</div>
+    <div class="wiz-nav">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('wizard-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="wizardGoStep2()">Continue</button>
+    </div>`;
+}
+function wizardGoStep2(){
+  const n=parseInt(document.getElementById('wiz-tier-count').value);
+  if(!n||n<1||n>10){showToast('Enter a number between 1 and 10.');return;}
+  wizardState.tierCount=n;
+  wizardState.tierDefs=Array.from({length:n},(_,i)=>wizardState.tierDefs[i]||{name:'',targetPct:Math.round(100/n)});
+  wizardState.step=2;
+  renderWizardStep2();
+}
+function renderWizardStep2(){
+  const el=document.getElementById('wizard-content');
+  el.innerHTML=`
+    <div class="wiz-step-label">Step 2 of 4</div>
+    <div class="wiz-question">Name each tier and set its target %</div>
+    ${wizardState.tierDefs.map((t,i)=>`
+      <div class="wiz-tier-row">
+        <input class="form-input" style="flex:2" placeholder="Tier ${i+1} name" value="${escapeHtml(t.name)}" oninput="wizardState.tierDefs[${i}].name=this.value"/>
+        <input class="form-input" style="flex:1" type="number" step="0.1" placeholder="%" value="${t.targetPct}" oninput="wizardState.tierDefs[${i}].targetPct=parseFloat(this.value)||0;updateWizSumNote()"/>
+      </div>`).join('')}
+    <div class="wiz-sum-note" id="wiz-sum-note"></div>
+    <div class="wiz-nav">
+      <button class="btn-outline" style="flex:1" onclick="wizardState.step=1;renderWizardStep1()">Back</button>
+      <button class="btn-primary" style="flex:1" onclick="wizardGoStep3()">Continue</button>
+    </div>`;
+  updateWizSumNote();
+}
+function updateWizSumNote(){
+  const el=document.getElementById('wiz-sum-note');
+  if(!el)return;
+  const sum=wizardState.tierDefs.reduce((s,t)=>s+(t.targetPct||0),0);
+  const ok=Math.abs(sum-100)<0.5;
+  el.textContent=`Total: ${sum.toFixed(1)}%`+(ok?' ✅':' — should sum to 100%');
+  el.style.color=ok?'var(--green)':'var(--amber-dark)';
+}
+function wizardGoStep3(){
+  if(wizardState.tierDefs.some(t=>!t.name.trim())){showToast('Please name every tier.');return;}
+  wizardState.tierCoinCounts=wizardState.tierDefs.map((_,i)=>wizardState.tierCoinCounts[i]||3);
+  wizardState.tierCoinSlots=wizardState.tierDefs.map((_,i)=>wizardState.tierCoinSlots[i]||[]);
+  wizardState.step=3;
+  renderWizardStep3();
+}
+function renderWizardStep3(){
+  const el=document.getElementById('wizard-content');
+  let html=`<div class="wiz-step-label">Step 3 of 4</div><div class="wiz-question">How many coins in each tier?</div>`;
+  wizardState.tierDefs.forEach((t,ti)=>{
+    const slots=wizardState.tierCoinSlots[ti];
+    html+=`<div class="card" style="background:var(--card2)">
+      <div style="font-weight:700;font-size:0.85rem;margin-bottom:8px">${escapeHtml(t.name)} <span style="font-weight:400;color:var(--ink3)">(${t.targetPct}% target)</span></div>`;
+    if(!slots.length){
+      html+=`<div style="display:flex;gap:8px;align-items:center">
+        <input class="form-input" type="number" min="1" max="15" id="wiz-coincount-${ti}" value="${wizardState.tierCoinCounts[ti]}" style="flex:1"/>
+        <button class="btn-outline" onclick="wizardGenerateCoinSlots(${ti})">Generate</button>
+      </div>`;
+    } else {
+      slots.forEach((slot,si)=>{html+=renderWizCoinSlot(ti,si,slot);});
+      const weightSum=slots.reduce((s,sl)=>s+(sl.weightPct||0),0);
+      html+=`<div style="font-size:0.7rem;color:${Math.abs(weightSum-100)<0.5?'var(--green)':'var(--amber-dark)'}">Tier weights total: ${weightSum.toFixed(1)}%</div>`;
+      html+=`<button class="link-btn" onclick="wizardResetTierCoins(${ti})">↺ Change coin count</button>`;
+    }
+    html+='</div>';
+  });
+  html+=`<div class="wiz-nav">
+    <button class="btn-outline" style="flex:1" onclick="wizardState.step=2;renderWizardStep2()">Back</button>
+    <button class="btn-primary" style="flex:1" onclick="wizardGoStep4()">Review</button>
+  </div>`;
+  el.innerHTML=html;
+}
+function wizardGenerateCoinSlots(ti){
+  const n=parseInt(document.getElementById('wiz-coincount-'+ti).value);
+  if(!n||n<1||n>15){showToast('Enter a number between 1 and 15.');return;}
+  wizardState.tierCoinCounts[ti]=n;
+  const equalWeight=Math.round((100/n)*10)/10;
+  wizardState.tierCoinSlots[ti]=Array.from({length:n},()=>({query:'',selected:null,weightPct:equalWeight,searchResults:[]}));
+  renderWizardStep3();
+}
+function wizardResetTierCoins(ti){
+  wizardState.tierCoinSlots[ti]=[];
+  renderWizardStep3();
+}
+function renderWizCoinSlot(ti,si,slot){
+  if(slot.selected){
+    const suggestion=classifyCoin(slot.selected.symbol,slot.selected.rank);
+    const currentTierName=wizardState.tierDefs[ti].name;
+    const matches=tierNameMatchesKeyword(currentTierName,suggestion.keyword);
+    return`<div class="wiz-coin-card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><b>${escapeHtml(slot.selected.name)}</b> <span style="color:var(--ink3)">${escapeHtml(slot.selected.symbol.toUpperCase())}</span>${slot.selected.rank?` <span style="color:var(--ink3);font-size:0.7rem">· rank #${slot.selected.rank}</span>`:''}</div>
+        <button class="link-btn" onclick="wizardClearSlot(${ti},${si})">Change</button>
+      </div>
+      <div class="wiz-tier-suggest ${matches?'match':'mismatch'}">${matches?'✅':'💡'} Typically classified as "${suggestion.label}"${matches?' — matches this tier':` — you might reconsider vs "${escapeHtml(currentTierName)}"`}</div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+        <label style="font-size:0.72rem;color:var(--ink2)">Weight in tier</label>
+        <input class="form-input" type="number" step="0.1" style="flex:1" value="${slot.weightPct}" oninput="wizardState.tierCoinSlots[${ti}][${si}].weightPct=parseFloat(this.value)||0"/>
+        <span style="font-size:0.72rem">%</span>
+      </div>
+    </div>`;
+  }
+  return`<div class="wiz-coin-search-wrap">
+    <input class="form-input" placeholder="Search coin name or ticker..." value="${escapeHtml(slot.query)}" oninput="wizardSearchCoin(${ti},${si},this.value)"/>
+    <div id="wiz-dropdown-${ti}-${si}"></div>
+  </div>`;
+}
+function wizardClearSlot(ti,si){
+  const oldWeight=wizardState.tierCoinSlots[ti][si].weightPct;
+  wizardState.tierCoinSlots[ti][si]={query:'',selected:null,weightPct:oldWeight,searchResults:[]};
+  renderWizardStep3();
+}
+let _wizSearchTimer=null;
+function wizardSearchCoin(ti,si,query){
+  wizardState.tierCoinSlots[ti][si].query=query;
+  clearTimeout(_wizSearchTimer);
+  const dropdown=document.getElementById(`wiz-dropdown-${ti}-${si}`);
+  if(query.trim().length<2){if(dropdown)dropdown.innerHTML='';return;}
+  _wizSearchTimer=setTimeout(async()=>{
+    const results=await searchCoinGecko(query);
+    const dd=document.getElementById(`wiz-dropdown-${ti}-${si}`);
+    if(!dd)return;
+    wizardState.tierCoinSlots[ti][si].searchResults=results;
+    if(!results.length){dd.innerHTML='';return;}
+    dd.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="wizardSelectCoin(${ti},${si},${ri})">${escapeHtml(r.name)} <span style="color:var(--ink3)">${escapeHtml(r.symbol.toUpperCase())}</span>${r.rank?` · rank #${r.rank}`:''}</div>`).join('')}</div>`;
+  },350);
+}
+function wizardSelectCoin(ti,si,ri){
+  const result=wizardState.tierCoinSlots[ti][si].searchResults[ri];
+  wizardState.tierCoinSlots[ti][si].selected=result;
+  renderWizardStep3();
+}
+function wizardGoStep4(){
+  wizardState.step=4;
+  renderWizardStep4();
+}
+function renderWizardStep4(){
+  const el=document.getElementById('wizard-content');
+  let html=`<div class="wiz-step-label">Step 4 of 4</div><div class="wiz-question">Review &amp; create</div>`;
+  wizardState.tierDefs.forEach((t,ti)=>{
+    const slots=(wizardState.tierCoinSlots[ti]||[]).filter(s=>s.selected);
+    html+=`<div class="card" style="background:var(--card2)">
+      <div style="font-weight:700;font-size:0.85rem">${escapeHtml(t.name)} — ${t.targetPct}%</div>
+      ${slots.map(s=>`<div style="font-size:0.78rem;color:var(--ink2);margin-top:4px">• ${escapeHtml(s.selected.name)} (${escapeHtml(s.selected.symbol.toUpperCase())}) — ${s.weightPct}%</div>`).join('')||'<div style="font-size:0.76rem;color:var(--ink3);margin-top:4px">No coins added</div>'}
+    </div>`;
+  });
+  html+=`<div class="wiz-nav">
+    <button class="btn-outline" style="flex:1" onclick="wizardState.step=3;renderWizardStep3()">Back</button>
+    <button class="btn-primary" style="flex:1" onclick="wizardCreatePortfolio()">Create Portfolio ✅</button>
+  </div>`;
+  el.innerHTML=html;
+}
+async function wizardCreatePortfolio(){
+  showToast('Creating your portfolio...');
+  const baseSortOrder=tiers.length;
+  for(let ti=0;ti<wizardState.tierDefs.length;ti++){
+    const t=wizardState.tierDefs[ti];
+    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,name:t.name,target_pct:(t.targetPct||0)/100,sort_order:baseSortOrder+ti}).select().single();
+    if(error){showToast('Error creating tier: '+error.message);continue;}
+    const slots=(wizardState.tierCoinSlots[ti]||[]).filter(s=>s.selected);
+    const coinRows=slots.map((s,si)=>({
+      user_id:currentUser.id,tier_id:tierRow.id,
+      name:s.selected.name,ticker:s.selected.symbol.toUpperCase(),
+      coingecko_id:s.selected.id,weight_in_tier:(s.weightPct||0)/100,
+      exchanges:'',rationale:'',units_held:0,sort_order:si
+    }));
+    if(coinRows.length)await sb.from('coins').insert(coinRows);
+  }
+  closeModal('wizard-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast('Portfolio created ✅');
+}
+
 function renderAll(){
   renderDashboard();
   renderTiersSection();
@@ -481,7 +735,7 @@ function calcBearishLadder(){
 function renderDashboard(){
   const el=document.getElementById('dash-content');
   if(!coins.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">💼</div><div>No portfolio set up yet.</div><div style="margin-top:10px"><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
+    el.innerHTML=`<div class="empty-state"><div class="ic">💼</div><div>No portfolio set up yet.</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center"><button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
     return;
   }
   const total=totalActualValue();
