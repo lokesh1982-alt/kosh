@@ -195,7 +195,8 @@ button{cursor:pointer;}
       <div class="card">
         <div class="card-title">Data</div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
-        <button class="btn-outline" style="width:100%" onclick="seedDefaultPortfolio()">📋 Load starter portfolio (5 tiers, 25 coins)</button>
+        <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="seedDefaultPortfolio()">📋 Load starter portfolio (5 tiers, 25 coins)</button>
+        <button class="btn-outline" style="width:100%" onclick="seedCuratedPortfolio()">✨ Load curated portfolio (5 tiers, 18 coins)</button>
       </div>
       <div class="card">
         <div class="card-title">Build your own</div>
@@ -1276,6 +1277,63 @@ const SEED_TIERS=[
     {name:'Dai',ticker:'DAI',coingecko_id:'dai',weight_in_tier:0.15,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Decentralized, over-collateralized design; not a single-company IOU'}
   ]}
 ];
+
+// Curated version: same coins/data as above, trimmed to Lokesh's requested set
+// with weights re-normalized to sum to 100% within each tier.
+const CURATED_SEED_TIERS=[
+  {name:'Safe (Large-Cap)',target_pct:0.25,coins:[
+    {name:'Bitcoin',ticker:'BTC',coingecko_id:'bitcoin',weight_in_tier:0.631579,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Deepest liquidity, longest track record, portfolio anchor'},
+    {name:'Ethereum',ticker:'ETH',coingecko_id:'ethereum',weight_in_tier:0.368421,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Dominant smart-contract platform, staking yield optionality'}
+  ]},
+  {name:'Mid Risk',target_pct:0.25,coins:[
+    {name:'Solana',ticker:'SOL',coingecko_id:'solana',weight_in_tier:0.333333,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'High-throughput L1, strong dev activity, still 2-3x BTC beta'},
+    {name:'Cardano',ticker:'ADA',coingecko_id:'cardano',weight_in_tier:0.222222,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Research-driven L1, large long-term holder base'},
+    {name:'TRON',ticker:'TRX',coingecko_id:'tron',weight_in_tier:0.222222,exchanges:'Binance, CoinDCX; verify CoinSwitch',rationale:'High transaction volume, dominant USDT settlement rail'},
+    {name:'Chainlink',ticker:'LINK',coingecko_id:'chainlink',weight_in_tier:0.222222,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Oracle infrastructure layer used across most major DeFi protocols'}
+  ]},
+  {name:'High Risk',target_pct:0.15,coins:[
+    {name:'Avalanche',ticker:'AVAX',coingecko_id:'avalanche-2',weight_in_tier:0.2,exchanges:'Binance, CoinDCX',rationale:'Subnet/enterprise chain thesis; down >90% from ATH = value or trap'},
+    {name:'NEAR Protocol',ticker:'NEAR',coingecko_id:'near',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Sharded L1 with AI/agent narrative exposure'},
+    {name:'Sui',ticker:'SUI',coingecko_id:'sui',weight_in_tier:0.166667,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Newer high-throughput L1; smaller cap, materially higher volatility'},
+    {name:'Cosmos',ticker:'ATOM',coingecko_id:'cosmos',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Interchain hub token; cap well below prior cycle highs'},
+    {name:'Aptos',ticker:'APT',coingecko_id:'aptos',weight_in_tier:0.166667,exchanges:'Binance, CoinDCX',rationale:'Move-language L1 from ex-Meta Diem team; smallest cap in this tier'},
+    {name:'Arbitrum',ticker:'ARB',coingecko_id:'arbitrum',weight_in_tier:0.133333,exchanges:'Binance; verify CoinDCX',rationale:'Leading Ethereum L2 by TVL; token price has lagged usage growth'}
+  ]},
+  {name:'Very High Risk (Meme Coins)',target_pct:0.15,coins:[
+    {name:'Dogecoin',ticker:'DOGE',coingecko_id:'dogecoin',weight_in_tier:0.333333,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Largest, most liquid meme coin; 10+ year track record'},
+    {name:'Shiba Inu',ticker:'SHIB',coingecko_id:'shiba-inu',weight_in_tier:0.25,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Second-largest meme by cap; large but fading ecosystem'},
+    {name:'Pepe',ticker:'PEPE',coingecko_id:'pepe',weight_in_tier:0.25,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Pure attention/liquidity play with no utility claim'},
+    {name:'Bonk',ticker:'BONK',coingecko_id:'bonk',weight_in_tier:0.166667,exchanges:'Binance; verify CoinDCX/CoinSwitch',rationale:'Solana-ecosystem meme, community/airdrop driven'}
+  ]},
+  {name:'Stablecoins (Bearish Reserve)',target_pct:0.20,coins:[
+    {name:'Tether',ticker:'USDT',coingecko_id:'tether',weight_in_tier:0.588235,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'Deepest stablecoin liquidity/pairs across all exchanges'},
+    {name:'USD Coin',ticker:'USDC',coingecko_id:'usd-coin',weight_in_tier:0.411765,exchanges:'Binance, CoinDCX, CoinSwitch',rationale:'More transparent reserve reporting; diversifies issuer risk'}
+  ]}
+];
+
+async function seedCuratedPortfolio(){
+  if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the curated 18-coin portfolio will add these 5 tiers alongside what you have. Continue?'))return;
+  if(!currentPortfolioId){
+    const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
+    if(error){showToast('Error creating portfolio: '+error.message);return;}
+    currentPortfolioId=data.id;
+    localStorage.setItem('kosh-current-portfolio',data.id);
+    await loadPortfolios();
+    renderPortfolioSwitcher();
+  }
+  showToast('Loading curated portfolio...');
+  for(let ti=0;ti<CURATED_SEED_TIERS.length;ti++){
+    const st=CURATED_SEED_TIERS[ti];
+    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:st.name,target_pct:st.target_pct,sort_order:tiers.length+ti}).select().single();
+    if(error){showToast('Error creating tier: '+error.message);continue;}
+    const coinRows=st.coins.map((c,ci)=>({...c,user_id:currentUser.id,tier_id:tierRow.id,units_held:0,sort_order:ci}));
+    await sb.from('coins').insert(coinRows);
+  }
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast('Curated portfolio loaded ✅');
+}
 
 async function seedDefaultPortfolio(){
   if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
