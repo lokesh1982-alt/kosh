@@ -145,6 +145,7 @@ button{cursor:pointer;}
   </div>
 
   <div class="main">
+    <div id="portfolio-switcher" style="display:flex;gap:8px;align-items:center;margin-bottom:14px"></div>
     <div class="tabs-row">
       <button class="tab-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
       <button class="tab-btn" onclick="switchTab('tiers',this)">Tiers &amp; Coins</button>
@@ -290,6 +291,24 @@ button{cursor:pointer;}
   </div>
 </div>
 
+<!-- NEW PORTFOLIO MODAL -->
+<div class="modal-overlay" id="new-portfolio-modal">
+  <div class="modal">
+    <div class="modal-title">New Portfolio</div>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="np-name" placeholder="e.g. Spot Trading"/></div>
+    <div class="form-group"><label class="form-label">Type</label>
+      <select class="form-select" id="np-kind">
+        <option value="rebalance">⚖️ Rebalance (tier targets, drift alerts, bearish ladder)</option>
+        <option value="spot">📈 Spot Trading (active buy/sell, no rebalance rules)</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('new-portfolio-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="saveNewPortfolio()">Create</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -359,6 +378,7 @@ async function onAuthed(user){
   await loadAllData();
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
+  renderPortfolioSwitcher();
   renderAll();
 }
 
@@ -394,6 +414,8 @@ function switchTab(name,btn){
 // ═══════════════════════════════
 //  DATA LAYER
 // ═══════════════════════════════
+let portfolios=[];
+let currentPortfolioId=null;
 let tiers=[];
 let coins=[];
 let settings={total_capital:0};
@@ -401,17 +423,72 @@ let livePrices={};
 let btc90dHigh=null;
 let trades=[];
 
+async function loadPortfolios(){
+  const{data}=await sb.from('portfolios').select('*').order('sort_order');
+  portfolios=data||[];
+  if(!currentPortfolioId||!portfolios.find(p=>p.id===currentPortfolioId)){
+    const saved=localStorage.getItem('kosh-current-portfolio');
+    currentPortfolioId=(saved&&portfolios.find(p=>p.id===saved))?saved:(portfolios[0]?portfolios[0].id:null);
+  }
+}
+function currentPortfolio(){return portfolios.find(p=>p.id===currentPortfolioId)||null;}
+
 async function loadAllData(){
-  const[tiersRes,coinsRes,settingsRes,tradesRes]=await Promise.all([
-    sb.from('tiers').select('*').order('sort_order'),
-    sb.from('coins').select('*').order('sort_order'),
-    sb.from('kosh_settings').select('*').eq('user_id',currentUser.id).maybeSingle(),
-    sb.from('trades').select('*').order('trade_date',{ascending:false})
+  await loadPortfolios();
+  if(!currentPortfolioId){tiers=[];coins=[];trades=[];settings={total_capital:0};return;}
+  const[tiersRes,settingsRes]=await Promise.all([
+    sb.from('tiers').select('*').eq('portfolio_id',currentPortfolioId).order('sort_order'),
+    sb.from('kosh_settings').select('*').eq('portfolio_id',currentPortfolioId).maybeSingle()
   ]);
   tiers=tiersRes.data||[];
-  coins=coinsRes.data||[];
   settings=settingsRes.data||{total_capital:0};
+  const tierIds=tiers.map(t=>t.id);
+  const coinsRes=tierIds.length?await sb.from('coins').select('*').in('tier_id',tierIds).order('sort_order'):{data:[]};
+  coins=coinsRes.data||[];
+  const coinIds=coins.map(c=>c.id);
+  const tradesRes=coinIds.length?await sb.from('trades').select('*').in('coin_id',coinIds).order('trade_date',{ascending:false}):{data:[]};
   trades=tradesRes.data||[];
+}
+
+function renderPortfolioSwitcher(){
+  const el=document.getElementById('portfolio-switcher');
+  if(!el)return;
+  if(!portfolios.length){
+    el.innerHTML=`<button class="btn-dark" style="width:100%" onclick="openNewPortfolioModal()">+ Create your first portfolio</button>`;
+    return;
+  }
+  el.innerHTML=`
+    <select class="form-select" style="flex:1" onchange="switchPortfolio(this.value)">
+      ${portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('')}
+    </select>
+    <button class="link-btn" onclick="openNewPortfolioModal()">+ New</button>`;
+}
+async function switchPortfolio(id){
+  currentPortfolioId=id;
+  localStorage.setItem('kosh-current-portfolio',id);
+  await loadAllData();
+  await fetchLivePrices();
+  renderPortfolioSwitcher();
+  renderAll();
+}
+function openNewPortfolioModal(){
+  document.getElementById('np-name').value='';
+  document.getElementById('np-kind').value='rebalance';
+  openModal('new-portfolio-modal');
+}
+async function saveNewPortfolio(){
+  const name=document.getElementById('np-name').value.trim();
+  const kind=document.getElementById('np-kind').value;
+  if(!name){showToast('Please enter a portfolio name.');return;}
+  const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name,kind,sort_order:portfolios.length}).select().single();
+  if(error){showToast('Error: '+error.message);return;}
+  closeModal('new-portfolio-modal');
+  currentPortfolioId=data.id;
+  localStorage.setItem('kosh-current-portfolio',data.id);
+  await loadAllData();
+  renderPortfolioSwitcher();
+  renderAll();
+  showToast('Portfolio created ✅');
 }
 
 async function fetchLivePrices(){
@@ -481,6 +558,7 @@ function tierNameMatchesKeyword(tierName,keyword){
 let wizardState=null;
 
 function openWizard(){
+  if(!currentPortfolioId){showToast('Create a portfolio first, using the switcher at the top.');return;}
   wizardState={step:1,tierCount:5,tierDefs:[],tierCoinCounts:[],tierCoinSlots:[]};
   renderWizardStep1();
   openModal('wizard-modal');
@@ -644,11 +722,12 @@ function renderWizardStep4(){
   el.innerHTML=html;
 }
 async function wizardCreatePortfolio(){
-  showToast('Creating your portfolio...');
+  if(!currentPortfolioId){showToast('Create a portfolio first (Settings → the portfolio switcher).');return;}
+  showToast('Creating your tiers...');
   const baseSortOrder=tiers.length;
   for(let ti=0;ti<wizardState.tierDefs.length;ti++){
     const t=wizardState.tierDefs[ti];
-    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,name:t.name,target_pct:(t.targetPct||0)/100,sort_order:baseSortOrder+ti}).select().single();
+    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:t.name,target_pct:(t.targetPct||0)/100,sort_order:baseSortOrder+ti}).select().single();
     if(error){showToast('Error creating tier: '+error.message);continue;}
     const slots=(wizardState.tierCoinSlots[ti]||[]).filter(s=>s.selected);
     const coinRows=slots.map((s,si)=>({
@@ -735,7 +814,7 @@ function calcBearishLadder(){
 function renderDashboard(){
   const el=document.getElementById('dash-content');
   if(!coins.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">💼</div><div>No portfolio set up yet.</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center"><button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
+    el.innerHTML=`<div class="empty-state"><div class="ic">💼</div><div>No tiers or coins in this portfolio yet.</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center"><button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
     return;
   }
   const total=totalActualValue();
@@ -792,16 +871,19 @@ function renderDashboard(){
     html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
   }
 
-  html+=`<div class="card">
-    <div class="card-title">Bearish deployment ladder</div>
-    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">${ladder.drawdownPct!=null?`BTC is ${ladder.drawdownPct.toFixed(1)}% below its 90-day high`:'Loading BTC drawdown...'}</div>
-    <div style="display:flex;gap:6px">
-      ${ladder.triggers.map(tr=>`<div style="flex:1;text-align:center;background:${tr.hit?'var(--red-bg)':'var(--card2)'};padding:8px 4px;border-radius:8px">
-        <div style="font-size:0.68rem;color:${tr.hit?'var(--red-dark)':'var(--ink2)'}">-${tr.threshold}%</div>
-        <div style="font-size:0.6rem;margin-top:2px;color:${tr.hit?'var(--red-dark)':'var(--ink3)'};font-weight:${tr.hit?'700':'400'}">${tr.hit?'Triggered!':'Not triggered'}</div>
-      </div>`).join('')}
-    </div>
-  </div>`;
+  const activePortfolio=currentPortfolio();
+  if(!activePortfolio||activePortfolio.kind==='rebalance'){
+    html+=`<div class="card">
+      <div class="card-title">Bearish deployment ladder</div>
+      <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">${ladder.drawdownPct!=null?`BTC is ${ladder.drawdownPct.toFixed(1)}% below its 90-day high`:'Loading BTC drawdown...'}</div>
+      <div style="display:flex;gap:6px">
+        ${ladder.triggers.map(tr=>`<div style="flex:1;text-align:center;background:${tr.hit?'var(--red-bg)':'var(--card2)'};padding:8px 4px;border-radius:8px">
+          <div style="font-size:0.68rem;color:${tr.hit?'var(--red-dark)':'var(--ink2)'}">-${tr.threshold}%</div>
+          <div style="font-size:0.6rem;margin-top:2px;color:${tr.hit?'var(--red-dark)':'var(--ink3)'};font-weight:${tr.hit?'700':'400'}">${tr.hit?'Triggered!':'Not triggered'}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
 
   el.innerHTML=html;
 }
@@ -875,7 +957,8 @@ async function saveTier(){
   if(tierId){
     await sb.from('tiers').update({name,target_pct:targetPct}).eq('id',tierId);
   } else {
-    await sb.from('tiers').insert({user_id:currentUser.id,name,target_pct:targetPct,sort_order:tiers.length});
+    if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+    await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name,target_pct:targetPct,sort_order:tiers.length});
   }
   closeModal('tier-modal');
   await loadAllData();
@@ -1142,8 +1225,12 @@ async function confirmManualTrade(){
 //  SETTINGS
 // ═══════════════════════════════
 async function saveCapital(){
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
   const val=parseFloat(document.getElementById('settings-capital').value)||0;
-  await sb.from('kosh_settings').upsert({user_id:currentUser.id,total_capital:val,updated_at:new Date().toISOString()});
+  await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:currentPortfolioId,total_capital:val,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
   settings.total_capital=val;
   renderAll();
   showToast('Capital saved ✅');
@@ -1191,11 +1278,19 @@ const SEED_TIERS=[
 ];
 
 async function seedDefaultPortfolio(){
-  if(tiers.length&&!confirm('You already have tiers set up. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
+  if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
+  if(!currentPortfolioId){
+    const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
+    if(error){showToast('Error creating portfolio: '+error.message);return;}
+    currentPortfolioId=data.id;
+    localStorage.setItem('kosh-current-portfolio',data.id);
+    await loadPortfolios();
+    renderPortfolioSwitcher();
+  }
   showToast('Loading starter portfolio...');
   for(let ti=0;ti<SEED_TIERS.length;ti++){
     const st=SEED_TIERS[ti];
-    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,name:st.name,target_pct:st.target_pct,sort_order:tiers.length+ti}).select().single();
+    const{data:tierRow,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:st.name,target_pct:st.target_pct,sort_order:tiers.length+ti}).select().single();
     if(error){showToast('Error creating tier: '+error.message);continue;}
     const coinRows=st.coins.map((c,ci)=>({...c,user_id:currentUser.id,tier_id:tierRow.id,units_held:0,sort_order:ci}));
     await sb.from('coins').insert(coinRows);
