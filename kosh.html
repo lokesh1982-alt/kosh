@@ -169,12 +169,18 @@ button{cursor:pointer;}
     <div class="section active" id="sec-dashboard">
       <div id="ticker-bar"></div>
       <div id="dash-content"></div>
-      <div class="tile-grid">
+      <div class="tile-grid" style="grid-template-columns:repeat(5,1fr)">
         <button class="menu-tile" onclick="switchTab('tiers')"><div class="ic">📊</div><div class="lbl">Tiers &amp; Coins</div></button>
         <button class="menu-tile" onclick="switchTab('holdings')"><div class="ic">🪙</div><div class="lbl">Holdings</div></button>
         <button class="menu-tile" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
+        <button class="menu-tile" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
         <button class="menu-tile" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       </div>
+    </div>
+
+    <!-- NEWS -->
+    <div class="section" id="sec-news">
+      <div id="news-content"></div>
     </div>
 
     <!-- TIERS & COINS -->
@@ -434,6 +440,7 @@ async function onAuthed(user){
   fetchBtcHigh(); // don't block initial render on this
   renderPortfolioSwitcher();
   renderAll();
+  startNewsAutoRefresh();
 }
 
 // ═══════════════════════════════
@@ -463,6 +470,7 @@ function switchTab(name){
   if(name==='tiers')renderTiersSection();
   if(name==='holdings')renderHoldings();
   if(name==='journal')renderJournal();
+  if(name==='news')renderNews();
   if(name==='settings')document.getElementById('settings-capital').value=settings.total_capital||'';
 }
 function goToDashboard(){switchTab('dashboard');}
@@ -1818,6 +1826,94 @@ function renderJournal(){
   html+='</div>';
   el.innerHTML=html;
 }
+
+// ═══════════════════════════════
+//  NEWS
+// ═══════════════════════════════
+// No persistence needed — every fetch re-queries the live API and filters to
+// the last 24 hours, so "older news gets removed automatically" just falls
+// out of that filter rather than needing explicit deletion logic.
+let newsData={coins:[],market:[]};
+let newsAutoRefreshTimer=null;
+
+async function getAllPortfolioTickers(){
+  const allTiersRes=await sb.from('tiers').select('id');
+  const allTierIds=(allTiersRes.data||[]).map(t=>t.id);
+  if(!allTierIds.length)return[];
+  const allCoinsRes=await sb.from('coins').select('ticker').in('tier_id',allTierIds);
+  return[...new Set((allCoinsRes.data||[]).map(c=>(c.ticker||'').toUpperCase()).filter(Boolean))];
+}
+
+function timeAgo(unixSeconds){
+  const diff=(Date.now()/1000)-unixSeconds;
+  if(diff<3600)return Math.max(1,Math.floor(diff/60))+'m ago';
+  if(diff<86400)return Math.floor(diff/3600)+'h ago';
+  return Math.floor(diff/86400)+'d ago';
+}
+
+async function fetchNews(){
+  const cutoff=(Date.now()/1000)-86400; // last 24 hours only
+  try{
+    const marketRes=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN');
+    if(marketRes.ok){
+      const marketJson=await marketRes.json();
+      newsData.market=(marketJson.Data||[]).filter(a=>a.published_on>=cutoff);
+    }
+  }catch(e){console.error('market news fetch failed',e);}
+
+  const tickers=await getAllPortfolioTickers();
+  if(tickers.length){
+    try{
+      const coinRes=await fetch(`https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=${tickers.join(',')}`);
+      if(coinRes.ok){
+        const coinJson=await coinRes.json();
+        newsData.coins=(coinJson.Data||[]).filter(a=>a.published_on>=cutoff);
+      }
+    }catch(e){console.error('coin news fetch failed',e);}
+  } else {
+    newsData.coins=[];
+  }
+}
+
+function newsArticleHtml(article){
+  const bodyText=article.body||'';
+  const excerpt=bodyText.length>140?bodyText.slice(0,140).trim()+'…':bodyText;
+  const source=article.source_info?.name||article.source||'Unknown source';
+  return`<div class="card" style="padding:12px">
+    <div style="font-size:0.82rem;font-weight:600;color:var(--ink);margin-bottom:4px">${escapeHtml(article.title||'')}</div>
+    <div style="font-size:0.66rem;color:var(--ink3);margin-bottom:6px">${escapeHtml(source)} · ${timeAgo(article.published_on)}</div>
+    ${excerpt?`<div style="font-size:0.76rem;color:var(--ink2);margin-bottom:8px;line-height:1.4">${escapeHtml(excerpt)}</div>`:''}
+    <a href="${article.url}" target="_blank" rel="noopener noreferrer" style="font-size:0.74rem;font-weight:600;color:var(--teal-dark)">Read full article →</a>
+  </div>`;
+}
+
+async function renderNews(){
+  const el=document.getElementById('news-content');
+  if(!el)return;
+  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading news...</div></div>`;
+  await fetchNews();
+  let html=`<div style="font-size:0.7rem;color:var(--ink3);margin-bottom:12px">Showing the last 24 hours · auto-refreshes every few minutes while this screen is open</div>`;
+
+  html+=`<div class="card-title" style="margin-bottom:8px">📰 Your Coins</div>`;
+  html+=newsData.coins.length
+    ? newsData.coins.map(newsArticleHtml).join('')
+    : `<div class="card" style="text-align:center;padding:18px"><div style="font-size:0.78rem;color:var(--ink3)">No news in the last 24h for your portfolio coins.</div></div>`;
+
+  html+=`<div class="card-title" style="margin:18px 0 8px">🌐 Market News</div>`;
+  html+=newsData.market.length
+    ? newsData.market.map(newsArticleHtml).join('')
+    : `<div class="card" style="text-align:center;padding:18px"><div style="font-size:0.78rem;color:var(--ink3)">No market news in the last 24h.</div></div>`;
+
+  el.innerHTML=html;
+}
+
+function startNewsAutoRefresh(){
+  if(newsAutoRefreshTimer)clearInterval(newsAutoRefreshTimer);
+  newsAutoRefreshTimer=setInterval(()=>{
+    if(document.getElementById('sec-news')?.classList.contains('active'))renderNews();
+  },5*60*1000); // every 5 minutes, only while News is the visible screen
+}
+
 function openManualTradeModal(preselectCoinId,preselectAction){
   if(!coins.length){showToast('Add some coins first under Tiers & Coins.');return;}
   const sel=document.getElementById('trade-coin-select');
