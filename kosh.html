@@ -147,15 +147,21 @@ button{cursor:pointer;}
   <div class="main">
     <div id="portfolio-switcher" style="display:flex;gap:8px;align-items:center;margin-bottom:14px"></div>
     <div class="tabs-row">
-      <button class="tab-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
+      <button class="tab-btn active" onclick="switchTab('overview',this)">Overview</button>
+      <button class="tab-btn" onclick="switchTab('dashboard',this)">Dashboard</button>
       <button class="tab-btn" onclick="switchTab('tiers',this)">Tiers &amp; Coins</button>
       <button class="tab-btn" onclick="switchTab('holdings',this)">Holdings</button>
       <button class="tab-btn" onclick="switchTab('journal',this)">Journal</button>
       <button class="tab-btn" onclick="switchTab('settings',this)">Settings</button>
     </div>
 
+    <!-- OVERVIEW (both portfolios combined) -->
+    <div class="section active" id="sec-overview">
+      <div id="overview-content"></div>
+    </div>
+
     <!-- DASHBOARD -->
-    <div class="section active" id="sec-dashboard">
+    <div class="section" id="sec-dashboard">
       <div id="dash-content"></div>
     </div>
 
@@ -170,6 +176,7 @@ button{cursor:pointer;}
 
     <!-- HOLDINGS -->
     <div class="section" id="sec-holdings">
+      <div id="holdings-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"></div>
       <div id="holdings-content"></div>
     </div>
 
@@ -241,6 +248,7 @@ button{cursor:pointer;}
 <div class="modal-overlay" id="holding-modal">
   <div class="modal">
     <div class="modal-title" id="holding-modal-title">Update Holding</div>
+    <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">For fixing a mistake or one-time setup — this overwrites both fields directly and does not log a trade or update realized P&amp;L. To actually buy or sell, use those buttons on the holding instead.</div>
     <div class="form-group"><label class="form-label">Units held</label><input class="form-input" type="number" id="holding-units" step="0.00000001"/></div>
     <div class="form-group"><label class="form-label">Average cost per unit (USD, optional)</label><input class="form-input" type="number" id="holding-cost" step="0.01"/></div>
     <div style="display:flex;gap:10px;margin-top:6px">
@@ -258,6 +266,38 @@ button{cursor:pointer;}
     <div id="rebalance-content"></div>
     <div style="margin-top:10px">
       <button class="btn-outline" style="width:100%" onclick="closeModal('rebalance-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ALLOCATION MODAL -->
+<div class="modal-overlay" id="allocation-modal">
+  <div class="modal">
+    <div class="modal-title">💰 Allocate Capital</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px">Based on your total capital and each coin's target %, here's how to deploy it. Edit quantities before confirming — nothing executes until you tap Confirm on a row.</div>
+    <div id="allocation-content"></div>
+    <div style="margin-top:10px">
+      <button class="btn-outline" style="width:100%" onclick="closeModal('allocation-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD POSITION MODAL (Spot Trading) -->
+<div class="modal-overlay" id="add-position-modal">
+  <div class="modal">
+    <div class="modal-title">+ Add Position</div>
+    <div class="form-group"><label class="form-label">Coin</label>
+      <div class="wiz-coin-search-wrap">
+        <input class="form-input" id="ap-search-input" placeholder="Search coin name or ticker..." oninput="addPositionSearch(this.value)" autocomplete="off"/>
+        <div id="ap-search-dropdown"></div>
+      </div>
+      <div id="ap-selected-coin" style="font-size:0.78rem;color:var(--ink2);margin-top:4px"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Quantity</label><input class="form-input" type="number" step="0.00000001" id="ap-units"/></div>
+    <div class="form-group"><label class="form-label">Buying price per unit (USD)</label><input class="form-input" type="number" step="0.01" id="ap-price"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('add-position-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmAddPosition()">Add Position</button>
     </div>
   </div>
 </div>
@@ -313,6 +353,7 @@ button{cursor:pointer;}
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 // ═══════════════════════════════
 //  SUPABASE SETUP
@@ -381,6 +422,7 @@ async function onAuthed(user){
   fetchBtcHigh(); // don't block initial render on this
   renderPortfolioSwitcher();
   renderAll();
+  renderOverview();
 }
 
 // ═══════════════════════════════
@@ -405,6 +447,7 @@ function switchTab(name,btn){
   if(btn)btn.classList.add('active');
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+name).classList.add('active');
+  if(name==='overview')renderOverview();
   if(name==='dashboard')renderDashboard();
   if(name==='tiers')renderTiersSection();
   if(name==='holdings')renderHoldings();
@@ -754,6 +797,115 @@ function renderAll(){
 }
 
 // ═══════════════════════════════
+//  OVERVIEW (both portfolios combined, with a value/capital trend line)
+// ═══════════════════════════════
+// Loads tiers/coins across ALL of the user's portfolios (not just the
+// currently-selected one) to compute each portfolio's value and a combined
+// total — independent of the single-portfolio-scoped `tiers`/`coins` used
+// everywhere else in the app.
+async function loadOverviewData(){
+  const allTiersRes=await sb.from('tiers').select('*');
+  const allTiers=allTiersRes.data||[];
+  const allTierIds=allTiers.map(t=>t.id);
+  const allCoinsRes=allTierIds.length?await sb.from('coins').select('*').in('tier_id',allTierIds):{data:[]};
+  const allCoins=allCoinsRes.data||[];
+
+  const allGeckoIds=[...new Set(allCoins.map(c=>c.coingecko_id).filter(Boolean))];
+  const missingIds=allGeckoIds.filter(id=>livePrices[id]==null);
+  if(missingIds.length){
+    try{
+      const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${missingIds.join(',')}&vs_currencies=usd`);
+      if(res.ok){
+        const data=await res.json();
+        missingIds.forEach(id=>{if(data[id])livePrices[id]=data[id].usd;});
+      }
+    }catch(e){console.error('overview price fetch failed',e);}
+  }
+
+  const perPortfolio=portfolios.map(p=>{
+    const pTierIds=allTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
+    const pCoins=allCoins.filter(c=>pTierIds.includes(c.tier_id));
+    const value=pCoins.reduce((s,c)=>{
+      const price=livePrices[c.coingecko_id];
+      return s+(price!=null?(c.units_held||0)*price:0);
+    },0);
+    return{portfolio:p,value,coinCount:pCoins.length};
+  });
+  const combinedTotal=perPortfolio.reduce((s,p)=>s+p.value,0);
+  return{perPortfolio,combinedTotal};
+}
+
+// Records one combined-value data point per day (updated in place if you check
+// more than once today) so the trend chart has real history to draw from.
+async function saveSnapshotIfNeeded(combinedTotal){
+  const today=new Date().toISOString().slice(0,10);
+  const{data:existing}=await sb.from('portfolio_snapshots').select('id').eq('user_id',currentUser.id).eq('snapshot_date',today).maybeSingle();
+  if(existing){
+    await sb.from('portfolio_snapshots').update({total_value_usd:combinedTotal}).eq('id',existing.id);
+  } else {
+    await sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal});
+  }
+}
+
+async function renderOverview(){
+  const el=document.getElementById('overview-content');
+  if(!portfolios.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">🌐</div><div>Create a portfolio to see your combined overview here.</div></div>`;
+    return;
+  }
+  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  const{perPortfolio,combinedTotal}=await loadOverviewData();
+  await saveSnapshotIfNeeded(combinedTotal);
+  const{data:snapshots}=await sb.from('portfolio_snapshots').select('*').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
+  const settingsRes=await sb.from('kosh_settings').select('total_capital');
+  const totalCapital=(settingsRes.data||[]).reduce((s,r)=>s+(r.total_capital||0),0);
+  const gain=combinedTotal-totalCapital;
+  const gainPct=totalCapital>0?(gain/totalCapital)*100:0;
+
+  let html=`<div class="hero-card">
+    <div class="hero-label">Combined portfolio value</div>
+    <div class="hero-val">${fmtUsd(combinedTotal)}</div>
+    <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital across both portfolios (${fmtUsd(totalCapital)})</div>
+  </div>`;
+
+  html+=`<div class="card"><div class="card-title">Value vs. capital trend</div><div style="position:relative;height:180px"><canvas id="overview-chart"></canvas></div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:0.7rem">
+      <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#17B6A7;margin-right:4px"></span>Value</span>
+      <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#8B93A1;margin-right:4px"></span>Capital (current)</span>
+    </div>
+  </div>`;
+
+  html+=`<div class="card"><div class="card-title">By portfolio</div>`;
+  perPortfolio.forEach(p=>{
+    html+=`<div class="coin-row">
+      <div>
+        <div class="coin-name">${p.portfolio.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.portfolio.name)}</div>
+        <div class="coin-sub">${p.coinCount} coin${p.coinCount===1?'':'s'}</div>
+      </div>
+      <div class="coin-val">${fmtUsd(p.value)}</div>
+    </div>`;
+  });
+  html+='</div>';
+
+  el.innerHTML=html;
+
+  if(typeof Chart!=='undefined'&&snapshots&&snapshots.length){
+    if(window._overviewChart){window._overviewChart.destroy();}
+    window._overviewChart=new Chart(document.getElementById('overview-chart'),{
+      type:'line',
+      data:{
+        labels:snapshots.map(s=>new Date(s.snapshot_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})),
+        datasets:[
+          {label:'Value',data:snapshots.map(s=>s.total_value_usd),borderColor:'#17B6A7',backgroundColor:'rgba(23,182,167,0.12)',fill:true,tension:0.3,pointRadius:2},
+          {label:'Capital',data:snapshots.map(()=>totalCapital),borderColor:'#8B93A1',borderDash:[4,3],fill:false,tension:0,pointRadius:0}
+        ]
+      },
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9}}},y:{ticks:{font:{size:9}}}}}
+    });
+  }
+}
+
+// ═══════════════════════════════
 //  CALCULATIONS
 // ═══════════════════════════════
 function coinValue(coin){
@@ -868,12 +1020,18 @@ function renderDashboard(){
   });
   html+='</div>';
 
+  const activePortfolio=currentPortfolio();
+  const isRebalanceKind=!activePortfolio||activePortfolio.kind==='rebalance';
+  const allocationProposals=isRebalanceKind?generateAllocationProposals():[];
+  if(allocationProposals.length){
+    html+=`<button class="btn-outline" style="width:100%;margin-bottom:10px;border-color:var(--teal);color:var(--teal-dark)" onclick="openAllocationModal()">💰 Allocate Capital (${allocationProposals.length} coin${allocationProposals.length===1?'':'s'} need funding)</button>`;
+  }
+
   if(driftedTiers.length){
     html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
   }
 
-  const activePortfolio=currentPortfolio();
-  if(!activePortfolio||activePortfolio.kind==='rebalance'){
+  if(isRebalanceKind){
     html+=`<div class="card">
       <div class="card-title">Bearish deployment ladder</div>
       <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">${ladder.drawdownPct!=null?`BTC is ${ladder.drawdownPct.toFixed(1)}% below its 90-day high`:'Loading BTC drawdown...'}</div>
@@ -1024,12 +1182,49 @@ async function deleteCoin(coinId){
 //  HOLDINGS
 // ═══════════════════════════════
 function renderHoldings(){
+  const headerEl=document.getElementById('holdings-header');
+  const activePortfolio=currentPortfolio();
+  const isSpot=activePortfolio&&activePortfolio.kind==='spot';
+  if(headerEl){
+    headerEl.innerHTML=isSpot?`<div class="card-title" style="margin:0">Positions</div><button class="btn-dark" style="padding:8px 14px;font-size:0.78rem" onclick="openAddPositionModal()">+ Add Position</button>`:'';
+  }
   const el=document.getElementById('holdings-content');
   if(!coins.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">🪙</div><div>No coins yet — add some under Tiers &amp; Coins first.</div></div>`;
+    el.innerHTML=isSpot
+      ?`<div class="empty-state"><div class="ic">🪙</div><div>No positions yet — tap "+ Add Position" to log your first buy.</div></div>`
+      :`<div class="empty-state"><div class="ic">🪙</div><div>No coins yet — add some under Tiers &amp; Coins first.</div></div>`;
     return;
   }
   let html='';
+  if(isSpot){
+    // Flat list, P&L-focused — target %/drift aren't meaningful for spot trading
+    html+='<div class="card">';
+    coins.forEach(c=>{
+      const stats=calcCoinStats(c);
+      const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
+      const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
+      html+=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div class="coin-row" style="border:none;padding:0 0 8px">
+          <div>
+            <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+            <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · now ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg buy ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="coin-val">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
+            ${gain!=null?`<div class="coin-drift" style="color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
+          <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
+          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
+        </div>
+      </div>`;
+    });
+    html+='</div>';
+    el.innerHTML=html;
+    return;
+  }
   tiers.forEach(t=>{
     const tierCoins=coins.filter(c=>c.tier_id===t.id);
     if(!tierCoins.length)return;
@@ -1038,15 +1233,24 @@ function renderHoldings(){
     tierCoins.forEach(c=>{
       const stats=calcCoinStats(c);
       const driftPP=stats.actualPctOfPortfolio!=null?(stats.actualPctOfPortfolio-stats.targetPctOfPortfolio)*100:null;
-      html+=`<div class="coin-row">
-        <div>
-          <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
-          <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg cost ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+      const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
+      const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
+      html+=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div class="coin-row" style="border:none;padding:0 0 8px">
+          <div>
+            <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+            <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg cost ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="coin-val">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
+            <div class="coin-drift" style="color:${driftPP!=null&&Math.abs(driftPP)>=5?'var(--amber-dark)':'var(--ink3)'}">${stats.actualPctOfPortfolio!=null?fmtPct(stats.actualPctOfPortfolio):'0%'} / ${fmtPct(stats.targetPctOfPortfolio)}</div>
+            ${gain!=null?`<div style="font-size:0.68rem;color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
+          </div>
         </div>
-        <div style="text-align:right">
-          <div class="coin-val">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
-          <div class="coin-drift" style="color:${driftPP!=null&&Math.abs(driftPP)>=5?'var(--amber-dark)':'var(--ink3)'}">${stats.actualPctOfPortfolio!=null?fmtPct(stats.actualPctOfPortfolio):'0%'} / ${fmtPct(stats.targetPctOfPortfolio)}</div>
-          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Edit</button>
+        <div style="display:flex;gap:6px">
+          <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
+          <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
+          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
         </div>
       </div>`;
     });
@@ -1054,6 +1258,79 @@ function renderHoldings(){
   });
   el.innerHTML=html;
 }
+// ═══════════════════════════════
+//  ADD POSITION (Spot Trading — search a coin and buy it in one step,
+//  without needing to think about tiers/weights the way rebalancing does)
+// ═══════════════════════════════
+let _apSelectedCoin=null;
+let _apSearchTimer=null;
+function openAddPositionModal(){
+  _apSelectedCoin=null;
+  document.getElementById('ap-search-input').value='';
+  document.getElementById('ap-search-dropdown').innerHTML='';
+  document.getElementById('ap-selected-coin').textContent='';
+  document.getElementById('ap-units').value='';
+  document.getElementById('ap-price').value='';
+  openModal('add-position-modal');
+}
+function addPositionSearch(query){
+  _apSelectedCoin=null;
+  document.getElementById('ap-selected-coin').textContent='';
+  clearTimeout(_apSearchTimer);
+  const dropdown=document.getElementById('ap-search-dropdown');
+  if(query.trim().length<2){dropdown.innerHTML='';return;}
+  _apSearchTimer=setTimeout(async()=>{
+    const results=await searchCoinGecko(query);
+    window._apSearchResults=results;
+    if(!results.length){dropdown.innerHTML='';return;}
+    dropdown.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="addPositionSelectCoin(${ri})">${escapeHtml(r.name)} <span style="color:var(--ink3)">${escapeHtml(r.symbol.toUpperCase())}</span>${r.rank?` · rank #${r.rank}`:''}</div>`).join('')}</div>`;
+  },350);
+}
+function addPositionSelectCoin(ri){
+  _apSelectedCoin=window._apSearchResults[ri];
+  document.getElementById('ap-search-dropdown').innerHTML='';
+  document.getElementById('ap-search-input').value=_apSelectedCoin.name;
+  document.getElementById('ap-selected-coin').textContent=`Selected: ${_apSelectedCoin.name} (${_apSelectedCoin.symbol.toUpperCase()})`;
+}
+async function confirmAddPosition(){
+  if(!_apSelectedCoin){showToast('Search and select a coin first.');return;}
+  const units=parseFloat(document.getElementById('ap-units').value);
+  const price=parseFloat(document.getElementById('ap-price').value);
+  if(!units||units<=0||!price||price<=0){showToast('Enter a valid quantity and price.');return;}
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+
+  // Spot portfolios use one implicit 100%-target "Holdings" tier so the user
+  // never has to think about tiers/weights — those concepts exist for the
+  // rebalance strategy, not for logging individual trades.
+  let holdingsTier=tiers.find(t=>t.name==='Holdings');
+  if(!holdingsTier){
+    const{data,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:'Holdings',target_pct:1,sort_order:0}).select().single();
+    if(error){showToast('Error: '+error.message);return;}
+    holdingsTier=data;
+    tiers.push(holdingsTier);
+  }
+
+  let coin=coins.find(c=>c.coingecko_id===_apSelectedCoin.id&&c.tier_id===holdingsTier.id);
+  if(!coin){
+    const{data,error}=await sb.from('coins').insert({
+      user_id:currentUser.id,tier_id:holdingsTier.id,
+      name:_apSelectedCoin.name,ticker:_apSelectedCoin.symbol.toUpperCase(),
+      coingecko_id:_apSelectedCoin.id,weight_in_tier:0,
+      exchanges:'',rationale:'',units_held:0,sort_order:coins.length
+    }).select().single();
+    if(error){showToast('Error: '+error.message);return;}
+    coin=data;
+    coins.push(coin);
+  }
+
+  await executeTrade(coin.id,'buy',units,price,'spot entry');
+  closeModal('add-position-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast(`Added ${units} ${coin.ticker} ✅`);
+}
+
 function openHoldingModal(coinId){
   document.getElementById('holding-modal').dataset.coinId=coinId;
   const c=coins.find(x=>x.id===coinId);
@@ -1072,6 +1349,71 @@ async function saveHolding(){
   await loadAllData();
   renderAll();
   showToast('Holding updated ✅');
+}
+
+// ═══════════════════════════════
+//  CAPITAL ALLOCATION (deploying total_capital into coins for the first time,
+//  or topping up toward target — distinct from rebalancing existing holdings)
+// ═══════════════════════════════
+// Uses settings.total_capital (what you told the app you intend to invest) as
+// the basis, not current portfolio value — so this works correctly even when
+// starting from zero holdings, unlike the rebalance proposal which needs an
+// existing nonzero portfolio to compute percentages against.
+function generateAllocationProposals(){
+  const capital=settings.total_capital||0;
+  if(capital<=0)return[];
+  const proposals=[];
+  coins.forEach(c=>{
+    const price=livePrices[c.coingecko_id];
+    if(price==null)return;
+    const tier=tiers.find(t=>t.id===c.tier_id);
+    const targetPctOfPortfolio=tier?(tier.target_pct||0)*(c.weight_in_tier||0):0;
+    const targetUsd=capital*targetPctOfPortfolio;
+    const actualValue=coinValue(c)||0;
+    const diffUsd=targetUsd-actualValue;
+    if(Math.abs(diffUsd)<1)return;
+    const diffUnits=Math.abs(diffUsd)/price;
+    proposals.push({coin:c,price,action:diffUsd>0?'buy':'sell',units:diffUnits,usd:Math.abs(diffUsd),targetUsd});
+  });
+  return proposals.sort((a,b)=>b.usd-a.usd);
+}
+function openAllocationModal(){
+  const proposals=generateAllocationProposals();
+  window._allocationProposals=proposals;
+  renderAllocationContent();
+  openModal('allocation-modal');
+}
+function renderAllocationContent(){
+  const el=document.getElementById('allocation-content');
+  const proposals=window._allocationProposals||[];
+  if(!proposals.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">✅</div><div>Every coin is already within $1 of its target funding based on your total capital.</div></div>`;
+    return;
+  }
+  el.innerHTML=proposals.map((p,i)=>`<div class="card" style="padding:10px 12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="coin-name">${p.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(p.coin.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(p.coin.ticker)}</span></div>
+      <div style="font-size:0.72rem;color:var(--ink3)">@ ${fmtUsd(p.price)}</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input class="form-input" type="number" step="0.00000001" id="alloc-units-${i}" value="${p.units}" style="flex:1"/>
+      <button class="btn-primary" style="flex-shrink:0;padding:10px 14px" onclick="confirmAllocationProposal(${i})">Confirm</button>
+    </div>
+    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Target: ${fmtUsd(p.targetUsd)} total &middot; Suggested: ${p.units.toFixed(8)} units (~${fmtUsd(p.usd)})</div>
+  </div>`).join('');
+}
+async function confirmAllocationProposal(idx){
+  const p=(window._allocationProposals||[])[idx];
+  if(!p)return;
+  const unitsInput=document.getElementById('alloc-units-'+idx);
+  const units=parseFloat(unitsInput.value);
+  if(!units||units<=0){showToast('Enter a valid quantity.');return;}
+  await executeTrade(p.coin.id,p.action,units,p.price,'allocation');
+  window._allocationProposals=window._allocationProposals.filter((_,i)=>i!==idx);
+  renderAllocationContent();
+  await loadAllData();
+  renderDashboard();renderHoldings();renderJournal();
+  showToast(`${p.action==='buy'?'Bought':'Sold'} ${units} ${p.coin.ticker} ✅`);
 }
 
 // ═══════════════════════════════
@@ -1200,13 +1542,15 @@ function renderJournal(){
   html+='</div>';
   el.innerHTML=html;
 }
-function openManualTradeModal(){
+function openManualTradeModal(preselectCoinId,preselectAction){
   if(!coins.length){showToast('Add some coins first under Tiers & Coins.');return;}
   const sel=document.getElementById('trade-coin-select');
   sel.innerHTML=coins.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker)})</option>`).join('');
+  if(preselectCoinId)sel.value=preselectCoinId;
+  document.getElementById('trade-action').value=preselectAction||'buy';
   document.getElementById('trade-units').value='';
-  const firstCoin=coins[0];
-  document.getElementById('trade-price').value=firstCoin?(livePrices[firstCoin.coingecko_id]||''):'';
+  const selectedCoin=coins.find(c=>c.id===sel.value)||coins[0];
+  document.getElementById('trade-price').value=selectedCoin?(livePrices[selectedCoin.coingecko_id]||''):'';
   openModal('manual-trade-modal');
 }
 async function confirmManualTrade(){
