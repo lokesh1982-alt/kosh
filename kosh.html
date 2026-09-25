@@ -38,6 +38,25 @@ button{cursor:pointer;}
 
 .main{max-width:520px;margin:0 auto;padding:0 16px 90px;}
 
+.app-layout{display:block;}
+.desktop-sidebar{display:none;}
+.sidebar-nav-item{display:flex;align-items:center;gap:8px;color:#9BA3AF;padding:8px 10px;border-radius:8px;font-size:0.8rem;cursor:pointer;}
+.sidebar-nav-item:hover{background:rgba(255,255,255,0.05);}
+.sidebar-nav-item.active{background:rgba(23,182,167,0.15);color:var(--teal);font-weight:600;}
+@media(min-width:900px){
+  .app-layout{display:flex;align-items:flex-start;}
+  .desktop-sidebar{display:flex;flex-direction:column;width:210px;flex-shrink:0;background:var(--ink);padding:18px 12px;position:sticky;top:0;height:100vh;box-sizing:border-box;}
+  .app-main-col{flex:1;min-width:0;}
+  .frozen-header{display:none;}
+  .tile-grid{display:none!important;}
+  .main{max-width:1180px;margin:0;padding:24px 32px 60px;}
+  #dash-content,#holdings-content,#tiers-content{column-count:2;column-gap:16px;}
+  #dash-content>*,#holdings-content>*,#tiers-content>*{break-inside:avoid;}
+}
+@media(min-width:1360px){
+  #dash-content,#holdings-content,#tiers-content{column-count:3;}
+}
+
 .tile-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px;}
 .menu-tile{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;}
 .menu-tile .ic{font-size:19px;}
@@ -149,6 +168,28 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 </div>
 
 <div id="app-root" class="hidden">
+  <div class="app-layout">
+    <nav class="desktop-sidebar" id="desktop-sidebar">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;padding:0 4px">
+        <div class="logo-box serif" style="width:32px;height:32px;font-size:14px">क</div>
+        <div style="color:#F1F3F5;font-size:0.92rem;font-weight:600" class="serif">कोष</div>
+      </div>
+      <select id="sidebar-portfolio-select" onchange="switchPortfolio(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.7rem;color:#F1F3F5;margin-bottom:16px;width:100%"></select>
+      <div class="sidebar-nav" id="sidebar-nav">
+        <div class="sidebar-nav-item" data-tab="dashboard" onclick="switchTab('dashboard')"><span>📊</span> Dashboard</div>
+        <div class="sidebar-nav-item" data-tab="tiers" onclick="switchTab('tiers')"><span>📈</span> Tiers &amp; Coins</div>
+        <div class="sidebar-nav-item" data-tab="holdings" onclick="switchTab('holdings')"><span>🪙</span> Holdings</div>
+        <div class="sidebar-nav-item" data-tab="journal" onclick="switchTab('journal')"><span>📒</span> Journal</div>
+        <div class="sidebar-nav-item" data-tab="news" onclick="switchTab('news')"><span>📰</span> News</div>
+        <div class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')"><span>⚙️</span> Settings</div>
+      </div>
+      <div style="margin-top:auto;padding:8px 10px;display:flex;align-items:center;gap:10px">
+        <button class="eye-toggle" id="eye-toggle-btn-desktop" onclick="toggleFigures()" title="Show/hide figures" style="color:#9BA3AF">👁️</button>
+        <span style="color:#6B7280;font-size:0.72rem;cursor:pointer" onclick="handleSignOut()">Sign out</span>
+      </div>
+    </nav>
+
+    <div class="app-main-col">
   <div class="frozen-header">
     <div class="topbar">
       <div class="topbar-left">
@@ -234,6 +275,8 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">Answer a few questions and the app builds your tier/coin structure — including live market-cap-based tier suggestions as you search each coin.</div>
         <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
       </div>
+    </div>
+  </div>
     </div>
   </div>
 </div>
@@ -445,11 +488,15 @@ async function onAuthed(user){
     document.body.classList.add('figures-hidden');
     const btn=document.getElementById('eye-toggle-btn');
     if(btn)btn.textContent='🙈';
+    const btn2=document.getElementById('eye-toggle-btn-desktop');
+    if(btn2)btn2.textContent='🙈';
   }
   await loadAllData();
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
   renderPortfolioSwitcher();
+  renderSidebarPortfolioSelect();
+  document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
   renderAll();
   startNewsAutoRefresh();
 }
@@ -477,6 +524,8 @@ function switchTab(name){
   const backRow=document.getElementById('back-row');
   if(backRow)backRow.classList.toggle('hidden',name==='dashboard');
   if(name!=='dashboard')renderBackRowPortfolioSelect();
+  document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab===name));
+  renderSidebarPortfolioSelect();
   window.scrollTo(0,0);
   if(name==='dashboard')renderDashboard();
   if(name==='tiers')renderTiersSection();
@@ -491,12 +540,20 @@ function toggleFigures(){
   localStorage.setItem('kosh-figures-hidden',hidden?'1':'0');
   const btn=document.getElementById('eye-toggle-btn');
   if(btn)btn.textContent=hidden?'🙈':'👁️';
+  const btn2=document.getElementById('eye-toggle-btn-desktop');
+  if(btn2)btn2.textContent=hidden?'🙈':'👁️';
 }
 function renderBackRowPortfolioSelect(){
   const sel=document.getElementById('back-row-portfolio-select');
   if(!sel)return;
   if(!portfolios.length){sel.innerHTML='';sel.style.display='none';return;}
   sel.style.display='';
+  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('');
+}
+function renderSidebarPortfolioSelect(){
+  const sel=document.getElementById('sidebar-portfolio-select');
+  if(!sel)return;
+  if(!portfolios.length){sel.innerHTML='<option>No portfolios yet</option>';return;}
   sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('');
 }
 
