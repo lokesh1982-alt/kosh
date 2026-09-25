@@ -1897,52 +1897,71 @@ async function getAllPortfolioTickers(){
   return[...new Set((allCoinsRes.data||[]).map(c=>(c.ticker||'').toUpperCase()).filter(Boolean))];
 }
 
-function timeAgo(unixSeconds){
-  const diff=(Date.now()/1000)-unixSeconds;
+function timeAgo(dateInput){
+  const diff=(Date.now()-new Date(dateInput).getTime())/1000;
   if(diff<3600)return Math.max(1,Math.floor(diff/60))+'m ago';
   if(diff<86400)return Math.floor(diff/3600)+'h ago';
   return Math.floor(diff/86400)+'d ago';
 }
 
+// CryptoCompare's news API is blocked by CORS from the browser (confirmed).
+// rss2json.com is a free, keyless, CORS-friendly RSS→JSON converter built
+// specifically for this kind of case — used here against established crypto
+// news RSS feeds instead.
+const NEWS_FEEDS=[
+  {name:'CoinDesk',url:'https://www.coindesk.com/arc/outboundfeeds/rss/'},
+  {name:'CoinTelegraph',url:'https://cointelegraph.com/rss'}
+];
+
 let newsError=null;
+async function fetchOneFeed(feed){
+  const res=await fetch('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed.url));
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  const json=await res.json();
+  if(json.status!=='ok')throw new Error(json.message||'feed error');
+  return(json.items||[]).map(item=>({
+    title:item.title,
+    link:item.link,
+    pubDate:item.pubDate,
+    description:(item.description||'').replace(/<[^>]*>/g,'').trim(),
+    source:feed.name
+  }));
+}
+
 async function fetchNews(){
   newsError=null;
-  const cutoff=(Date.now()/1000)-86400; // last 24 hours only
-  try{
-    const marketRes=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN');
-    if(!marketRes.ok)throw new Error('HTTP '+marketRes.status);
-    const marketJson=await marketRes.json();
-    newsData.market=(marketJson.Data||[]).filter(a=>a.published_on>=cutoff);
-  }catch(e){
-    console.error('market news fetch failed',e);
-    newsError='Could not reach the news source ('+(e.message||e)+'). This may be a network/CORS restriction on this API.';
+  const cutoffMs=Date.now()-86400*1000; // last 24 hours only
+  let allArticles=[];
+  const results=await Promise.allSettled(NEWS_FEEDS.map(fetchOneFeed));
+  results.forEach(r=>{if(r.status==='fulfilled')allArticles.push(...r.value);});
+  if(allArticles.length===0&&results.every(r=>r.status==='rejected')){
+    const firstErr=results.find(r=>r.status==='rejected');
+    newsError='Could not reach the news source ('+(firstErr.reason?.message||firstErr.reason)+').';
   }
+  allArticles=allArticles.filter(a=>{
+    const t=new Date(a.pubDate).getTime();
+    return!isNaN(t)&&t>=cutoffMs;
+  }).sort((a,b)=>new Date(b.pubDate)-new Date(a.pubDate));
 
   const tickers=await getAllPortfolioTickers();
-  if(tickers.length){
-    try{
-      const coinRes=await fetch(`https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=${tickers.join(',')}`);
-      if(!coinRes.ok)throw new Error('HTTP '+coinRes.status);
-      const coinJson=await coinRes.json();
-      newsData.coins=(coinJson.Data||[]).filter(a=>a.published_on>=cutoff);
-    }catch(e){
-      console.error('coin news fetch failed',e);
-      if(!newsError)newsError='Could not reach the news source ('+(e.message||e)+'). This may be a network/CORS restriction on this API.';
-    }
-  } else {
-    newsData.coins=[];
-  }
+  const coinNames=tickers.length?new Set(tickers.map(t=>t.toLowerCase())):new Set();
+  newsData.market=allArticles;
+  newsData.coins=tickers.length
+    ?allArticles.filter(a=>{
+      const text=((a.title||'')+' '+(a.description||'')).toLowerCase();
+      return[...coinNames].some(t=>new RegExp('\\b'+t+'\\b','i').test(text));
+    })
+    :[];
 }
 
 function newsArticleHtml(article){
-  const bodyText=article.body||'';
-  const excerpt=bodyText.length>140?bodyText.slice(0,140).trim()+'…':bodyText;
-  const source=article.source_info?.name||article.source||'Unknown source';
+  const desc=article.description||'';
+  const excerpt=desc.length>140?desc.slice(0,140).trim()+'…':desc;
   return`<div class="card" style="padding:12px">
     <div style="font-size:0.82rem;font-weight:600;color:var(--ink);margin-bottom:4px">${escapeHtml(article.title||'')}</div>
-    <div style="font-size:0.66rem;color:var(--ink3);margin-bottom:6px">${escapeHtml(source)} · ${timeAgo(article.published_on)}</div>
+    <div style="font-size:0.66rem;color:var(--ink3);margin-bottom:6px">${escapeHtml(article.source||'')} · ${timeAgo(article.pubDate)}</div>
     ${excerpt?`<div style="font-size:0.76rem;color:var(--ink2);margin-bottom:8px;line-height:1.4">${escapeHtml(excerpt)}</div>`:''}
-    <a href="${article.url}" target="_blank" rel="noopener noreferrer" style="font-size:0.74rem;font-weight:600;color:var(--teal-dark)">Read full article →</a>
+    <a href="${article.link}" target="_blank" rel="noopener noreferrer" style="font-size:0.74rem;font-weight:600;color:var(--teal-dark)">Read full article →</a>
   </div>`;
 }
 
