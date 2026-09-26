@@ -598,8 +598,11 @@ async function loadAllData(){
   const tierIds=tiers.map(t=>t.id);
   const coinsRes=tierIds.length?await sb.from('coins').select('*').in('tier_id',tierIds).order('sort_order'):{data:[]};
   coins=coinsRes.data||[];
-  const coinIds=coins.map(c=>c.id);
-  const tradesRes=coinIds.length?await sb.from('trades').select('*').in('coin_id',coinIds).order('trade_date',{ascending:false}):{data:[]};
+  // Filtered by portfolio_id (stored directly on each trade) rather than by
+  // coin_id — a coin can be deleted later while its trade history should stay
+  // visible in this portfolio's Journal, and coin_id alone can't do that once
+  // it's been set to NULL.
+  const tradesRes=await sb.from('trades').select('*').eq('portfolio_id',currentPortfolioId).order('trade_date',{ascending:false});
   trades=tradesRes.data||[];
 }
 
@@ -1113,9 +1116,11 @@ async function computeCombinedDashboardData(){
     combinedUnrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
   });
 
-  const allCoinIds=allCoins.map(c=>c.id);
+  // Fetch all of the user's trades directly (not filtered via coin_id, since a
+  // deleted coin's trades have coin_id=NULL and would otherwise vanish from
+  // this total) — realized P&L across every portfolio combined.
   const[tradesRes,settingsRes]=await Promise.all([
-    allCoinIds.length?sb.from('trades').select('realized_pnl').in('coin_id',allCoinIds):Promise.resolve({data:[]}),
+    sb.from('trades').select('realized_pnl').eq('user_id',currentUser.id),
     sb.from('kosh_settings').select('total_capital')
   ]);
   const combinedRealized=(tradesRes.data||[]).reduce((s,t)=>s+(t.realized_pnl||0),0);
@@ -1503,7 +1508,7 @@ async function saveTier(){
 async function deleteTier(tierId){
   const t=tiers.find(x=>x.id===tierId);
   const tierCoins=coins.filter(c=>c.tier_id===tierId);
-  if(!confirm(`Delete "${t.name}" and all ${tierCoins.length} coin(s) in it? This can't be undone.`))return;
+  if(!confirm(`Delete "${t.name}" and all ${tierCoins.length} coin(s) in it? Your Journal history for these coins is kept. This can't be undone.`))return;
   await sb.from('tiers').delete().eq('id',tierId);
   await loadAllData();
   await fetchLivePrices();
@@ -1906,7 +1911,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   }
   await sb.from('coins').update({units_held:newUnitsHeld,avg_cost_usd:newAvgCost}).eq('id',coinId);
   await sb.from('trades').insert({
-    user_id:currentUser.id,coin_id:coinId,action,units:actualUnits,
+    user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:coinId,coin_name:coin.name,coin_ticker:coin.ticker,action,units:actualUnits,
     price_per_unit:pricePerUnit,total_usd:actualUnits*pricePerUnit,
     realized_pnl:realizedPnl,notes:notes||null
   });
@@ -1926,7 +1931,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
       const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+proceeds)/newUsdtUnits:usdtPrice;
       await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
       await sb.from('trades').insert({
-        user_id:currentUser.id,coin_id:usdtCoin.id,action:'buy',units:usdtUnitsReceived,
+        user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsReceived,
         price_per_unit:usdtPrice,total_usd:proceeds,
         realized_pnl:null,notes:'Proceeds from selling '+coin.ticker
       });
@@ -1955,10 +1960,12 @@ function renderJournal(){
   html+='<div class="card" style="padding:0 14px">';
   trades.forEach(t=>{
     const coin=coins.find(c=>c.id===t.coin_id);
+    const name=t.coin_name||(coin?coin.name:'(deleted coin)');
+    const ticker=t.coin_ticker||(coin?coin.ticker:'');
     const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
     html+=`<div class="coin-row">
       <div>
-        <div class="coin-name">${t.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(coin?coin.name:'(deleted coin)')} <span style="color:var(--ink3);font-weight:400">${coin?escapeHtml(coin.ticker):''}</span></div>
+        <div class="coin-name">${t.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(ticker)}</span></div>
         <div class="coin-sub">${date} · ${t.units} units @ ${fmtUsd(t.price_per_unit)}${t.notes?` · ${escapeHtml(t.notes)}`:''}</div>
       </div>
       <div style="text-align:right">
