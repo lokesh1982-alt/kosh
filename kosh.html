@@ -1042,19 +1042,21 @@ function renderAll(){
 // in the background (fire-and-forget) rather than blocking the render on a
 // separate read-then-write-then-reread sequence — the chart can draw
 // immediately using the value already computed this call.
-async function getSnapshotHistoryAndRecordToday(combinedTotal){
+async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
   const today=new Date().toISOString().slice(0,10);
   const{data:snapshots}=await sb.from('portfolio_snapshots').select('*').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
   const list=snapshots||[];
   const todayEntry=list.find(s=>s.snapshot_date===today);
   if(todayEntry){
-    if(Math.abs(todayEntry.total_value_usd-combinedTotal)>0.01){
+    const needsUpdate=Math.abs(todayEntry.total_value_usd-combinedTotal)>0.01||Math.abs((todayEntry.capital_at_snapshot||0)-totalCapital)>0.01;
+    if(needsUpdate){
       todayEntry.total_value_usd=combinedTotal;
-      sb.from('portfolio_snapshots').update({total_value_usd:combinedTotal}).eq('id',todayEntry.id);
+      todayEntry.capital_at_snapshot=totalCapital;
+      sb.from('portfolio_snapshots').update({total_value_usd:combinedTotal,capital_at_snapshot:totalCapital}).eq('id',todayEntry.id);
     }
   } else {
-    list.push({snapshot_date:today,total_value_usd:combinedTotal});
-    sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal});
+    list.push({snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
+    sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
   }
   return list;
 }
@@ -1142,6 +1144,34 @@ function buildSparklineSVG(vals,width=400,height=70,color='#17B6A7'){
     </linearGradient></defs>
     <path d="${areaPath}" fill="url(#dashSparkGrad)"/>
     <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+// Value (filled teal) vs Capital-funded-to-date (dashed gray) — both scaled
+// against the SAME shared min/max so their relative heights are comparable,
+// making it visible at a glance whether a jump was growth or new funding.
+function buildDualSparklineSVG(valueVals,capitalVals,width=400,height=70){
+  if(valueVals.length<2)return'';
+  const all=[...valueVals,...capitalVals];
+  let min=Math.min(...all),max=Math.max(...all);
+  if(min===max){min-=1;max+=1;}
+  const range=(max-min)||1;
+  const stepX=width/(valueVals.length-1);
+  const pad=6;
+  const toCoords=vals=>vals.map((v,i)=>[i*stepX,pad+(height-2*pad)-((v-min)/range)*(height-2*pad)]);
+  const valueCoords=toCoords(valueVals);
+  const capitalCoords=toCoords(capitalVals);
+  const valueLine='M'+valueCoords.map(c=>c.join(',')).join('L');
+  const valueArea=valueLine+`L${width},${height}L0,${height}Z`;
+  const capitalLine='M'+capitalCoords.map(c=>c.join(',')).join('L');
+  const dashLen=Math.max(3,(width/valueVals.length)/6);
+  return`<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;display:block" preserveAspectRatio="none">
+    <defs><linearGradient id="dashSparkGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#17B6A7" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#17B6A7" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${valueArea}" fill="url(#dashSparkGrad)"/>
+    <path d="${capitalLine}" fill="none" stroke="#8B93A1" stroke-width="1.75" stroke-dasharray="${dashLen},${dashLen}" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="${valueLine}" fill="none" stroke="#17B6A7" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
 }
 
@@ -1291,10 +1321,11 @@ async function renderDashboard(){
 
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
-    const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal);
+    const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
     const gain=combined.combinedTotal-combined.totalCapital;
     const gainPct=combined.totalCapital>0?(gain/combined.totalCapital)*100:0;
     const trendVals=snapshots.map(s=>s.total_value_usd);
+    const capitalTrendVals=snapshots.map(s=>s.capital_at_snapshot!=null?s.capital_at_snapshot:combined.totalCapital);
 
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
@@ -1307,7 +1338,7 @@ async function renderDashboard(){
         <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?(combined.combinedUnrealized>=0?'+':'')+fmtDisplay(combined.combinedUnrealized):'—'}</div></div>
         <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${combined.combinedRealized>=0?'+':''}${fmtDisplay(combined.combinedRealized)}</div></div>
       </div>
-      ${trendVals.length>=2?buildSparklineSVG(trendVals,400,60,'#17B6A7'):'<div style="font-size:0.68rem;opacity:0.5;margin-top:8px">Trend line will build up as you use the app daily</div>'}
+      ${trendVals.length>=2?buildDualSparklineSVG(trendVals,capitalTrendVals,400,60)+`<div style="display:flex;gap:14px;margin-top:6px;font-size:0.64rem;opacity:0.75"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#17B6A7;margin-right:4px"></span>Value</span><span><span style="display:inline-block;width:8px;height:2px;background:#8B93A1;margin-right:4px;vertical-align:middle"></span>Capital funded to date</span></div>`:'<div style="font-size:0.68rem;opacity:0.5;margin-top:8px">Trend line will build up as you use the app daily</div>'}
     </div>`;
 
     html+=`<div class="card"><div class="card-title">By portfolio</div>
