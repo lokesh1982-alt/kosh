@@ -1785,24 +1785,25 @@ function renderAllocationContent(){
     return;
   }
   el.innerHTML=proposals.map((p,i)=>`<div class="card" style="padding:10px 12px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <div style="margin-bottom:8px">
       <div class="coin-name">${p.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(p.coin.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(p.coin.ticker)}</span></div>
-      <div style="font-size:0.72rem;color:var(--ink3)">@ ${fmtUsd(p.price)}</div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <input class="form-input" type="number" step="0.00000001" id="alloc-units-${i}" value="${p.units}" style="flex:1"/>
-      <button class="btn-primary" style="flex-shrink:0;padding:10px 14px" onclick="confirmAllocationProposal(${i})">Confirm</button>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+      <div style="flex:1"><label style="font-size:0.66rem;color:var(--ink3)">Units</label><input class="form-input" type="number" step="0.00000001" id="alloc-units-${i}" value="${p.units}"/></div>
+      <div style="flex:1"><label style="font-size:0.66rem;color:var(--ink3)">Price per unit (actual)</label><input class="form-input" type="number" step="0.01" id="alloc-price-${i}" value="${p.price}"/></div>
     </div>
-    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Target: ${fmtUsd(p.targetUsd)} total &middot; Suggested: ${p.units.toFixed(8)} units (~${fmtUsd(p.usd)})</div>
+    <button class="btn-primary" style="width:100%" onclick="confirmAllocationProposal(${i})">Confirm</button>
+    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Target: ${fmtUsd(p.targetUsd)} total &middot; Suggested: ${p.units.toFixed(8)} units @ ${fmtUsd(p.price)} — adjust price if your actual trade filled differently</div>
   </div>`).join('');
 }
 async function confirmAllocationProposal(idx){
   const p=(window._allocationProposals||[])[idx];
   if(!p)return;
-  const unitsInput=document.getElementById('alloc-units-'+idx);
-  const units=parseFloat(unitsInput.value);
+  const units=parseFloat(document.getElementById('alloc-units-'+idx).value);
+  const price=parseFloat(document.getElementById('alloc-price-'+idx).value);
   if(!units||units<=0){showToast('Enter a valid quantity.');return;}
-  await executeTrade(p.coin.id,p.action,units,p.price,'allocation');
+  if(!price||price<=0){showToast('Enter a valid price.');return;}
+  await executeTrade(p.coin.id,p.action,units,price,'allocation');
   window._allocationProposals=window._allocationProposals.filter((_,i)=>i!==idx);
   renderAllocationContent();
   await loadAllData();
@@ -1854,24 +1855,25 @@ function renderRebalanceContent(){
     return;
   }
   el.innerHTML=proposals.map((p,i)=>`<div class="card" style="padding:10px 12px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <div style="margin-bottom:8px">
       <div class="coin-name">${p.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(p.coin.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(p.coin.ticker)}</span></div>
-      <div style="font-size:0.72rem;color:var(--ink3)">@ ${fmtUsd(p.price)}</div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <input class="form-input" type="number" step="0.00000001" id="prop-units-${i}" value="${p.units}" style="flex:1"/>
-      <button class="btn-primary" style="flex-shrink:0;padding:10px 14px" onclick="confirmProposal(${i})">Confirm</button>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+      <div style="flex:1"><label style="font-size:0.66rem;color:var(--ink3)">Units</label><input class="form-input" type="number" step="0.00000001" id="prop-units-${i}" value="${p.units}"/></div>
+      <div style="flex:1"><label style="font-size:0.66rem;color:var(--ink3)">Price per unit (actual)</label><input class="form-input" type="number" step="0.01" id="prop-price-${i}" value="${p.price}"/></div>
     </div>
-    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Suggested: ${p.units.toFixed(8)} units (~${fmtUsd(p.usd)})</div>
+    <button class="btn-primary" style="width:100%" onclick="confirmProposal(${i})">Confirm</button>
+    <div style="font-size:0.68rem;color:var(--ink3);margin-top:6px">Suggested: ${p.units.toFixed(8)} units @ ${fmtUsd(p.price)} (~${fmtUsd(p.usd)}) — adjust price if your actual trade filled differently</div>
   </div>`).join('');
 }
 async function confirmProposal(idx){
   const p=(window._rebalanceProposals||[])[idx];
   if(!p)return;
-  const unitsInput=document.getElementById('prop-units-'+idx);
-  const units=parseFloat(unitsInput.value);
+  const units=parseFloat(document.getElementById('prop-units-'+idx).value);
+  const price=parseFloat(document.getElementById('prop-price-'+idx).value);
   if(!units||units<=0){showToast('Enter a valid quantity.');return;}
-  await executeTrade(p.coin.id,p.action,units,p.price,'rebalance');
+  if(!price||price<=0){showToast('Enter a valid price.');return;}
+  await executeTrade(p.coin.id,p.action,units,price,'rebalance');
   window._rebalanceProposals=window._rebalanceProposals.filter((_,i)=>i!==idx);
   renderRebalanceContent();
   await loadAllData();
@@ -1902,6 +1904,32 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
     price_per_unit:pricePerUnit,total_usd:actualUnits*pricePerUnit,
     realized_pnl:realizedPnl,notes:notes||null
   });
+  coin.units_held=newUnitsHeld;
+  coin.avg_cost_usd=newAvgCost;
+
+  // Selling converts proceeds into the portfolio's USDT holding — money from a
+  // sale doesn't just vanish, it becomes stablecoin, same as on a real exchange.
+  if(action==='sell'&&(coin.ticker||'').toUpperCase()!=='USDT'){
+    const usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='USDT');
+    if(usdtCoin){
+      const proceeds=actualUnits*pricePerUnit;
+      const usdtPrice=livePrices[usdtCoin.coingecko_id]||1;
+      const usdtUnitsReceived=proceeds/usdtPrice;
+      const newUsdtUnits=(usdtCoin.units_held||0)+usdtUnitsReceived;
+      const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
+      const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+proceeds)/newUsdtUnits:usdtPrice;
+      await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
+      await sb.from('trades').insert({
+        user_id:currentUser.id,coin_id:usdtCoin.id,action:'buy',units:usdtUnitsReceived,
+        price_per_unit:usdtPrice,total_usd:proceeds,
+        realized_pnl:null,notes:'Proceeds from selling '+coin.ticker
+      });
+      usdtCoin.units_held=newUsdtUnits;
+      usdtCoin.avg_cost_usd=newUsdtAvgCost;
+    } else {
+      showToast('Sold — but no USDT holding found in this portfolio, so proceeds weren\'t credited anywhere. Add a USDT coin if you want this tracked automatically.');
+    }
+  }
 }
 
 // ═══════════════════════════════
