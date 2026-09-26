@@ -180,6 +180,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div class="sidebar-nav-item" data-tab="tiers" onclick="switchTab('tiers')"><span>📈</span> Tiers &amp; Coins</div>
         <div class="sidebar-nav-item" data-tab="holdings" onclick="switchTab('holdings')"><span>🪙</span> Holdings</div>
         <div class="sidebar-nav-item" data-tab="journal" onclick="switchTab('journal')"><span>📒</span> Journal</div>
+        <div class="sidebar-nav-item" data-tab="watchlist" onclick="switchTab('watchlist')"><span>⭐</span> Watchlist</div>
         <div class="sidebar-nav-item" data-tab="news" onclick="switchTab('news')"><span>📰</span> News</div>
         <div class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')"><span>⚙️</span> Settings</div>
       </div>
@@ -216,13 +217,23 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div class="section active" id="sec-dashboard">
       <div id="ticker-bar"></div>
       <div id="dash-content"></div>
-      <div class="tile-grid" style="grid-template-columns:repeat(5,1fr)">
+      <div class="tile-grid" style="grid-template-columns:repeat(6,1fr)">
         <button class="menu-tile" onclick="switchTab('tiers')"><div class="ic">📊</div><div class="lbl">Tiers &amp; Coins</div></button>
         <button class="menu-tile" onclick="switchTab('holdings')"><div class="ic">🪙</div><div class="lbl">Holdings</div></button>
         <button class="menu-tile" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
+        <button class="menu-tile" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
         <button class="menu-tile" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
         <button class="menu-tile" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       </div>
+    </div>
+
+    <!-- WATCHLIST -->
+    <div class="section" id="sec-watchlist">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin:0">⭐ Watchlist</div>
+        <button class="link-btn" onclick="openAddWatchlistModal()">+ Add coin</button>
+      </div>
+      <div id="watchlist-content"></div>
     </div>
 
     <!-- NEWS -->
@@ -258,19 +269,24 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div class="section" id="sec-settings">
       <div class="card">
         <div class="card-title">Total capital</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Funding with USDT below increases this automatically. Only edit this directly if you want to set it without an actual USDT deposit.</div>
         <div class="form-group">
           <label class="form-label">Total capital to invest (USD)</label>
           <input class="form-input" type="number" id="settings-capital" step="0.01"/>
         </div>
         <button class="btn-primary" onclick="saveCapital()">Save</button>
       </div>
-      <div class="card">
+      <div class="card" id="settings-spot-fund-card" style="display:none">
+        <div class="card-title">Fund this portfolio</div>
+        <button class="btn-primary" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
+      </div>
+      <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="seedDefaultPortfolio()">📋 Load starter portfolio (5 tiers, 25 coins)</button>
         <button class="btn-outline" style="width:100%" onclick="seedCuratedPortfolio()">✨ Load curated portfolio (5 tiers, 18 coins)</button>
       </div>
-      <div class="card">
+      <div class="card" id="settings-wizard-card">
         <div class="card-title">Build your own</div>
         <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">Answer a few questions and the app builds your tier/coin structure — including live market-cap-based tier suggestions as you search each coin.</div>
         <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
@@ -365,6 +381,37 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('add-position-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="confirmAddPosition()">Add Position</button>
+    </div>
+  </div>
+</div>
+
+<!-- FUND SPOT PORTFOLIO WITH USDT -->
+<div class="modal-overlay" id="fund-spot-modal">
+  <div class="modal">
+    <div class="modal-title">💵 Fund with USDT</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px">Spot Trading works like an exchange wallet — deposit USDT first, then buy and sell coins against that balance. Selling always returns proceeds to USDT.</div>
+    <div class="form-group"><label class="form-label">USDT amount</label><input class="form-input" type="number" step="0.01" id="fund-spot-amount" placeholder="e.g. 1000"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('fund-spot-modal')">Skip for now</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmFundSpot()">Fund</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD TO WATCHLIST MODAL -->
+<div class="modal-overlay" id="add-watchlist-modal">
+  <div class="modal">
+    <div class="modal-title">+ Add to Watchlist</div>
+    <div class="form-group"><label class="form-label">Coin</label>
+      <div class="wiz-coin-search-wrap">
+        <input class="form-input" id="wl-search-input" placeholder="Search coin name or ticker..." oninput="watchlistSearch(this.value)" autocomplete="off"/>
+        <div id="wl-search-dropdown"></div>
+      </div>
+      <div id="wl-selected-coin" style="font-size:0.78rem;color:var(--ink2);margin-top:4px"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('add-watchlist-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmAddWatchlist()">Add</button>
     </div>
   </div>
 </div>
@@ -559,6 +606,7 @@ async function onAuthed(user){
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
   if(displayCurrency!=='USD')await fetchDisplayCurrencyRates();
+  await loadWatchlist();
   renderPortfolioSwitcher();
   renderSidebarPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
@@ -596,8 +644,16 @@ function switchTab(name){
   if(name==='tiers')renderTiersSection();
   if(name==='holdings')renderHoldings();
   if(name==='journal')renderJournal();
+  if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
-  if(name==='settings')document.getElementById('settings-capital').value=settings.total_capital||'';
+  if(name==='settings'){
+    document.getElementById('settings-capital').value=settings.total_capital||'';
+    const cp=currentPortfolio();
+    const isSpotSettings=cp&&cp.kind==='spot';
+    document.getElementById('settings-spot-fund-card').style.display='';
+    document.getElementById('settings-data-card').style.display=isSpotSettings?'none':'';
+    document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
+  }
 }
 function goToDashboard(){switchTab('dashboard');}
 function toggleFigures(){
@@ -706,6 +762,7 @@ async function saveNewPortfolio(){
   renderPortfolioSwitcher();
   renderAll();
   showToast('Portfolio created ✅');
+  if(kind==='spot')openFundSpotModal();
 }
 
 async function fetchLivePrices(){
@@ -781,6 +838,8 @@ let wizardState=null;
 
 function openWizard(){
   if(!currentPortfolioId){showToast('Create a portfolio first, using the switcher at the top.');return;}
+  const cp=currentPortfolio();
+  if(cp&&cp.kind==='spot'){showToast('Spot Trading doesn\'t use tiers — use "+ Add Position" from Holdings instead.');return;}
   wizardState={step:1,tierCount:5,tierDefs:[],tierCoinCounts:[],tierCoinSlots:[]};
   renderWizardStep1();
   openModal('wizard-modal');
@@ -1326,8 +1385,10 @@ async function renderDashboard(){
   } else {
     // Single-portfolio mode — the portfolio selected in the dropdown IS
     // currentPortfolioId at this point (setDashViewMode already switched it).
+    const cp=currentPortfolio();
+    const isSpotEmpty=cp&&cp.kind==='spot';
     if(!coins.length){
-      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div>${selectorHtml}</div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>No tiers or coins in this portfolio yet.</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center"><button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button></div></div>`;
+      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div>${selectorHtml}</div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${isSpotEmpty?'No positions yet. Fund with USDT to start trading.':'No tiers or coins in this portfolio yet.'}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${isSpotEmpty?`<button class="btn-primary" onclick="openFundSpotModal()">💵 Fund with USDT</button>`:`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button>`}</div></div>`;
       return;
     }
     const total=totalActualValue();
@@ -1759,6 +1820,72 @@ function addPositionSelectCoin(ri){
   document.getElementById('ap-search-input').value=_apSelectedCoin.name;
   document.getElementById('ap-selected-coin').textContent=`Selected: ${_apSelectedCoin.name} (${_apSelectedCoin.symbol.toUpperCase()})`;
 }
+// Spot portfolios use one implicit 100%-target "Holdings" tier so the user
+// never has to think about tiers/weights — those concepts exist for the
+// rebalance strategy, not for logging individual trades. Shared by Add
+// Position and the initial USDT funding flow.
+async function ensureHoldingsTier(){
+  let holdingsTier=tiers.find(t=>t.name==='Holdings');
+  if(!holdingsTier){
+    const{data,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:'Holdings',target_pct:1,sort_order:0}).select().single();
+    if(error){showToast('Error: '+error.message);return null;}
+    holdingsTier=data;
+    tiers.push(holdingsTier);
+  }
+  return holdingsTier;
+}
+async function ensureCoinInTier(tierId,{name,ticker,coingecko_id}){
+  let coin=coins.find(c=>c.coingecko_id===coingecko_id&&c.tier_id===tierId);
+  if(!coin){
+    const{data,error}=await sb.from('coins').insert({
+      user_id:currentUser.id,tier_id:tierId,
+      name,ticker,coingecko_id,weight_in_tier:0,
+      exchanges:'',rationale:'',units_held:0,sort_order:coins.length
+    }).select().single();
+    if(error){showToast('Error: '+error.message);return null;}
+    coin=data;
+    coins.push(coin);
+  }
+  return coin;
+}
+function openFundSpotModal(){
+  document.getElementById('fund-spot-amount').value='';
+  openModal('fund-spot-modal');
+}
+// Finds (or reasonably creates) a USDT coin to fund — used by both portfolio
+// kinds now. Prefers an existing stablecoin-named tier over forcing a new one,
+// so this doesn't disturb a Rebalance portfolio's existing tier structure.
+async function ensureUsdtCoinForFunding(){
+  let usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='USDT');
+  if(usdtCoin)return usdtCoin;
+  let targetTier=tiers.find(t=>/stable/i.test(t.name))||tiers[0];
+  if(!targetTier){
+    targetTier=await ensureHoldingsTier();
+    if(!targetTier)return null;
+  }
+  return await ensureCoinInTier(targetTier.id,{name:'Tether',ticker:'USDT',coingecko_id:'tether'});
+}
+async function confirmFundSpot(){
+  const amount=parseFloat(document.getElementById('fund-spot-amount').value);
+  if(!amount||amount<=0){showToast('Enter a valid USDT amount.');return;}
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+  const usdtCoin=await ensureUsdtCoinForFunding();
+  if(!usdtCoin)return;
+  await executeTrade(usdtCoin.id,'buy',amount,1,'Initial funding');
+  // Keeps target-allocation math (Allocate Capital, tier targets) in sync with
+  // what's actually been funded, for portfolios that use total_capital.
+  const newCapital=(settings.total_capital||0)+amount;
+  await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:currentPortfolioId,total_capital:newCapital,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
+  settings.total_capital=newCapital;
+  closeModal('fund-spot-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast(`Funded with ${amount} USDT ✅`);
+}
 async function confirmAddPosition(){
   if(!_apSelectedCoin){showToast('Search and select a coin first.');return;}
   const units=parseFloat(document.getElementById('ap-units').value);
@@ -1766,29 +1893,10 @@ async function confirmAddPosition(){
   if(!units||units<=0||!price||price<=0){showToast('Enter a valid quantity and price.');return;}
   if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
 
-  // Spot portfolios use one implicit 100%-target "Holdings" tier so the user
-  // never has to think about tiers/weights — those concepts exist for the
-  // rebalance strategy, not for logging individual trades.
-  let holdingsTier=tiers.find(t=>t.name==='Holdings');
-  if(!holdingsTier){
-    const{data,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:currentPortfolioId,name:'Holdings',target_pct:1,sort_order:0}).select().single();
-    if(error){showToast('Error: '+error.message);return;}
-    holdingsTier=data;
-    tiers.push(holdingsTier);
-  }
-
-  let coin=coins.find(c=>c.coingecko_id===_apSelectedCoin.id&&c.tier_id===holdingsTier.id);
-  if(!coin){
-    const{data,error}=await sb.from('coins').insert({
-      user_id:currentUser.id,tier_id:holdingsTier.id,
-      name:_apSelectedCoin.name,ticker:_apSelectedCoin.symbol.toUpperCase(),
-      coingecko_id:_apSelectedCoin.id,weight_in_tier:0,
-      exchanges:'',rationale:'',units_held:0,sort_order:coins.length
-    }).select().single();
-    if(error){showToast('Error: '+error.message);return;}
-    coin=data;
-    coins.push(coin);
-  }
+  const holdingsTier=await ensureHoldingsTier();
+  if(!holdingsTier)return;
+  const coin=await ensureCoinInTier(holdingsTier.id,{name:_apSelectedCoin.name,ticker:_apSelectedCoin.symbol.toUpperCase(),coingecko_id:_apSelectedCoin.id});
+  if(!coin)return;
 
   await executeTrade(coin.id,'buy',units,price,'spot entry');
   closeModal('add-position-modal');
@@ -1997,26 +2105,45 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   coin.units_held=newUnitsHeld;
   coin.avg_cost_usd=newAvgCost;
 
-  // Selling converts proceeds into the portfolio's USDT holding — money from a
-  // sale doesn't just vanish, it becomes stablecoin, same as on a real exchange.
-  if(action==='sell'&&(coin.ticker||'').toUpperCase()!=='USDT'){
+  // Every buy/sell moves the opposite amount of USDT in the same portfolio —
+  // buying spends USDT, selling receives it — same as a real exchange spot
+  // wallet, and applies to Rebalance portfolios too, not just Spot Trading.
+  if((coin.ticker||'').toUpperCase()!=='USDT'){
     const usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='USDT');
     if(usdtCoin){
-      const proceeds=actualUnits*pricePerUnit;
+      const amountUsd=actualUnits*pricePerUnit;
       const usdtPrice=livePrices[usdtCoin.coingecko_id]||1;
-      const usdtUnitsReceived=proceeds/usdtPrice;
-      const newUsdtUnits=(usdtCoin.units_held||0)+usdtUnitsReceived;
-      const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
-      const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+proceeds)/newUsdtUnits:usdtPrice;
-      await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
-      await sb.from('trades').insert({
-        user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsReceived,
-        price_per_unit:usdtPrice,total_usd:proceeds,
-        realized_pnl:null,inr_rate:inrRate,notes:'Proceeds from selling '+coin.ticker
-      });
-      usdtCoin.units_held=newUsdtUnits;
-      usdtCoin.avg_cost_usd=newUsdtAvgCost;
-    } else {
+      const usdtUnitsMoved=amountUsd/usdtPrice;
+      if(action==='sell'){
+        // Sell proceeds credit USDT
+        const newUsdtUnits=(usdtCoin.units_held||0)+usdtUnitsMoved;
+        const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
+        const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+amountUsd)/newUsdtUnits:usdtPrice;
+        await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
+        await sb.from('trades').insert({
+          user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsMoved,
+          price_per_unit:usdtPrice,total_usd:amountUsd,
+          realized_pnl:null,inr_rate:inrRate,notes:'Proceeds from selling '+coin.ticker
+        });
+        usdtCoin.units_held=newUsdtUnits;
+        usdtCoin.avg_cost_usd=newUsdtAvgCost;
+      } else {
+        // Buy spends USDT — debit whatever USDT is available (never below zero)
+        const actualUsdtSpent=Math.min(usdtUnitsMoved,usdtCoin.units_held||0);
+        const newUsdtUnits=(usdtCoin.units_held||0)-actualUsdtSpent;
+        const usdtRealizedPnl=usdtCoin.avg_cost_usd!=null?(usdtPrice-usdtCoin.avg_cost_usd)*actualUsdtSpent:null;
+        await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:usdtCoin.avg_cost_usd}).eq('id',usdtCoin.id);
+        await sb.from('trades').insert({
+          user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'sell',units:actualUsdtSpent,
+          price_per_unit:usdtPrice,total_usd:actualUsdtSpent*usdtPrice,
+          realized_pnl:usdtRealizedPnl,inr_rate:inrRate,notes:'Spent to buy '+coin.ticker
+        });
+        usdtCoin.units_held=newUsdtUnits;
+        if(actualUsdtSpent<usdtUnitsMoved){
+          showToast(`Bought ${coin.ticker}, but USDT balance was insufficient to cover the full cost — USDT went to zero rather than negative.`);
+        }
+      }
+    } else if(action==='sell'){
       showToast('Sold — but no USDT holding found in this portfolio, so proceeds weren\'t credited anywhere. Add a USDT coin if you want this tracked automatically.');
     }
   }
@@ -2149,6 +2276,161 @@ function exportJournalPDF(){
     alternateRowStyles:{fillColor:[241,243,245]}
   });
   doc.save(`kosh-journal-${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
+// ═══════════════════════════════
+//  WATCHLIST — personal coin tracking, independent of your portfolios
+// ═══════════════════════════════
+let watchlist=[];
+let watchlistData={}; // coingecko_id -> {price, change24h, low30d, high30d}
+
+async function loadWatchlist(){
+  const{data}=await sb.from('watchlist').select('*').eq('user_id',currentUser.id).order('sort_order');
+  watchlist=data||[];
+}
+
+let _wlSelectedCoin=null;
+let _wlSearchTimer=null;
+function openAddWatchlistModal(){
+  _wlSelectedCoin=null;
+  document.getElementById('wl-search-input').value='';
+  document.getElementById('wl-search-dropdown').innerHTML='';
+  document.getElementById('wl-selected-coin').textContent='';
+  openModal('add-watchlist-modal');
+}
+function watchlistSearch(query){
+  _wlSelectedCoin=null;
+  document.getElementById('wl-selected-coin').textContent='';
+  clearTimeout(_wlSearchTimer);
+  const dropdown=document.getElementById('wl-search-dropdown');
+  if(query.trim().length<2){dropdown.innerHTML='';return;}
+  _wlSearchTimer=setTimeout(async()=>{
+    const results=await searchCoinGecko(query);
+    window._wlSearchResults=results;
+    const dd=document.getElementById('wl-search-dropdown');
+    if(!dd)return;
+    if(!results.length){dd.innerHTML='';return;}
+    dd.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="watchlistSelectCoin(${ri})">${escapeHtml(r.name)} <span style="color:var(--ink3)">${escapeHtml(r.symbol.toUpperCase())}</span>${r.rank?` · rank #${r.rank}`:''}</div>`).join('')}</div>`;
+  },350);
+}
+function watchlistSelectCoin(ri){
+  _wlSelectedCoin=window._wlSearchResults[ri];
+  document.getElementById('wl-search-dropdown').innerHTML='';
+  document.getElementById('wl-search-input').value=_wlSelectedCoin.name;
+  document.getElementById('wl-selected-coin').textContent=`Selected: ${_wlSelectedCoin.name} (${_wlSelectedCoin.symbol.toUpperCase()})`;
+}
+async function confirmAddWatchlist(){
+  if(!_wlSelectedCoin){showToast('Search and select a coin first.');return;}
+  if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id)){showToast('Already in your watchlist.');closeModal('add-watchlist-modal');return;}
+  if(watchlist.length>=20){showToast('Watchlist is capped at 20 coins.');return;}
+  const{error}=await sb.from('watchlist').insert({
+    user_id:currentUser.id,name:_wlSelectedCoin.name,ticker:_wlSelectedCoin.symbol.toUpperCase(),
+    coingecko_id:_wlSelectedCoin.id,sort_order:watchlist.length
+  });
+  if(error){showToast('Error: '+error.message);return;}
+  closeModal('add-watchlist-modal');
+  await loadWatchlist();
+  renderWatchlist();
+  showToast('Added to watchlist ✅');
+}
+async function removeFromWatchlist(id){
+  if(!confirm('Remove this coin from your watchlist?'))return;
+  await sb.from('watchlist').delete().eq('id',id);
+  await loadWatchlist();
+  renderWatchlist();
+}
+
+// Fetches live price + 24h change (batched, one call) and 30-day high/low
+// (one call per coin — support/resistance here is a simple, honest proxy:
+// the 30-day low/high, not a real technical-analysis indicator).
+async function fetchWatchlistData(){
+  if(!watchlist.length)return;
+  const ids=watchlist.map(w=>w.coingecko_id).join(',');
+  try{
+    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    if(res.ok){
+      const data=await res.json();
+      watchlist.forEach(w=>{
+        if(data[w.coingecko_id]){
+          watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
+          watchlistData[w.coingecko_id].price=data[w.coingecko_id].usd;
+          watchlistData[w.coingecko_id].change24h=data[w.coingecko_id].usd_24h_change;
+        }
+      });
+    }
+  }catch(e){console.error('watchlist price fetch failed',e);}
+
+  await Promise.all(watchlist.map(async w=>{
+    try{
+      const res=await fetch(`https://api.coingecko.com/api/v3/coins/${w.coingecko_id}/market_chart?vs_currency=usd&days=30`);
+      if(!res.ok)return;
+      const data=await res.json();
+      const prices=(data.prices||[]).map(p=>p[1]);
+      if(prices.length){
+        watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
+        watchlistData[w.coingecko_id].low30d=Math.min(...prices);
+        watchlistData[w.coingecko_id].high30d=Math.max(...prices);
+      }
+    }catch(e){console.error('30d range fetch failed for',w.coingecko_id,e);}
+  }));
+}
+
+async function renderWatchlist(){
+  const el=document.getElementById('watchlist-content');
+  if(!watchlist.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">⭐</div><div>No coins in your watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
+    return;
+  }
+  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  await fetchWatchlistData();
+
+  const withChange=watchlist.filter(w=>watchlistData[w.coingecko_id]?.change24h!=null)
+    .map(w=>({w,change:watchlistData[w.coingecko_id].change24h}));
+  const gainers=[...withChange].filter(x=>x.change>0).sort((a,b)=>b.change-a.change).slice(0,3);
+  const losers=[...withChange].filter(x=>x.change<0).sort((a,b)=>a.change-b.change).slice(0,3);
+
+  let html='';
+  if(withChange.length){
+    html+=`<div class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div>
+        <div style="font-size:0.74rem;font-weight:600;color:var(--green);margin-bottom:8px">🟢 Top 3 Gainers</div>
+        ${gainers.map(x=>`<div style="font-size:0.72rem;display:flex;justify-content:space-between;margin-bottom:5px"><span>${escapeHtml(x.w.ticker)}</span><span style="color:var(--green);font-weight:600">+${x.change.toFixed(1)}%</span></div>`).join('')||'<div style="font-size:0.7rem;color:var(--ink3)">None today</div>'}
+      </div>
+      <div>
+        <div style="font-size:0.74rem;font-weight:600;color:var(--red);margin-bottom:8px">🔴 Top 3 Losers</div>
+        ${losers.map(x=>`<div style="font-size:0.72rem;display:flex;justify-content:space-between;margin-bottom:5px"><span>${escapeHtml(x.w.ticker)}</span><span style="color:var(--red);font-weight:600">${x.change.toFixed(1)}%</span></div>`).join('')||'<div style="font-size:0.7rem;color:var(--ink3)">None today</div>'}
+      </div>
+    </div></div>`;
+  }
+
+  html+=`<div class="card" style="padding:0;overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.72rem;white-space:nowrap">
+      <thead><tr style="background:var(--ink);color:#F1F3F5">
+        <th style="padding:7px 9px;text-align:left">Coin</th>
+        <th style="padding:7px 9px;text-align:right">Price</th>
+        <th style="padding:7px 9px;text-align:right">24h</th>
+        <th style="padding:7px 9px;text-align:right">Support (30d low)</th>
+        <th style="padding:7px 9px;text-align:right">Resistance (30d high)</th>
+        <th style="padding:7px 9px"></th>
+      </tr></thead>
+      <tbody>
+        ${watchlist.map((w,i)=>{
+          const d=watchlistData[w.coingecko_id]||{};
+          const rowBg=i%2===1?'background:var(--card2)':'';
+          return`<tr style="border-bottom:1px solid var(--border);${rowBg}">
+            <td style="padding:7px 9px;font-weight:600">${escapeHtml(w.ticker)}</td>
+            <td style="padding:7px 9px;text-align:right">${d.price!=null?fmtUsd(d.price):'—'}</td>
+            <td style="padding:7px 9px;text-align:right;color:${d.change24h==null?'var(--ink3)':(d.change24h>=0?'var(--green)':'var(--red)')};font-weight:600">${d.change24h!=null?(d.change24h>=0?'+':'')+d.change24h.toFixed(1)+'%':'—'}</td>
+            <td style="padding:7px 9px;text-align:right;color:var(--green)">${d.low30d!=null?fmtUsd(d.low30d):'—'}</td>
+            <td style="padding:7px 9px;text-align:right;color:var(--red)">${d.high30d!=null?fmtUsd(d.high30d):'—'}</td>
+            <td style="padding:7px 9px;text-align:right"><span class="link-btn" style="color:var(--red)" onclick="removeFromWatchlist('${w.id}')">✕</span></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div style="font-size:0.66rem;color:var(--ink3);margin-top:8px">Support/Resistance = 30-day low/high — a simple reference, not a technical-analysis signal.</div>`;
+  el.innerHTML=html;
 }
 
 // ═══════════════════════════════
@@ -2388,6 +2670,7 @@ const CURATED_SEED_TIERS=[
 ];
 
 async function seedCuratedPortfolio(){
+  if(currentPortfolioId&&currentPortfolio()?.kind==='spot'){showToast('Spot Trading doesn\'t use tiers — use "+ Add Position" from Holdings instead.');return;}
   if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the curated 18-coin portfolio will add these 5 tiers alongside what you have. Continue?'))return;
   if(!currentPortfolioId){
     const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
@@ -2412,6 +2695,7 @@ async function seedCuratedPortfolio(){
 }
 
 async function seedDefaultPortfolio(){
+  if(currentPortfolioId&&currentPortfolio()?.kind==='spot'){showToast('Spot Trading doesn\'t use tiers — use "+ Add Position" from Holdings instead.');return;}
   if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
   if(!currentPortfolioId){
     const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
