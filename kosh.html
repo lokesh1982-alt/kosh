@@ -291,6 +291,11 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">Answer a few questions and the app builds your tier/coin structure — including live market-cap-based tier suggestions as you search each coin.</div>
         <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
       </div>
+      <div class="card">
+        <div class="card-title">🧪 US-Stocks test (temporary)</div>
+        <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">Testing whether live stock quotes work before building the full US-Stocks portfolio feature.</div>
+        <button class="btn-outline" style="width:100%" onclick="openStockTestModal()">Test a stock quote</button>
+      </div>
     </div>
   </div>
     </div>
@@ -412,6 +417,23 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('add-watchlist-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="confirmAddWatchlist()">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- STOCK QUOTE TEST MODAL (temporary) -->
+<div class="modal-overlay" id="stock-test-modal">
+  <div class="modal">
+    <div class="modal-title">🧪 Test Stock Quote</div>
+    <div class="form-group"><label class="form-label">Search US stock (e.g. AAPL, Apple)</label>
+      <div class="wiz-coin-search-wrap">
+        <input class="form-input" id="stock-test-search-input" placeholder="Ticker or company name..." oninput="stockTestSearch(this.value)" autocomplete="off"/>
+        <div id="stock-test-search-dropdown"></div>
+      </div>
+    </div>
+    <div id="stock-test-result"></div>
+    <div style="margin-top:10px">
+      <button class="btn-outline" style="width:100%" onclick="closeModal('stock-test-modal')">Close</button>
     </div>
   </div>
 </div>
@@ -688,6 +710,82 @@ let coins=[];
 let settings={total_capital:0};
 let livePrices={};
 let priceChange24h={};
+
+// ═══════════════════════════════
+//  FINNHUB (US stocks) — test layer only, for now
+// ═══════════════════════════════
+const FINNHUB_API_KEY='das57k9r01qunboj4oagdas57k9r01qunboj4ob0';
+async function searchFinnhubStocks(query){
+  try{
+    const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${FINNHUB_API_KEY}`);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    return(data.result||[]).filter(r=>r.type==='Common Stock'||r.type==='ETF').slice(0,8).map(r=>({symbol:r.symbol,name:r.description}));
+  }catch(e){
+    console.error('Finnhub search failed:',e);
+    throw e;
+  }
+}
+async function fetchFinnhubQuote(symbol){
+  try{
+    const res=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    if(data.c==null||(data.c===0&&data.h===0))throw new Error('No data for this symbol');
+    return{price:data.c,change:data.d,changePct:data.dp,high:data.h,low:data.l,prevClose:data.pc};
+  }catch(e){
+    console.error('Finnhub quote failed:',e);
+    throw e;
+  }
+}
+
+let _stockTestSelected=null;
+let _stockTestSearchTimer=null;
+function openStockTestModal(){
+  document.getElementById('stock-test-search-input').value='';
+  document.getElementById('stock-test-search-dropdown').innerHTML='';
+  document.getElementById('stock-test-result').innerHTML='';
+  _stockTestSelected=null;
+  openModal('stock-test-modal');
+}
+function stockTestSearch(query){
+  clearTimeout(_stockTestSearchTimer);
+  const dropdown=document.getElementById('stock-test-search-dropdown');
+  const resultEl=document.getElementById('stock-test-result');
+  if(query.trim().length<1){dropdown.innerHTML='';return;}
+  _stockTestSearchTimer=setTimeout(async()=>{
+    resultEl.innerHTML='';
+    try{
+      const results=await searchFinnhubStocks(query);
+      window._stockTestResults=results;
+      if(!results.length){dropdown.innerHTML='<div style="font-size:0.72rem;color:var(--ink3);padding:8px">No matches.</div>';return;}
+      dropdown.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="stockTestSelect(${ri})">${escapeHtml(r.symbol)} <span style="color:var(--ink3)">${escapeHtml(r.name)}</span></div>`).join('')}</div>`;
+    }catch(e){
+      dropdown.innerHTML='';
+      resultEl.innerHTML=`<div class="alert-box danger"><span>🚨</span><div><div class="alert-title" style="color:var(--red-dark)">Search failed</div><div class="alert-sub" style="color:var(--red-dark)">${escapeHtml(e.message||String(e))}</div></div></div>`;
+    }
+  },400);
+}
+async function stockTestSelect(ri){
+  const stock=window._stockTestResults[ri];
+  document.getElementById('stock-test-search-dropdown').innerHTML='';
+  document.getElementById('stock-test-search-input').value=stock.symbol;
+  const resultEl=document.getElementById('stock-test-result');
+  resultEl.innerHTML=`<div class="empty-state" style="padding:16px"><div class="ic">⏳</div><div>Fetching live quote...</div></div>`;
+  try{
+    const q=await fetchFinnhubQuote(stock.symbol);
+    const chg=q.change!=null?q.change:0;
+    resultEl.innerHTML=`<div class="card">
+      <div class="card-title">${escapeHtml(stock.symbol)} — ${escapeHtml(stock.name)}</div>
+      <div style="font-family:'Fraunces',serif;font-size:1.4rem;font-weight:600;color:var(--teal)">${fmtUsd(q.price)}</div>
+      <div style="font-size:0.8rem;color:${chg>=0?'var(--green)':'var(--red)'};margin-bottom:8px">${chg>=0?'▲':'▼'} ${fmtUsd(Math.abs(chg))} (${q.changePct!=null?q.changePct.toFixed(2):'—'}%) today</div>
+      <div style="font-size:0.72rem;color:var(--ink3)">Day range: ${fmtUsd(q.low)} – ${fmtUsd(q.high)} · Prev close: ${fmtUsd(q.prevClose)}</div>
+      <div style="font-size:0.7rem;color:var(--green);margin-top:10px">✅ Live quote fetched successfully — Finnhub works from the browser.</div>
+    </div>`;
+  }catch(e){
+    resultEl.innerHTML=`<div class="alert-box danger"><span>🚨</span><div><div class="alert-title" style="color:var(--red-dark)">Quote fetch failed</div><div class="alert-sub" style="color:var(--red-dark)">${escapeHtml(e.message||String(e))} — this likely means Finnhub blocks direct browser requests (CORS), and we'll need a different approach for live prices.</div></div></div>`;
+  }
+}
 let btc90dHigh=null;
 let trades=[];
 
