@@ -427,6 +427,9 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ═══════════════════════════════
 //  SUPABASE SETUP
@@ -486,6 +489,61 @@ function showAuthError(msg){
   const el=document.getElementById('auth-error');
   el.textContent=msg;el.style.display='block';
 }
+
+// ═══════════════════════════════
+//  DISPLAY CURRENCY (summary totals only — Dashboard hero + Holdings total)
+// ═══════════════════════════════
+let displayCurrency=localStorage.getItem('kosh-display-currency')||'USD';
+let fiatRates={};
+let cryptoRefPrices={};
+async function fetchDisplayCurrencyRates(){
+  try{
+    const res=await fetch('https://api.frankfurter.app/latest?from=USD&to=INR,EUR,GBP');
+    if(res.ok){const data=await res.json();fiatRates=data.rates||{};}
+  }catch(e){console.error('fiat rate fetch failed',e);}
+  try{
+    const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd');
+    if(res.ok){
+      const data=await res.json();
+      cryptoRefPrices={BTC:data.bitcoin?.usd,USDT:data.tether?.usd};
+    }
+  }catch(e){console.error('crypto reference price fetch failed',e);}
+}
+async function setDisplayCurrency(cur){
+  displayCurrency=cur;
+  localStorage.setItem('kosh-display-currency',cur);
+  if((cur!=='USD')&&(!fiatRates.INR||!cryptoRefPrices.BTC))await fetchDisplayCurrencyRates();
+  renderDashboard();
+  if(document.getElementById('sec-holdings').classList.contains('active'))renderHoldings();
+}
+// Converts a USD amount into whatever displayCurrency is currently selected —
+// used only for summary totals, per the intentional scope of this feature.
+function fmtDisplay(usdValue){
+  if(displayCurrency==='USD')return fmtUsd(usdValue);
+  if(displayCurrency==='BTC'){
+    const p=cryptoRefPrices.BTC;
+    if(!p)return fmtUsd(usdValue);
+    return (usdValue/p).toLocaleString('en-US',{maximumFractionDigits:8})+' BTC';
+  }
+  if(displayCurrency==='USDT'){
+    const p=cryptoRefPrices.USDT||1;
+    return (usdValue/p).toLocaleString('en-US',{maximumFractionDigits:2})+' USDT';
+  }
+  const rate=fiatRates[displayCurrency];
+  if(!rate)return fmtUsd(usdValue);
+  const symbols={INR:'₹',EUR:'€',GBP:'£'};
+  return(symbols[displayCurrency]||displayCurrency+' ')+(usdValue*rate).toLocaleString('en-US',{maximumFractionDigits:2});
+}
+function currencySelectorHtml(theme){
+  const opts=['USD','INR','EUR','GBP','BTC','USDT'];
+  const style=theme==='light'
+    ?'background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:3px 6px;font-size:0.66rem;color:var(--ink);font-family:inherit'
+    :'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:3px 6px;font-size:0.66rem;color:#F1F3F5;font-family:inherit';
+  return`<select onchange="setDisplayCurrency(this.value)" style="${style}">
+    ${opts.map(o=>`<option value="${o}" ${displayCurrency===o?'selected':''}>${o}</option>`).join('')}
+  </select>`;
+}
+
 async function onAuthed(user){
   currentUser=user;
   document.getElementById('auth-screen').classList.add('hidden');
@@ -500,6 +558,7 @@ async function onAuthed(user){
   await loadAllData();
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
+  if(displayCurrency!=='USD')await fetchDisplayCurrencyRates();
   renderPortfolioSwitcher();
   renderSidebarPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
@@ -1181,13 +1240,13 @@ async function renderDashboard(){
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
         <div class="hero-label">Combined portfolio value</div>
-        ${selectorHtml}
+        <div style="display:flex;gap:6px">${selectorHtml}${currencySelectorHtml()}</div>
       </div>
-      <div class="hero-val hide-figure">${fmtUsd(combined.combinedTotal)}</div>
-      <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtUsd(combined.totalCapital)})</div>
+      <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
+      <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
       <div style="display:flex;gap:16px;margin:10px 0 4px">
-        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?(combined.combinedUnrealized>=0?'+':'')+fmtUsd(combined.combinedUnrealized):'—'}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${combined.combinedRealized>=0?'+':''}${fmtUsd(combined.combinedRealized)}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?(combined.combinedUnrealized>=0?'+':'')+fmtDisplay(combined.combinedUnrealized):'—'}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${combined.combinedRealized>=0?'+':''}${fmtDisplay(combined.combinedRealized)}</div></div>
       </div>
       ${trendVals.length>=2?buildSparklineSVG(trendVals,400,60,'#17B6A7'):'<div style="font-size:0.68rem;opacity:0.5;margin-top:8px">Trend line will build up as you use the app daily</div>'}
     </div>`;
@@ -1294,14 +1353,14 @@ async function renderDashboard(){
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div class="hero-label">Portfolio value</div>
-        ${selectorHtml}
+        <div style="display:flex;gap:6px">${selectorHtml}${currencySelectorHtml()}</div>
       </div>
-      <div class="hero-val hide-figure">${fmtUsd(total)}</div>
-      <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs capital deployed (${fmtUsd(capital)})</div>
+      <div class="hero-val hide-figure">${fmtDisplay(total)}</div>
+      <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs capital deployed (${fmtDisplay(capital)})</div>
       <div style="display:flex;gap:16px;margin-top:14px">
-        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${pricedCount?(unrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${pricedCount?(unrealized>=0?'+':'')+fmtUsd(unrealized):'—'}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${realized>=0?'#7FE0D4':'#F4A6A6'}">${realized>=0?'+':''}${fmtUsd(realized)}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Capital in</div><div style="font-size:0.86rem;font-weight:600">${fmtUsd(capital)}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${pricedCount?(unrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${pricedCount?(unrealized>=0?'+':'')+fmtDisplay(unrealized):'—'}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${realized>=0?'#7FE0D4':'#F4A6A6'}">${realized>=0?'+':''}${fmtDisplay(realized)}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Capital in</div><div style="font-size:0.86rem;font-weight:600">${fmtDisplay(capital)}</div></div>
       </div>
     </div>`;
 
@@ -1595,9 +1654,12 @@ function renderHoldings(){
     const totalGainPct=totalInvested>0?(totalGain/totalInvested)*100:0;
     const missingCount=coins.length-pricedCoinCount;
     html+=`<div class="card" style="text-align:center">
-      <div class="card-title" style="margin-bottom:2px">Total unrealized P&amp;L</div>
-      <div class="serif" style="font-size:1.3rem;font-weight:600;color:${totalGain>=0?'var(--green)':'var(--red)'}">${totalGain>=0?'+':''}${fmtUsd(totalGain)} (${totalGainPct>=0?'+':''}${totalGainPct.toFixed(1)}%)</div>
-      <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">${fmtUsd(totalCurrentValue)} current vs ${fmtUsd(totalInvested)} invested${missingCount?` · ${missingCount} coin${missingCount===1?'':'s'} excluded (no price or avg cost set)`:''}</div>
+      <div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:2px">
+        <div class="card-title" style="margin:0">Total unrealized P&amp;L</div>
+        ${currencySelectorHtml('light')}
+      </div>
+      <div class="serif hide-figure" style="font-size:1.3rem;font-weight:600;color:${totalGain>=0?'var(--green)':'var(--red)'}">${totalGain>=0?'+':''}${fmtDisplay(totalGain)} (${totalGainPct>=0?'+':''}${totalGainPct.toFixed(1)}%)</div>
+      <div class="hide-figure" style="font-size:0.68rem;color:var(--ink3);margin-top:4px">${fmtDisplay(totalCurrentValue)} current vs ${fmtDisplay(totalInvested)} invested${missingCount?` · ${missingCount} coin${missingCount===1?'':'s'} excluded (no price or avg cost set)`:''}</div>
     </div>`;
   }
 
@@ -1895,9 +1957,26 @@ async function confirmProposal(idx){
 // Shared trade execution — used by both the rebalance flow and manual entry.
 // On a buy: recomputes the weighted-average cost basis. On a sell: computes
 // realized P&L against the current average cost, then logs it to the journal.
+// USD→INR rates via Frankfurter (free, no key, ECB-sourced, supports historical
+// lookups) — cached by date so repeated lookups for the same day don't refetch.
+let inrRateCache={};
+async function getHistoricalInrRate(dateStr){
+  if(inrRateCache[dateStr]!=null)return inrRateCache[dateStr];
+  try{
+    const res=await fetch(`https://api.frankfurter.app/${dateStr}?from=USD&to=INR`);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const rate=data.rates?.INR;
+    if(rate){inrRateCache[dateStr]=rate;return rate;}
+  }catch(e){console.error('INR rate fetch failed for',dateStr,e);}
+  return null;
+}
+
 async function executeTrade(coinId,action,units,pricePerUnit,notes){
   const coin=coins.find(c=>c.id===coinId);
   if(!coin)return;
+  const todayStr=new Date().toISOString().slice(0,10);
+  const inrRate=await getHistoricalInrRate(todayStr); // trade happens now, so "the trading day's rate" is today's
   let newUnitsHeld,newAvgCost,realizedPnl=null,actualUnits=units;
   if(action==='buy'){
     newUnitsHeld=(coin.units_held||0)+units;
@@ -1913,7 +1992,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   await sb.from('trades').insert({
     user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:coinId,coin_name:coin.name,coin_ticker:coin.ticker,action,units:actualUnits,
     price_per_unit:pricePerUnit,total_usd:actualUnits*pricePerUnit,
-    realized_pnl:realizedPnl,notes:notes||null
+    realized_pnl:realizedPnl,inr_rate:inrRate,notes:notes||null
   });
   coin.units_held=newUnitsHeld;
   coin.avg_cost_usd=newAvgCost;
@@ -1933,7 +2012,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
       await sb.from('trades').insert({
         user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsReceived,
         price_per_unit:usdtPrice,total_usd:proceeds,
-        realized_pnl:null,notes:'Proceeds from selling '+coin.ticker
+        realized_pnl:null,inr_rate:inrRate,notes:'Proceeds from selling '+coin.ticker
       });
       usdtCoin.units_held=newUsdtUnits;
       usdtCoin.avg_cost_usd=newUsdtAvgCost;
@@ -1946,36 +2025,130 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
 // ═══════════════════════════════
 //  JOURNAL
 // ═══════════════════════════════
-function renderJournal(){
+// ═══════════════════════════════
+//  JOURNAL — combined across all portfolios, table format with INR columns
+// ═══════════════════════════════
+let allJournalTrades=[];
+async function loadAllTradesForJournal(){
+  const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
+  return data||[];
+}
+async function renderJournal(){
   const el=document.getElementById('journal-content');
-  if(!trades.length){
+  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  allJournalTrades=await loadAllTradesForJournal();
+  if(!allJournalTrades.length){
     el.innerHTML=`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
   }
-  const totalRealized=trades.reduce((s,t)=>s+(t.realized_pnl||0),0);
+  const totalRealized=allJournalTrades.reduce((s,t)=>s+(t.realized_pnl||0),0);
   let html=`<div class="card" style="text-align:center">
-    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L</div>
+    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (all portfolios)</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
   </div>`;
-  html+='<div class="card" style="padding:0 14px">';
-  trades.forEach(t=>{
-    const coin=coins.find(c=>c.id===t.coin_id);
-    const name=t.coin_name||(coin?coin.name:'(deleted coin)');
-    const ticker=t.coin_ticker||(coin?coin.ticker:'');
-    const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
-    html+=`<div class="coin-row">
-      <div>
-        <div class="coin-name">${t.action==='buy'?'🟢 Buy':'🔴 Sell'} ${escapeHtml(name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(ticker)}</span></div>
-        <div class="coin-sub">${date} · ${t.units} units @ ${fmtUsd(t.price_per_unit)}${t.notes?` · ${escapeHtml(t.notes)}`:''}</div>
-      </div>
-      <div style="text-align:right">
-        <div class="coin-val hide-figure">${fmtUsd(t.total_usd)}</div>
-        ${t.realized_pnl!=null?`<div class="coin-drift" style="color:${t.realized_pnl>=0?'var(--green)':'var(--red)'}">${t.realized_pnl>=0?'+':''}${fmtUsd(t.realized_pnl)}</div>`:''}
-      </div>
-    </div>`;
-  });
-  html+='</div>';
+  html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalExcel()">📊 Export Excel</button>
+    <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalPDF()">📄 Export PDF</button>
+  </div>`;
+  html+=`<div class="card" style="padding:0;overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
+      <thead><tr style="background:var(--ink);color:#F1F3F5">
+        <th style="padding:8px 10px;text-align:left">Date</th>
+        <th style="padding:8px 10px;text-align:left">Coin</th>
+        <th style="padding:8px 10px;text-align:right">Qty</th>
+        <th style="padding:8px 10px;text-align:center">Type</th>
+        <th style="padding:8px 10px;text-align:right">Price (USD)</th>
+        <th style="padding:8px 10px;text-align:right">Price (INR)</th>
+        <th style="padding:8px 10px;text-align:right">Total (USD)</th>
+        <th style="padding:8px 10px;text-align:right">Total (INR)</th>
+        <th style="padding:8px 10px;text-align:right">P&amp;L (USD)</th>
+        <th style="padding:8px 10px;text-align:right">P&amp;L (INR)</th>
+        <th style="padding:8px 10px;text-align:right">FX Rate</th>
+      </tr></thead>
+      <tbody id="journal-table-body">${allJournalTrades.map((t,i)=>journalRowHtml(t,i)).join('')}</tbody>
+    </table>
+  </div>
+  <div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">FX Rate is the USD→INR rate on the trading day (ECB reference rate). Older trades without a stored rate are backfilled automatically as you view this screen.</div>`;
   el.innerHTML=html;
+  backfillMissingInrRates();
+}
+function journalRowHtml(t,i){
+  const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+  const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
+  const totalInr=t.inr_rate!=null?t.total_usd*t.inr_rate:null;
+  const pnlInr=(t.realized_pnl!=null&&t.inr_rate!=null)?t.realized_pnl*t.inr_rate:null;
+  const rowBg=i%2===1?'background:var(--card2)':'';
+  return`<tr id="journal-row-${t.id}" style="border-bottom:1px solid var(--border);${rowBg}">
+    <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
+    <td style="padding:7px 10px;font-weight:600">${escapeHtml(t.coin_ticker||t.coin_name||'')}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${t.units}</td>
+    <td style="padding:7px 10px;text-align:center"><span style="background:${t.action==='buy'?'var(--green-bg)':'var(--red-bg)'};color:${t.action==='buy'?'var(--green)':'var(--red)'};padding:2px 7px;border-radius:6px;font-weight:600">${t.action==='buy'?'Buy':'Sell'}</span></td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.price_per_unit)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${priceInr!=null?'₹'+priceInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.total_usd)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${totalInr!=null?'₹'+totalInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${t.inr_rate!=null?t.inr_rate.toFixed(2):'—'}</td>
+  </tr>`;
+}
+async function backfillMissingInrRates(){
+  const missing=allJournalTrades.filter(t=>t.inr_rate==null);
+  if(!missing.length)return;
+  const uniqueDates=[...new Set(missing.map(t=>new Date(t.trade_date).toISOString().slice(0,10)))];
+  for(const dateStr of uniqueDates){
+    const rate=await getHistoricalInrRate(dateStr);
+    if(rate==null)continue;
+    const tradesOnDate=missing.filter(t=>new Date(t.trade_date).toISOString().slice(0,10)===dateStr);
+    for(const t of tradesOnDate){
+      t.inr_rate=rate;
+      await sb.from('trades').update({inr_rate:rate}).eq('id',t.id);
+      const row=document.getElementById('journal-row-'+t.id);
+      if(row)row.outerHTML=journalRowHtml(t,allJournalTrades.indexOf(t));
+    }
+  }
+}
+const JOURNAL_COLUMNS=['Date','Coin','Qty','Type','Price (USD)','Price (INR)','Total (USD)','Total (INR)','P&L (USD)','P&L (INR)','FX Rate'];
+function journalExportRows(){
+  return allJournalTrades.map(t=>{
+    const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
+    const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
+    const totalInr=t.inr_rate!=null?t.total_usd*t.inr_rate:null;
+    const pnlInr=(t.realized_pnl!=null&&t.inr_rate!=null)?t.realized_pnl*t.inr_rate:null;
+    return[date,t.coin_ticker||t.coin_name||'',t.units,t.action==='buy'?'Buy':'Sell',
+      t.price_per_unit,priceInr!=null?priceInr:'',t.total_usd,totalInr!=null?totalInr:'',
+      t.realized_pnl!=null?t.realized_pnl:'',pnlInr!=null?pnlInr:'',t.inr_rate!=null?t.inr_rate:''];
+  });
+}
+function exportJournalExcel(){
+  if(typeof XLSX==='undefined'){showToast('Excel export library still loading — try again in a moment.');return;}
+  const rows=journalExportRows();
+  const wsData=[['Kosh — Trade Journal'],[],JOURNAL_COLUMNS,...rows];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=JOURNAL_COLUMNS.map(()=>({wch:14}));
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:JOURNAL_COLUMNS.length-1}}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Journal');
+  XLSX.writeFile(wb,`kosh-journal-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+function exportJournalPDF(){
+  if(typeof window.jspdf==='undefined'){showToast('PDF export library still loading — try again in a moment.');return;}
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFontSize(14);doc.setTextColor(20,24,29);
+  doc.text('Kosh — Trade Journal',14,16);
+  doc.setFontSize(9);doc.setTextColor(120,120,120);
+  doc.text('Generated '+new Date().toLocaleDateString(),14,22);
+  doc.autoTable({
+    startY:28,
+    head:[JOURNAL_COLUMNS],
+    body:journalExportRows().map(r=>r.map(v=>typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:2}):v)),
+    theme:'grid',
+    headStyles:{fillColor:[20,24,29],textColor:255,fontSize:8},
+    styles:{fontSize:7.5,cellPadding:2.5},
+    alternateRowStyles:{fillColor:[241,243,245]}
+  });
+  doc.save(`kosh-journal-${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
 // ═══════════════════════════════
