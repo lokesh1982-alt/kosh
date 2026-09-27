@@ -36,7 +36,7 @@ button{cursor:pointer;}
 .back-row-frozen{padding:6px 16px 10px;font-size:0.82rem;font-weight:600;color:var(--ink);border-bottom:1px solid var(--border);background:var(--bg);}
 .back-row-frozen span{cursor:pointer;}
 
-.main{max-width:520px;margin:0 auto;padding:0 16px 90px;}
+.main{max-width:520px;margin:0 auto;padding:0 16px 108px;}
 
 .app-layout{display:block;}
 .desktop-sidebar{display:none;}
@@ -57,10 +57,20 @@ button{cursor:pointer;}
   #dash-content,#holdings-content,#tiers-content{column-count:3;}
 }
 
-.tile-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px;}
-.menu-tile{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;}
-.menu-tile .ic{font-size:19px;}
-.menu-tile .lbl{font-size:0.62rem;color:var(--ink2);font-weight:500;text-align:center;line-height:1.2;}
+.tile-grid{
+  display:grid;grid-template-columns:repeat(7,1fr);gap:4px;
+  position:fixed;left:0;right:0;bottom:0;
+  background:var(--bg);
+  border-top:1px solid var(--border);
+  padding:6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  z-index:60;
+  max-width:520px;margin:0 auto;
+}
+.menu-tile{background:none;border:none;border-radius:var(--radius-sm);padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;}
+.menu-tile.active{background:var(--card2);}
+.menu-tile .ic{font-size:17px;}
+.menu-tile .lbl{font-size:0.56rem;color:var(--ink2);font-weight:500;text-align:center;line-height:1.15;}
+.menu-tile.active .lbl{color:var(--teal-dark);font-weight:700;}
 
 .ticker-wrap{overflow:hidden;background:var(--ink);border-radius:10px;padding:7px 0;margin-bottom:12px;white-space:nowrap;}
 .ticker-track{display:inline-flex;animation:ticker-scroll 32s linear infinite;}
@@ -217,14 +227,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div class="section active" id="sec-dashboard">
       <div id="ticker-bar"></div>
       <div id="dash-content"></div>
-      <div class="tile-grid" style="grid-template-columns:repeat(6,1fr)">
-        <button class="menu-tile" onclick="switchTab('tiers')"><div class="ic">📊</div><div class="lbl">Tiers &amp; Coins</div></button>
-        <button class="menu-tile" onclick="switchTab('holdings')"><div class="ic">🪙</div><div class="lbl">Holdings</div></button>
-        <button class="menu-tile" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
-        <button class="menu-tile" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
-        <button class="menu-tile" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
-        <button class="menu-tile" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
-      </div>
     </div>
 
     <!-- WATCHLIST -->
@@ -292,6 +294,16 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
       </div>
     </div>
+  </div>
+
+  <div class="tile-grid" id="mobile-tile-nav">
+    <button class="menu-tile" data-tab="dashboard" onclick="switchTab('dashboard')"><div class="ic">🏠</div><div class="lbl">Home</div></button>
+    <button class="menu-tile" data-tab="tiers" onclick="switchTab('tiers')"><div class="ic">📊</div><div class="lbl">Tiers</div></button>
+    <button class="menu-tile" data-tab="holdings" onclick="switchTab('holdings')"><div class="ic">🪙</div><div class="lbl">Holdings</div></button>
+    <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
+    <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watch</div></button>
+    <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
+    <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
   </div>
     </div>
   </div>
@@ -635,6 +647,7 @@ async function onAuthed(user){
   renderSidebarPortfolioSelect();
   renderBackRowPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
+  document.querySelectorAll('.menu-tile').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
   renderAll();
   startNewsAutoRefresh();
 }
@@ -663,6 +676,7 @@ function switchTab(name){
   if(dashLink)dashLink.classList.toggle('hidden',name==='dashboard');
   renderBackRowPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab===name));
+  document.querySelectorAll('.menu-tile').forEach(el=>el.classList.toggle('active',el.dataset.tab===name));
   renderSidebarPortfolioSelect();
   window.scrollTo(0,0);
   if(name==='dashboard')renderDashboard();
