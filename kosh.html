@@ -753,9 +753,21 @@ async function searchFinnhubStocks(query){
     const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${FINNHUB_API_KEY}`);
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
+    // Previously only allowed type==='Common Stock'||'ETF', which silently
+    // excluded ADRs (e.g. NYSE:HMY, Harmony Gold's US listing) and other
+    // legitimate US-listed securities. Now excludes only the clearly
+    // irrelevant types instead, and puts an exact ticker match first.
+    const excludedTypes=new Set(['Index','Option','Warrant','Bond','Future','Crypto']);
+    const q=query.trim().toUpperCase();
+    let results=(data.result||[]).filter(r=>!excludedTypes.has(r.type));
+    results.sort((a,b)=>{
+      const aExact=a.symbol.toUpperCase()===q?0:1;
+      const bExact=b.symbol.toUpperCase()===q?0:1;
+      return aExact-bExact;
+    });
     // Shape matches searchCoinGecko's output ({id,name,symbol,rank}) so callers
     // (Wizard, Add Position) don't need kind-specific rendering branches.
-    return(data.result||[]).filter(r=>r.type==='Common Stock'||r.type==='ETF').slice(0,8).map(r=>({id:r.symbol,name:r.description,symbol:r.symbol,rank:null}));
+    return results.slice(0,10).map(r=>({id:r.symbol,name:r.description,symbol:r.symbol,rank:null}));
   }catch(e){
     console.error('Finnhub search failed:',e);
     throw e;
