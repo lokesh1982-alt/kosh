@@ -280,7 +280,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       </div>
       <div class="card" id="settings-spot-fund-card" style="display:none">
         <div class="card-title">Fund this portfolio</div>
-        <button class="btn-primary" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
+        <button class="btn-primary" id="settings-fund-button" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
       </div>
       <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
@@ -689,8 +689,10 @@ function switchTab(name){
     document.getElementById('settings-capital').value=settings.total_capital||'';
     const cp=currentPortfolio();
     const isSpotSettings=cp&&cp.kind==='spot';
+    const isStockSettings=cp&&isStockKind(cp.kind);
     document.getElementById('settings-spot-fund-card').style.display='';
-    document.getElementById('settings-data-card').style.display=isSpotSettings?'none':'';
+    document.getElementById('settings-fund-button').textContent=isStockSettings?'💵 Fund with USD':'💵 Fund with USDT';
+    document.getElementById('settings-data-card').style.display=(isSpotSettings||isStockSettings)?'none':'';
     document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
   }
 }
@@ -1658,7 +1660,12 @@ async function renderDashboard(){
       </div>
     </div>`;
 
-    html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
+    // Fear & Greed is crypto-specific (no reliable free US-market equivalent
+    // exists — VIX access is blocked on Finnhub's free tier) — shown only for
+    // crypto portfolios, not US-Stocks, rather than mislabeling it.
+    if(!isStockKind(currentPortfolio()?.kind)){
+      html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
+    }
 
     driftedTiers.forEach(t=>{
       html+=`<div class="alert-box warn"><span>⚠️</span><div style="font-size:0.76rem;color:var(--amber-dark)"><b>${escapeHtml(t.name)}</b> is ${Math.abs(t.driftPP).toFixed(1)}pp ${t.driftPP>0?'above':'below'} target — <a href="#" onclick="event.preventDefault();openRebalanceModal()" style="color:var(--amber-dark);text-decoration:underline">rebalance available</a></div></div>`;
@@ -1729,7 +1736,8 @@ async function renderDashboard(){
 
     const allocationProposals=isRebalanceKind?generateAllocationProposals():[];
     if(allocationProposals.length){
-      html+=`<button class="btn-outline" style="width:100%;margin-bottom:10px;border-color:var(--teal);color:var(--teal-dark)" onclick="openAllocationModal()">💰 Allocate Capital (${allocationProposals.length} coin${allocationProposals.length===1?'':'s'} need funding)</button>`;
+      const assetWord=isStockKind(activePortfolio?.kind)?'stock':'coin';
+      html+=`<button class="btn-outline" style="width:100%;margin-bottom:10px;border-color:var(--teal);color:var(--teal-dark)" onclick="openAllocationModal()">💰 Allocate Capital (${allocationProposals.length} ${assetWord}${allocationProposals.length===1?'':'s'} need funding)</button>`;
     }
     if(driftedTiers.length){
       html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
