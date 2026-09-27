@@ -545,13 +545,15 @@ let displayCurrency=localStorage.getItem('kosh-display-currency')||'USD';
 let fiatRates={};
 let cryptoRefPrices={};
 async function fetchDisplayCurrencyRates(){
-  let fiatOk=false,cryptoOk=false;
-  // Split into one request per currency (matching the exact query shape
-  // already proven to work for the Journal's historical INR rate) rather than
-  // the comma-separated multi-symbol form, which is likely what was failing.
+  let fiatOk=false,cryptoOk=false,lastError=null;
+  // Uses the DATED endpoint (e.g. /2026-09-27?from=USD&to=INR) — the exact
+  // shape already proven to work for the Journal's historical rates. The
+  // /latest endpoint was tried twice and kept failing, so this avoids it
+  // entirely rather than guessing again.
+  const todayStr=new Date().toISOString().slice(0,10);
   const fiatSymbols=['INR','EUR','GBP'];
   const fiatResults=await Promise.allSettled(fiatSymbols.map(async sym=>{
-    const res=await fetch(`https://api.frankfurter.app/latest?from=USD&to=${sym}`);
+    const res=await fetch(`https://api.frankfurter.app/${todayStr}?from=USD&to=${sym}`);
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
     const rate=data.rates?.[sym];
@@ -560,7 +562,7 @@ async function fetchDisplayCurrencyRates(){
   }));
   fiatResults.forEach(r=>{
     if(r.status==='fulfilled'){fiatRates[r.value.sym]=r.value.rate;fiatOk=true;}
-    else console.error('fiat rate fetch failed:',r.reason);
+    else{console.error('fiat rate fetch failed:',r.reason);lastError=r.reason?.message||String(r.reason);}
   });
   try{
     const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd');
@@ -568,16 +570,16 @@ async function fetchDisplayCurrencyRates(){
       const data=await res.json();
       cryptoRefPrices={BTC:data.bitcoin?.usd,USDT:data.tether?.usd};
       cryptoOk=cryptoRefPrices.BTC!=null;
-    }
-  }catch(e){console.error('crypto reference price fetch failed',e);}
-  return fiatOk||cryptoOk;
+    } else lastError=lastError||'HTTP '+res.status;
+  }catch(e){console.error('crypto reference price fetch failed',e);lastError=lastError||(e.message||String(e));}
+  return{ok:fiatOk||cryptoOk,error:lastError};
 }
 async function setDisplayCurrency(cur){
   displayCurrency=cur;
   localStorage.setItem('kosh-display-currency',cur);
   if((cur!=='USD')&&(!fiatRates.INR||!cryptoRefPrices.BTC)){
-    const ok=await fetchDisplayCurrencyRates();
-    if(!ok)showToast('Could not fetch exchange rates right now — showing USD until that works.');
+    const result=await fetchDisplayCurrencyRates();
+    if(!result.ok)showToast('Could not fetch exchange rates: '+(result.error||'unknown error')+' — showing USD until that works.');
   }
   renderDashboard();
   if(document.getElementById('sec-holdings').classList.contains('active'))renderHoldings();
@@ -630,7 +632,7 @@ async function onAuthed(user){
     // Fire-and-forget: re-render once rates arrive rather than blocking the
     // whole app open on this — fmtDisplay() shows a clear fallback in the
     // meantime, so nothing looks broken while it's in flight.
-    fetchDisplayCurrencyRates().then(ok=>{if(ok)renderDashboard();});
+    fetchDisplayCurrencyRates().then(result=>{if(result.ok)renderDashboard();});
   }
   loadWatchlist(); // fire-and-forget — Watchlist is its own screen, not needed to show the Dashboard
   renderPortfolioSwitcher();
@@ -2599,6 +2601,12 @@ async function runThrottled(items,fn,batchSize=1,delayMs=2500,onProgress){
     if(i+batchSize<items.length)await new Promise(r=>setTimeout(r,delayMs));
   }
 }
+// Crypto: ONE bulk call gets price + 1h/24h/7d change for the whole list at
+// once (CoinGecko's /coins/markets with price_change_percentage) — this is
+// what actually fixes the rate-limit problem, not further throttling of
+// per-coin calls. Stocks still need one call per symbol (Finnhub has no bulk
+// quote endpoint), but no longer also fetch 30-day candles, since
+// support/resistance has been dropped in favor of these change columns.
 async function fetchWatchlistData(onProgress){
   const list=currentWatchlist();
   if(!list.length)return;
@@ -2606,52 +2614,27 @@ async function fetchWatchlistData(onProgress){
     await runThrottled(list,async w=>{
       try{
         const q=await fetchFinnhubQuote(w.coingecko_id);
-        watchlistData[w.coingecko_id]={...(watchlistData[w.coingecko_id]||{}),price:q.price,change24h:q.changePct};
+        watchlistData[w.coingecko_id]={price:q.price,change24h:q.changePct,change1h:null,change7d:null};
       }catch(e){console.error('watchlist stock quote failed for',w.coingecko_id,e);}
-      try{
-        const to=Math.floor(Date.now()/1000);
-        const from=to-30*86400;
-        const res=await fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(w.coingecko_id)}&resolution=D&from=${from}&to=${to}&token=${FINNHUB_API_KEY}`);
-        if(res.ok){
-          const data=await res.json();
-          if(data.s==='ok'&&data.l&&data.h&&data.l.length){
-            watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
-            watchlistData[w.coingecko_id].low30d=Math.min(...data.l);
-            watchlistData[w.coingecko_id].high30d=Math.max(...data.h);
-          }
-        }
-      }catch(e){console.error('30d candle fetch failed for',w.coingecko_id,e);}
     },1,2500,onProgress);
     return;
   }
   const ids=list.map(w=>w.coingecko_id).join(',');
   try{
-    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    const res=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=1h,24h,7d`);
     if(res.ok){
       const data=await res.json();
-      list.forEach(w=>{
-        if(data[w.coingecko_id]){
-          watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
-          watchlistData[w.coingecko_id].price=data[w.coingecko_id].usd;
-          watchlistData[w.coingecko_id].change24h=data[w.coingecko_id].usd_24h_change;
-        }
+      data.forEach(c=>{
+        watchlistData[c.id]={
+          price:c.current_price,
+          change1h:c.price_change_percentage_1h_in_currency,
+          change24h:c.price_change_percentage_24h_in_currency,
+          change7d:c.price_change_percentage_7d_in_currency
+        };
       });
     }
-  }catch(e){console.error('watchlist price fetch failed',e);}
-
-  await runThrottled(list,async w=>{
-    try{
-      const res=await fetch(`https://api.coingecko.com/api/v3/coins/${w.coingecko_id}/market_chart?vs_currency=usd&days=30`);
-      if(!res.ok)return;
-      const data=await res.json();
-      const prices=(data.prices||[]).map(p=>p[1]);
-      if(prices.length){
-        watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
-        watchlistData[w.coingecko_id].low30d=Math.min(...prices);
-        watchlistData[w.coingecko_id].high30d=Math.max(...prices);
-      }
-    }catch(e){console.error('30d range fetch failed for',w.coingecko_id,e);}
-  },1,2500,onProgress);
+  }catch(e){console.error('watchlist bulk fetch failed',e);}
+  if(onProgress)onProgress(list.length,list.length);
 }
 
 async function renderWatchlist(){
@@ -2667,7 +2650,7 @@ async function renderWatchlist(){
     el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⭐</div><div>No ${watchlistViewMode==='stocks'?'stocks':'coins'} in this watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
     return;
   }
-  el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div id="watchlist-loading-msg">Fetching prices and 30-day ranges — this is deliberately paced to stay under free API rate limits, so it can take a little while for a full list...</div></div>`;
+  el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div id="watchlist-loading-msg">${watchlistViewMode==='stocks'?'Fetching stock quotes — one at a time to stay under free API rate limits, so this can take a little while for a full list...':'Loading...'}</div></div>`;
   await fetchWatchlistData((done,total)=>{
     const msgEl=document.getElementById('watchlist-loading-msg');
     if(msgEl)msgEl.textContent=`Fetching ${done} of ${total}...`;
@@ -2697,28 +2680,29 @@ async function renderWatchlist(){
       <thead><tr style="background:var(--ink);color:#F1F3F5">
         <th style="padding:7px 9px;text-align:left">${watchlistViewMode==='stocks'?'Stock':'Coin'}</th>
         <th style="padding:7px 9px;text-align:right">Price</th>
+        <th style="padding:7px 9px;text-align:right">1h</th>
         <th style="padding:7px 9px;text-align:right">24h</th>
-        <th style="padding:7px 9px;text-align:right">Support (30d low)</th>
-        <th style="padding:7px 9px;text-align:right">Resistance (30d high)</th>
+        <th style="padding:7px 9px;text-align:right">7d</th>
         <th style="padding:7px 9px"></th>
       </tr></thead>
       <tbody>
         ${list.map((w,i)=>{
           const d=watchlistData[w.coingecko_id]||{};
           const rowBg=i%2===1?'background:var(--card2)':'';
+          const chg=(v)=>v==null?`<span style="color:var(--ink3)">—</span>`:`<span style="color:${v>=0?'var(--green)':'var(--red)'};font-weight:600">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
           return`<tr style="border-bottom:1px solid var(--border);${rowBg}">
             <td style="padding:7px 9px;font-weight:600">${escapeHtml(w.ticker)}</td>
             <td style="padding:7px 9px;text-align:right">${d.price!=null?fmtUsd(d.price):'—'}</td>
-            <td style="padding:7px 9px;text-align:right;color:${d.change24h==null?'var(--ink3)':(d.change24h>=0?'var(--green)':'var(--red)')};font-weight:600">${d.change24h!=null?(d.change24h>=0?'+':'')+d.change24h.toFixed(1)+'%':'—'}</td>
-            <td style="padding:7px 9px;text-align:right;color:var(--green)">${d.low30d!=null?fmtUsd(d.low30d):'—'}</td>
-            <td style="padding:7px 9px;text-align:right;color:var(--red)">${d.high30d!=null?fmtUsd(d.high30d):'—'}</td>
+            <td style="padding:7px 9px;text-align:right">${chg(d.change1h)}</td>
+            <td style="padding:7px 9px;text-align:right">${chg(d.change24h)}</td>
+            <td style="padding:7px 9px;text-align:right">${chg(d.change7d)}</td>
             <td style="padding:7px 9px;text-align:right"><span class="link-btn" style="color:var(--red)" onclick="removeFromWatchlist('${w.id}')">✕</span></td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
   </div>
-  <div style="font-size:0.66rem;color:var(--ink3);margin-top:8px">Support/Resistance = 30-day low/high — a simple reference, not a technical-analysis signal.</div>`;
+  ${watchlistViewMode==='stocks'?'<div style="font-size:0.66rem;color:var(--ink3);margin-top:8px">1h and 7d change aren\'t available from Finnhub\'s free tier for stocks — only today\'s change is shown.</div>':''}`;
   el.innerHTML=html;
 }
 
