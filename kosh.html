@@ -174,7 +174,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div class="logo-box serif" style="width:32px;height:32px;font-size:14px">क</div>
         <div style="color:#F1F3F5;font-size:0.92rem;font-weight:600" class="serif">कोष</div>
       </div>
-      <select id="sidebar-portfolio-select" onchange="switchPortfolio(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.7rem;color:#F1F3F5;margin-bottom:16px;width:100%"></select>
+      <select id="sidebar-portfolio-select" onchange="selectPortfolioView(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.7rem;color:#F1F3F5;margin-bottom:16px;width:100%"></select>
       <div class="sidebar-nav" id="sidebar-nav">
         <div class="sidebar-nav-item" data-tab="dashboard" onclick="switchTab('dashboard')"><span>📊</span> Dashboard</div>
         <div class="sidebar-nav-item" data-tab="tiers" onclick="switchTab('tiers')"><span>📈</span> Tiers &amp; Coins</div>
@@ -205,9 +205,9 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <button class="link-btn" onclick="handleSignOut()">Sign out</button>
       </div>
     </div>
-    <div class="back-row-frozen hidden" id="back-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <span onclick="goToDashboard()">‹ Dashboard</span>
-      <select id="back-row-portfolio-select" onchange="switchPortfolio(this.value)" style="font-size:0.72rem;padding:4px 6px;border:1px solid var(--border);border-radius:7px;color:var(--ink2);background:#fff;max-width:150px"></select>
+    <div class="back-row-frozen" id="back-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span id="back-row-dashboard-link" class="hidden" onclick="goToDashboard()">‹ Dashboard</span>
+      <select id="back-row-portfolio-select" onchange="selectPortfolioView(this.value)" style="font-size:0.72rem;padding:4px 6px;border:1px solid var(--border);border-radius:7px;color:var(--ink2);background:#fff;max-width:150px"></select>
     </div>
   </div>
 
@@ -546,24 +546,20 @@ let fiatRates={};
 let cryptoRefPrices={};
 async function fetchDisplayCurrencyRates(){
   let fiatOk=false,cryptoOk=false,lastError=null;
-  // Uses the DATED endpoint (e.g. /2026-09-27?from=USD&to=INR) — the exact
-  // shape already proven to work for the Journal's historical rates. The
-  // /latest endpoint was tried twice and kept failing, so this avoids it
-  // entirely rather than guessing again.
-  const todayStr=new Date().toISOString().slice(0,10);
-  const fiatSymbols=['INR','EUR','GBP'];
-  const fiatResults=await Promise.allSettled(fiatSymbols.map(async sym=>{
-    const res=await fetch(`https://api.frankfurter.app/${todayStr}?from=USD&to=${sym}`);
+  // Uses open.er-api.com — the same exchange-rate API Artha-Sangraha already
+  // uses successfully for this exact purpose, instead of continuing to guess
+  // at Frankfurter query variations that kept failing.
+  try{
+    const res=await fetch('https://open.er-api.com/v6/latest/USD');
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
-    const rate=data.rates?.[sym];
-    if(rate==null)throw new Error('no rate in response');
-    return{sym,rate};
-  }));
-  fiatResults.forEach(r=>{
-    if(r.status==='fulfilled'){fiatRates[r.value.sym]=r.value.rate;fiatOk=true;}
-    else{console.error('fiat rate fetch failed:',r.reason);lastError=r.reason?.message||String(r.reason);}
-  });
+    if(data.result!=='success')throw new Error(data['error-type']||'API returned an error');
+    ['INR','EUR','GBP'].forEach(sym=>{
+      const rate=data.rates?.[sym];
+      if(rate!=null){fiatRates[sym]=rate;fiatOk=true;}
+    });
+    if(!fiatOk)throw new Error('no rates in response');
+  }catch(e){console.error('fiat rate fetch failed:',e);lastError=e.message||String(e);}
   try{
     const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd');
     if(res.ok){
@@ -637,6 +633,7 @@ async function onAuthed(user){
   loadWatchlist(); // fire-and-forget — Watchlist is its own screen, not needed to show the Dashboard
   renderPortfolioSwitcher();
   renderSidebarPortfolioSelect();
+  renderBackRowPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
   renderAll();
   startNewsAutoRefresh();
@@ -662,9 +659,9 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 function switchTab(name){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+name).classList.add('active');
-  const backRow=document.getElementById('back-row');
-  if(backRow)backRow.classList.toggle('hidden',name==='dashboard');
-  if(name!=='dashboard')renderBackRowPortfolioSelect();
+  const dashLink=document.getElementById('back-row-dashboard-link');
+  if(dashLink)dashLink.classList.toggle('hidden',name==='dashboard');
+  renderBackRowPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab===name));
   renderSidebarPortfolioSelect();
   window.scrollTo(0,0);
@@ -695,15 +692,31 @@ function toggleFigures(){
 function renderBackRowPortfolioSelect(){
   const sel=document.getElementById('back-row-portfolio-select');
   if(!sel)return;
-  if(!portfolios.length){sel.innerHTML='';sel.style.display='none';return;}
   sel.style.display='';
-  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('');
+  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>`
+    +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
+    +`<option value="__new__">+ New Portfolio</option>`;
 }
 function renderSidebarPortfolioSelect(){
   const sel=document.getElementById('sidebar-portfolio-select');
   if(!sel)return;
-  if(!portfolios.length){sel.innerHTML='<option>No portfolios yet</option>';return;}
-  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('');
+  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>`
+    +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
+    +`<option value="__new__">+ New Portfolio</option>`;
+}
+// The ONE place portfolio switching happens now (sidebar on desktop, the
+// frozen back-row on mobile) — keeps dashViewMode (what the Dashboard shows)
+// and currentPortfolioId (what Tiers/Holdings/Journal/Settings operate on)
+// in sync, since previously these could drift apart when set from different
+// selectors in different places.
+async function selectPortfolioView(value){
+  if(value==='__new__'){
+    openNewPortfolioModal();
+    renderSidebarPortfolioSelect();
+    renderBackRowPortfolioSelect();
+    return;
+  }
+  await setDashViewMode(value);
 }
 
 // ═══════════════════════════════
@@ -1421,11 +1434,6 @@ async function computeCombinedDashboardData(){
 
 let dashViewMode=localStorage.getItem('kosh-dash-view')||'both';
 async function setDashViewMode(mode){
-  if(mode==='__new__'){
-    openNewPortfolioModal();
-    renderDashboard(); // resets the select back to the actual current mode
-    return;
-  }
   dashViewMode=mode;
   localStorage.setItem('kosh-dash-view',mode);
   if(mode!=='both'&&mode!==currentPortfolioId){
@@ -1433,6 +1441,8 @@ async function setDashViewMode(mode){
   } else {
     renderDashboard();
   }
+  renderSidebarPortfolioSelect();
+  renderBackRowPortfolioSelect();
 }
 
 // ═══════════════════════════════
@@ -1452,11 +1462,6 @@ async function renderDashboard(){
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
 
   const tierPalette=['#E8A93E','#17B6A7','#2E6FA3','#7C6FE0','#8B93A1','#C0392B','#1E9E6E'];
-  const selectorHtml=`<select onchange="setDashViewMode(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 8px;font-size:0.7rem;color:#F1F3F5;font-family:inherit;max-width:150px">
-    <option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>
-    ${portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')}
-    <option value="__new__">+ New Portfolio</option>
-  </select>`;
 
   let html='';
   let allocDonutQueue=[]; // [{canvasId, tierStats}] rendered into Chart.js after innerHTML is set
@@ -1472,7 +1477,7 @@ async function renderDashboard(){
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
         <div class="hero-label">Combined portfolio value</div>
-        <div style="display:flex;gap:6px">${selectorHtml}${currencySelectorHtml()}</div>
+        <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
       </div>
       <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
       <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
@@ -1590,7 +1595,7 @@ async function renderDashboard(){
         emptyMsg='No tiers or coins in this portfolio yet.';
         emptyButtons=`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button>`;
       }
-      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div>${selectorHtml}</div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${emptyMsg}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${emptyButtons}</div></div>`;
+      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div></div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${emptyMsg}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${emptyButtons}</div></div>`;
       return;
     }
     const total=totalActualValue();
@@ -1616,7 +1621,7 @@ async function renderDashboard(){
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div class="hero-label">Portfolio value</div>
-        <div style="display:flex;gap:6px">${selectorHtml}${currencySelectorHtml()}</div>
+        <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
       </div>
       <div class="hero-val hide-figure">${fmtDisplay(total)}</div>
       <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs capital deployed (${fmtDisplay(capital)})</div>
