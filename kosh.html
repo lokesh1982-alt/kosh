@@ -546,10 +546,22 @@ let fiatRates={};
 let cryptoRefPrices={};
 async function fetchDisplayCurrencyRates(){
   let fiatOk=false,cryptoOk=false;
-  try{
-    const res=await fetch('https://api.frankfurter.app/latest?from=USD&to=INR,EUR,GBP');
-    if(res.ok){const data=await res.json();fiatRates=data.rates||{};fiatOk=Object.keys(fiatRates).length>0;}
-  }catch(e){console.error('fiat rate fetch failed',e);}
+  // Split into one request per currency (matching the exact query shape
+  // already proven to work for the Journal's historical INR rate) rather than
+  // the comma-separated multi-symbol form, which is likely what was failing.
+  const fiatSymbols=['INR','EUR','GBP'];
+  const fiatResults=await Promise.allSettled(fiatSymbols.map(async sym=>{
+    const res=await fetch(`https://api.frankfurter.app/latest?from=USD&to=${sym}`);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const rate=data.rates?.[sym];
+    if(rate==null)throw new Error('no rate in response');
+    return{sym,rate};
+  }));
+  fiatResults.forEach(r=>{
+    if(r.status==='fulfilled'){fiatRates[r.value.sym]=r.value.rate;fiatOk=true;}
+    else console.error('fiat rate fetch failed:',r.reason);
+  });
   try{
     const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd');
     if(res.ok){
@@ -2579,14 +2591,15 @@ async function removeFromWatchlist(id){
 // rather than firing everything at once — free-tier rate limits (CoinGecko,
 // Finnhub) reject a burst of simultaneous requests, which is why some coins
 // were silently missing support/resistance while others worked fine.
-async function runThrottled(items,fn,batchSize=4,delayMs=1100){
+async function runThrottled(items,fn,batchSize=1,delayMs=2500,onProgress){
   for(let i=0;i<items.length;i+=batchSize){
     const batch=items.slice(i,i+batchSize);
     await Promise.all(batch.map(fn));
+    if(onProgress)onProgress(Math.min(i+batchSize,items.length),items.length);
     if(i+batchSize<items.length)await new Promise(r=>setTimeout(r,delayMs));
   }
 }
-async function fetchWatchlistData(){
+async function fetchWatchlistData(onProgress){
   const list=currentWatchlist();
   if(!list.length)return;
   if(watchlistViewMode==='stocks'){
@@ -2608,7 +2621,7 @@ async function fetchWatchlistData(){
           }
         }
       }catch(e){console.error('30d candle fetch failed for',w.coingecko_id,e);}
-    });
+    },1,2500,onProgress);
     return;
   }
   const ids=list.map(w=>w.coingecko_id).join(',');
@@ -2638,7 +2651,7 @@ async function fetchWatchlistData(){
         watchlistData[w.coingecko_id].high30d=Math.max(...prices);
       }
     }catch(e){console.error('30d range fetch failed for',w.coingecko_id,e);}
-  });
+  },1,2500,onProgress);
 }
 
 async function renderWatchlist(){
@@ -2654,8 +2667,11 @@ async function renderWatchlist(){
     el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⭐</div><div>No ${watchlistViewMode==='stocks'?'stocks':'coins'} in this watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
     return;
   }
-  el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
-  await fetchWatchlistData();
+  el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div id="watchlist-loading-msg">Fetching prices and 30-day ranges — this is deliberately paced to stay under free API rate limits, so it can take a little while for a full list...</div></div>`;
+  await fetchWatchlistData((done,total)=>{
+    const msgEl=document.getElementById('watchlist-loading-msg');
+    if(msgEl)msgEl.textContent=`Fetching ${done} of ${total}...`;
+  });
 
   const withChange=list.filter(w=>watchlistData[w.coingecko_id]?.change24h!=null)
     .map(w=>({w,change:watchlistData[w.coingecko_id].change24h}));
