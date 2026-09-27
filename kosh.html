@@ -291,11 +291,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.74rem;color:var(--ink2);margin-bottom:10px">Answer a few questions and the app builds your tier/coin structure — including live market-cap-based tier suggestions as you search each coin.</div>
         <button class="btn-dark" style="width:100%" onclick="openWizard()">🧙 Setup Wizard</button>
       </div>
-      <div class="card">
-        <div class="card-title">🧪 US-Stocks test (temporary)</div>
-        <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:10px">Testing whether live stock quotes work before building the full US-Stocks portfolio feature.</div>
-        <button class="btn-outline" style="width:100%" onclick="openStockTestModal()">Test a stock quote</button>
-      </div>
     </div>
   </div>
     </div>
@@ -393,9 +388,9 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 <!-- FUND SPOT PORTFOLIO WITH USDT -->
 <div class="modal-overlay" id="fund-spot-modal">
   <div class="modal">
-    <div class="modal-title">💵 Fund with USDT</div>
-    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px">Spot Trading works like an exchange wallet — deposit USDT first, then buy and sell coins against that balance. Selling always returns proceeds to USDT.</div>
-    <div class="form-group"><label class="form-label">USDT amount</label><input class="form-input" type="number" step="0.01" id="fund-spot-amount" placeholder="e.g. 1000"/></div>
+    <div class="modal-title" id="fund-spot-modal-title">💵 Fund with USDT</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px" id="fund-spot-modal-desc">Spot Trading works like an exchange wallet — deposit USDT first, then buy and sell coins against that balance. Selling always returns proceeds to USDT.</div>
+    <div class="form-group"><label class="form-label" id="fund-spot-amount-label">USDT amount</label><input class="form-input" type="number" step="0.01" id="fund-spot-amount" placeholder="e.g. 1000"/></div>
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('fund-spot-modal')">Skip for now</button>
       <button class="btn-primary" style="flex:1" onclick="confirmFundSpot()">Fund</button>
@@ -417,23 +412,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('add-watchlist-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="confirmAddWatchlist()">Add</button>
-    </div>
-  </div>
-</div>
-
-<!-- STOCK QUOTE TEST MODAL (temporary) -->
-<div class="modal-overlay" id="stock-test-modal">
-  <div class="modal">
-    <div class="modal-title">🧪 Test Stock Quote</div>
-    <div class="form-group"><label class="form-label">Search US stock (e.g. AAPL, Apple)</label>
-      <div class="wiz-coin-search-wrap">
-        <input class="form-input" id="stock-test-search-input" placeholder="Ticker or company name..." oninput="stockTestSearch(this.value)" autocomplete="off"/>
-        <div id="stock-test-search-dropdown"></div>
-      </div>
-    </div>
-    <div id="stock-test-result"></div>
-    <div style="margin-top:10px">
-      <button class="btn-outline" style="width:100%" onclick="closeModal('stock-test-modal')">Close</button>
     </div>
   </div>
 </div>
@@ -481,8 +459,9 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="np-name" placeholder="e.g. Spot Trading"/></div>
     <div class="form-group"><label class="form-label">Type</label>
       <select class="form-select" id="np-kind">
-        <option value="rebalance">⚖️ Rebalance (tier targets, drift alerts, bearish ladder)</option>
-        <option value="spot">📈 Spot Trading (active buy/sell, no rebalance rules)</option>
+        <option value="rebalance">⚖️ Rebalance (crypto — tier targets, drift alerts, bearish ladder)</option>
+        <option value="spot">📈 Spot Trading (crypto — active buy/sell, no rebalance rules)</option>
+        <option value="us-stocks">🇺🇸 US-Stocks (tier targets between stocks and a USD reserve)</option>
       </select>
     </div>
     <div style="display:flex;gap:10px;margin-top:6px">
@@ -566,32 +545,40 @@ let displayCurrency=localStorage.getItem('kosh-display-currency')||'USD';
 let fiatRates={};
 let cryptoRefPrices={};
 async function fetchDisplayCurrencyRates(){
+  let fiatOk=false,cryptoOk=false;
   try{
     const res=await fetch('https://api.frankfurter.app/latest?from=USD&to=INR,EUR,GBP');
-    if(res.ok){const data=await res.json();fiatRates=data.rates||{};}
+    if(res.ok){const data=await res.json();fiatRates=data.rates||{};fiatOk=Object.keys(fiatRates).length>0;}
   }catch(e){console.error('fiat rate fetch failed',e);}
   try{
     const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd');
     if(res.ok){
       const data=await res.json();
       cryptoRefPrices={BTC:data.bitcoin?.usd,USDT:data.tether?.usd};
+      cryptoOk=cryptoRefPrices.BTC!=null;
     }
   }catch(e){console.error('crypto reference price fetch failed',e);}
+  return fiatOk||cryptoOk;
 }
 async function setDisplayCurrency(cur){
   displayCurrency=cur;
   localStorage.setItem('kosh-display-currency',cur);
-  if((cur!=='USD')&&(!fiatRates.INR||!cryptoRefPrices.BTC))await fetchDisplayCurrencyRates();
+  if((cur!=='USD')&&(!fiatRates.INR||!cryptoRefPrices.BTC)){
+    const ok=await fetchDisplayCurrencyRates();
+    if(!ok)showToast('Could not fetch exchange rates right now — showing USD until that works.');
+  }
   renderDashboard();
   if(document.getElementById('sec-holdings').classList.contains('active'))renderHoldings();
 }
 // Converts a USD amount into whatever displayCurrency is currently selected —
 // used only for summary totals, per the intentional scope of this feature.
+// If the rate genuinely isn't available, this says so visibly rather than
+// silently showing USD with no indication anything is different.
 function fmtDisplay(usdValue){
   if(displayCurrency==='USD')return fmtUsd(usdValue);
   if(displayCurrency==='BTC'){
     const p=cryptoRefPrices.BTC;
-    if(!p)return fmtUsd(usdValue);
+    if(!p)return fmtUsd(usdValue)+' (BTC rate unavailable)';
     return (usdValue/p).toLocaleString('en-US',{maximumFractionDigits:8})+' BTC';
   }
   if(displayCurrency==='USDT'){
@@ -599,7 +586,7 @@ function fmtDisplay(usdValue){
     return (usdValue/p).toLocaleString('en-US',{maximumFractionDigits:2})+' USDT';
   }
   const rate=fiatRates[displayCurrency];
-  if(!rate)return fmtUsd(usdValue);
+  if(!rate)return fmtUsd(usdValue)+` (${displayCurrency} rate unavailable)`;
   const symbols={INR:'₹',EUR:'€',GBP:'£'};
   return(symbols[displayCurrency]||displayCurrency+' ')+(usdValue*rate).toLocaleString('en-US',{maximumFractionDigits:2});
 }
@@ -627,8 +614,13 @@ async function onAuthed(user){
   await loadAllData();
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
-  if(displayCurrency!=='USD')await fetchDisplayCurrencyRates();
-  await loadWatchlist();
+  if(displayCurrency!=='USD'){
+    // Fire-and-forget: re-render once rates arrive rather than blocking the
+    // whole app open on this — fmtDisplay() shows a clear fallback in the
+    // meantime, so nothing looks broken while it's in flight.
+    fetchDisplayCurrencyRates().then(ok=>{if(ok)renderDashboard();});
+  }
+  loadWatchlist(); // fire-and-forget — Watchlist is its own screen, not needed to show the Dashboard
   renderPortfolioSwitcher();
   renderSidebarPortfolioSelect();
   document.querySelectorAll('.sidebar-nav-item').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
@@ -691,13 +683,13 @@ function renderBackRowPortfolioSelect(){
   if(!sel)return;
   if(!portfolios.length){sel.innerHTML='';sel.style.display='none';return;}
   sel.style.display='';
-  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('');
+  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('');
 }
 function renderSidebarPortfolioSelect(){
   const sel=document.getElementById('sidebar-portfolio-select');
   if(!sel)return;
   if(!portfolios.length){sel.innerHTML='<option>No portfolios yet</option>';return;}
-  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('');
+  sel.innerHTML=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('');
 }
 
 // ═══════════════════════════════
@@ -720,11 +712,23 @@ async function searchFinnhubStocks(query){
     const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${FINNHUB_API_KEY}`);
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
-    return(data.result||[]).filter(r=>r.type==='Common Stock'||r.type==='ETF').slice(0,8).map(r=>({symbol:r.symbol,name:r.description}));
+    // Shape matches searchCoinGecko's output ({id,name,symbol,rank}) so callers
+    // (Wizard, Add Position) don't need kind-specific rendering branches.
+    return(data.result||[]).filter(r=>r.type==='Common Stock'||r.type==='ETF').slice(0,8).map(r=>({id:r.symbol,name:r.description,symbol:r.symbol,rank:null}));
   }catch(e){
     console.error('Finnhub search failed:',e);
     throw e;
   }
+}
+// Generic search that picks CoinGecko or Finnhub based on the CURRENT portfolio's
+// kind — used by Wizard and Add Position, both of which operate on whichever
+// portfolio is currently selected.
+async function searchAssetsForCurrentPortfolio(query){
+  const cp=currentPortfolio();
+  if(cp&&isStockKind(cp.kind)){
+    try{return await searchFinnhubStocks(query);}catch(e){return[];}
+  }
+  return await searchCoinGecko(query);
 }
 async function fetchFinnhubQuote(symbol){
   try{
@@ -739,53 +743,6 @@ async function fetchFinnhubQuote(symbol){
   }
 }
 
-let _stockTestSelected=null;
-let _stockTestSearchTimer=null;
-function openStockTestModal(){
-  document.getElementById('stock-test-search-input').value='';
-  document.getElementById('stock-test-search-dropdown').innerHTML='';
-  document.getElementById('stock-test-result').innerHTML='';
-  _stockTestSelected=null;
-  openModal('stock-test-modal');
-}
-function stockTestSearch(query){
-  clearTimeout(_stockTestSearchTimer);
-  const dropdown=document.getElementById('stock-test-search-dropdown');
-  const resultEl=document.getElementById('stock-test-result');
-  if(query.trim().length<1){dropdown.innerHTML='';return;}
-  _stockTestSearchTimer=setTimeout(async()=>{
-    resultEl.innerHTML='';
-    try{
-      const results=await searchFinnhubStocks(query);
-      window._stockTestResults=results;
-      if(!results.length){dropdown.innerHTML='<div style="font-size:0.72rem;color:var(--ink3);padding:8px">No matches.</div>';return;}
-      dropdown.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="stockTestSelect(${ri})">${escapeHtml(r.symbol)} <span style="color:var(--ink3)">${escapeHtml(r.name)}</span></div>`).join('')}</div>`;
-    }catch(e){
-      dropdown.innerHTML='';
-      resultEl.innerHTML=`<div class="alert-box danger"><span>🚨</span><div><div class="alert-title" style="color:var(--red-dark)">Search failed</div><div class="alert-sub" style="color:var(--red-dark)">${escapeHtml(e.message||String(e))}</div></div></div>`;
-    }
-  },400);
-}
-async function stockTestSelect(ri){
-  const stock=window._stockTestResults[ri];
-  document.getElementById('stock-test-search-dropdown').innerHTML='';
-  document.getElementById('stock-test-search-input').value=stock.symbol;
-  const resultEl=document.getElementById('stock-test-result');
-  resultEl.innerHTML=`<div class="empty-state" style="padding:16px"><div class="ic">⏳</div><div>Fetching live quote...</div></div>`;
-  try{
-    const q=await fetchFinnhubQuote(stock.symbol);
-    const chg=q.change!=null?q.change:0;
-    resultEl.innerHTML=`<div class="card">
-      <div class="card-title">${escapeHtml(stock.symbol)} — ${escapeHtml(stock.name)}</div>
-      <div style="font-family:'Fraunces',serif;font-size:1.4rem;font-weight:600;color:var(--teal)">${fmtUsd(q.price)}</div>
-      <div style="font-size:0.8rem;color:${chg>=0?'var(--green)':'var(--red)'};margin-bottom:8px">${chg>=0?'▲':'▼'} ${fmtUsd(Math.abs(chg))} (${q.changePct!=null?q.changePct.toFixed(2):'—'}%) today</div>
-      <div style="font-size:0.72rem;color:var(--ink3)">Day range: ${fmtUsd(q.low)} – ${fmtUsd(q.high)} · Prev close: ${fmtUsd(q.prevClose)}</div>
-      <div style="font-size:0.7rem;color:var(--green);margin-top:10px">✅ Live quote fetched successfully — Finnhub works from the browser.</div>
-    </div>`;
-  }catch(e){
-    resultEl.innerHTML=`<div class="alert-box danger"><span>🚨</span><div><div class="alert-title" style="color:var(--red-dark)">Quote fetch failed</div><div class="alert-sub" style="color:var(--red-dark)">${escapeHtml(e.message||String(e))} — this likely means Finnhub blocks direct browser requests (CORS), and we'll need a different approach for live prices.</div></div></div>`;
-  }
-}
 let btc90dHigh=null;
 let trades=[];
 
@@ -798,6 +755,13 @@ async function loadPortfolios(){
   }
 }
 function currentPortfolio(){return portfolios.find(p=>p.id===currentPortfolioId)||null;}
+// Shared portfolio-kind helpers — 'rebalance' and 'us-stocks' both use tiers,
+// target %, and rebalancing mechanics (just crypto vs stocks as the asset);
+// 'spot' is the free-form kind for both asset types.
+function isStockKind(kind){return kind==='us-stocks';}
+function isTieredKind(kind){return kind==='rebalance'||kind==='us-stocks';}
+function reserveTickerFor(kind){return isStockKind(kind)?'USD':'USDT';}
+function portfolioIcon(kind){return kind==='spot'?'📈':isStockKind(kind)?'🇺🇸':'⚖️';}
 
 async function loadAllData(){
   await loadPortfolios();
@@ -828,7 +792,7 @@ function renderPortfolioSwitcher(){
   }
   el.innerHTML=`
     <select class="form-select" style="flex:1" onchange="switchPortfolio(this.value)">
-      ${portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('')}
+      ${portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')}
     </select>
     <button class="link-btn" onclick="openNewPortfolioModal()">+ New</button>`;
 }
@@ -864,6 +828,11 @@ async function saveNewPortfolio(){
 }
 
 async function fetchLivePrices(){
+  const cp=currentPortfolio();
+  if(cp&&isStockKind(cp.kind)){
+    await fetchFinnhubPricesForCoins(coins);
+    return;
+  }
   const ids=[...new Set(coins.map(c=>c.coingecko_id).filter(Boolean))];
   if(!ids.length)return;
   try{
@@ -877,6 +846,22 @@ async function fetchLivePrices(){
       }
     });
   }catch(e){console.error('price fetch failed',e);}
+}
+// Finnhub has no bulk quote endpoint, so this fetches one symbol at a time in
+// parallel — fine for a personal portfolio's coin/stock count. Results land in
+// the SAME livePrices/priceChange24h objects, keyed by the symbol stored in
+// each coin's coingecko_id field (reused as a generic "external price ID"
+// rather than adding a parallel field and touching every calculation function).
+async function fetchFinnhubPricesForCoins(coinList){
+  const symbols=[...new Set(coinList.map(c=>c.coingecko_id).filter(Boolean).filter(s=>s.toUpperCase()!=='USD'))];
+  await Promise.all(symbols.map(async symbol=>{
+    try{
+      const q=await fetchFinnhubQuote(symbol);
+      livePrices[symbol]=q.price;
+      priceChange24h[symbol]=q.changePct;
+    }catch(e){console.error('Finnhub price fetch failed for',symbol,e);}
+  }));
+  livePrices['USD']=1; // cash reserve for US-Stocks portfolios, always $1
 }
 async function fetchBtcHigh(){
   try{
@@ -1034,15 +1019,24 @@ function wizardResetTierCoins(ti){
 }
 function renderWizCoinSlot(ti,si,slot){
   if(slot.selected){
-    const suggestion=classifyCoin(slot.selected.symbol,slot.selected.rank);
+    const cp=currentPortfolio();
+    const isStocks=cp&&isStockKind(cp.kind);
     const currentTierName=wizardState.tierDefs[ti].name;
-    const matches=tierNameMatchesKeyword(currentTierName,suggestion.keyword);
+    let suggestionHtml='';
+    if(!isStocks){
+      // Market-cap-based classification is crypto-specific — Finnhub search
+      // results have no rank, so this is skipped entirely for stock portfolios
+      // rather than showing a misleading "unranked" guess.
+      const suggestion=classifyCoin(slot.selected.symbol,slot.selected.rank);
+      const matches=tierNameMatchesKeyword(currentTierName,suggestion.keyword);
+      suggestionHtml=`<div class="wiz-tier-suggest ${matches?'match':'mismatch'}">${matches?'✅':'💡'} Typically classified as "${suggestion.label}"${matches?' — matches this tier':` — you might reconsider vs "${escapeHtml(currentTierName)}"`}</div>`;
+    }
     return`<div class="wiz-coin-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><b>${escapeHtml(slot.selected.name)}</b> <span style="color:var(--ink3)">${escapeHtml(slot.selected.symbol.toUpperCase())}</span>${slot.selected.rank?` <span style="color:var(--ink3);font-size:0.7rem">· rank #${slot.selected.rank}</span>`:''}</div>
         <button class="link-btn" onclick="wizardClearSlot(${ti},${si})">Change</button>
       </div>
-      <div class="wiz-tier-suggest ${matches?'match':'mismatch'}">${matches?'✅':'💡'} Typically classified as "${suggestion.label}"${matches?' — matches this tier':` — you might reconsider vs "${escapeHtml(currentTierName)}"`}</div>
+      ${suggestionHtml}
       <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
         <label style="font-size:0.72rem;color:var(--ink2)">Weight in tier</label>
         <input class="form-input" type="number" step="0.1" style="flex:1" value="${slot.weightPct}" oninput="wizardState.tierCoinSlots[${ti}][${si}].weightPct=parseFloat(this.value)||0"/>
@@ -1067,7 +1061,7 @@ function wizardSearchCoin(ti,si,query){
   const dropdown=document.getElementById(`wiz-dropdown-${ti}-${si}`);
   if(query.trim().length<2){if(dropdown)dropdown.innerHTML='';return;}
   _wizSearchTimer=setTimeout(async()=>{
-    const results=await searchCoinGecko(query);
+    const results=await searchAssetsForCurrentPortfolio(query);
     const dd=document.getElementById(`wiz-dropdown-${ti}-${si}`);
     if(!dd)return;
     wizardState.tierCoinSlots[ti][si].searchResults=results;
@@ -1332,29 +1326,45 @@ async function computeCombinedDashboardData(){
   const allCoinsRes=allTierIds.length?await sb.from('coins').select('*').in('tier_id',allTierIds):{data:[]};
   const allCoins=allCoinsRes.data||[];
 
-  const allGeckoIds=[...new Set(allCoins.map(c=>c.coingecko_id).filter(Boolean))];
-  const missingIds=allGeckoIds.filter(id=>livePrices[id]==null);
-  if(missingIds.length){
-    try{
-      const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${missingIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
-      if(res.ok){
-        const data=await res.json();
-        missingIds.forEach(id=>{if(data[id]){livePrices[id]=data[id].usd;priceChange24h[id]=data[id].usd_24h_change;}});
-      }
-    }catch(e){console.error('combined price fetch failed',e);}
-  }
+  // US-Stocks portfolios are kept entirely separate from this crypto combined
+  // view — their own card is computed further down and shown alongside, not
+  // merged into these totals.
+  const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+  const cryptoTiers=allTiers.filter(t=>!stockPortfolioIds.has(t.portfolio_id));
+  const cryptoTierIds=new Set(cryptoTiers.map(t=>t.id));
+  const cryptoCoins=allCoins.filter(c=>cryptoTierIds.has(c.tier_id));
+  const stockTiers=allTiers.filter(t=>stockPortfolioIds.has(t.portfolio_id));
+  const stockTierIds=new Set(stockTiers.map(t=>t.id));
+  const stockCoins=allCoins.filter(c=>stockTierIds.has(c.tier_id));
 
-  const perPortfolio=portfolios.map(p=>{
-    const pTierIds=allTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
-    const pTiers=allTiers.filter(t=>t.portfolio_id===p.id);
-    const pCoins=allCoins.filter(c=>pTierIds.includes(c.tier_id));
+  const allGeckoIds=[...new Set(cryptoCoins.map(c=>c.coingecko_id).filter(Boolean))];
+  const missingIds=allGeckoIds.filter(id=>livePrices[id]==null);
+  await Promise.all([
+    (async()=>{
+      if(!missingIds.length)return;
+      try{
+        const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${missingIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
+        if(res.ok){
+          const data=await res.json();
+          missingIds.forEach(id=>{if(data[id]){livePrices[id]=data[id].usd;priceChange24h[id]=data[id].usd_24h_change;}});
+        }
+      }catch(e){console.error('combined price fetch failed',e);}
+    })(),
+    stockCoins.length?fetchFinnhubPricesForCoins(stockCoins):Promise.resolve()
+  ]);
+
+  const cryptoPortfolios=portfolios.filter(p=>!isStockKind(p.kind));
+  const perPortfolio=cryptoPortfolios.map(p=>{
+    const pTierIds=cryptoTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
+    const pTiers=cryptoTiers.filter(t=>t.portfolio_id===p.id);
+    const pCoins=cryptoCoins.filter(c=>pTierIds.includes(c.tier_id));
     const value=pCoins.reduce((s,c)=>{const v=livePrices[c.coingecko_id];return s+(v!=null?(c.units_held||0)*v:0);},0);
     return{portfolio:p,tiers:pTiers,coins:pCoins,value};
   });
   const combinedTotal=perPortfolio.reduce((s,p)=>s+p.value,0);
 
   let combinedUnrealized=0,pricedCount=0;
-  allCoins.forEach(c=>{
+  cryptoCoins.forEach(c=>{
     if(c.avg_cost_usd==null)return;
     const v=livePrices[c.coingecko_id];
     if(v==null)return;
@@ -1362,17 +1372,37 @@ async function computeCombinedDashboardData(){
     combinedUnrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
   });
 
+  // Stock portfolios get their own separate summary figures.
+  const stockPerPortfolio=portfolios.filter(p=>isStockKind(p.kind)).map(p=>{
+    const pTierIds=stockTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
+    const pTiers=stockTiers.filter(t=>t.portfolio_id===p.id);
+    const pCoins=stockCoins.filter(c=>pTierIds.includes(c.tier_id));
+    const value=pCoins.reduce((s,c)=>{const v=livePrices[c.coingecko_id];return s+(v!=null?(c.units_held||0)*v:0);},0);
+    return{portfolio:p,tiers:pTiers,coins:pCoins,value};
+  });
+  const stockTotal=stockPerPortfolio.reduce((s,p)=>s+p.value,0);
+
   // Fetch all of the user's trades directly (not filtered via coin_id, since a
   // deleted coin's trades have coin_id=NULL and would otherwise vanish from
-  // this total) — realized P&L across every portfolio combined.
+  // this total) — realized P&L across every CRYPTO portfolio combined.
+  const cryptoPortfolioIds=cryptoPortfolios.map(p=>p.id);
   const[tradesRes,settingsRes]=await Promise.all([
-    sb.from('trades').select('realized_pnl').eq('user_id',currentUser.id),
-    sb.from('kosh_settings').select('total_capital')
+    cryptoPortfolioIds.length?sb.from('trades').select('realized_pnl').eq('user_id',currentUser.id).in('portfolio_id',cryptoPortfolioIds):Promise.resolve({data:[]}),
+    cryptoPortfolioIds.length?sb.from('kosh_settings').select('total_capital').in('portfolio_id',cryptoPortfolioIds):Promise.resolve({data:[]})
   ]);
   const combinedRealized=(tradesRes.data||[]).reduce((s,t)=>s+(t.realized_pnl||0),0);
   const totalCapital=(settingsRes.data||[]).reduce((s,r)=>s+(r.total_capital||0),0);
 
-  return{allTiers,allCoins,perPortfolio,combinedTotal,combinedUnrealized,pricedCount,combinedRealized,totalCapital};
+  let stockUnrealized=0,stockPricedCount=0;
+  stockCoins.forEach(c=>{
+    if(c.avg_cost_usd==null)return;
+    const v=livePrices[c.coingecko_id];
+    if(v==null)return;
+    stockPricedCount++;
+    stockUnrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
+  });
+
+  return{allTiers,allCoins,perPortfolio,combinedTotal,combinedUnrealized,pricedCount,combinedRealized,totalCapital,stockPerPortfolio,stockTotal,stockUnrealized,stockPricedCount};
 }
 
 let dashViewMode=localStorage.getItem('kosh-dash-view')||'both';
@@ -1410,7 +1440,7 @@ async function renderDashboard(){
   const tierPalette=['#E8A93E','#17B6A7','#2E6FA3','#7C6FE0','#8B93A1','#C0392B','#1E9E6E'];
   const selectorHtml=`<select onchange="setDashViewMode(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 8px;font-size:0.7rem;color:#F1F3F5;font-family:inherit;max-width:150px">
     <option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>
-    ${portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${p.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.name)}</option>`).join('')}
+    ${portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')}
     <option value="__new__">+ New Portfolio</option>
   </select>`;
 
@@ -1441,10 +1471,27 @@ async function renderDashboard(){
 
     html+=`<div class="card"><div class="card-title">By portfolio</div>
       ${combined.perPortfolio.map(p=>`<div class="coin-row">
-        <div class="coin-name">${p.portfolio.kind==='spot'?'📈':'⚖️'} ${escapeHtml(p.portfolio.name)}</div>
+        <div class="coin-name">${portfolioIcon(p.portfolio.kind)} ${escapeHtml(p.portfolio.name)}</div>
         <div class="coin-val hide-figure">${fmtUsd(p.value)}</div>
       </div>`).join('')}
     </div>`;
+
+    // US-Stocks portfolios shown as their own separate card — never merged
+    // into the crypto totals above, even while viewing "Both Portfolios".
+    if(combined.stockPerPortfolio.length){
+      combined.stockPerPortfolio.forEach(sp=>{
+        html+=`<div class="card" style="border:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div class="card-title" style="margin:0">🇺🇸 ${escapeHtml(sp.portfolio.name)}</div>
+            <button class="link-btn" onclick="setDashViewMode('${sp.portfolio.id}')">View →</button>
+          </div>
+          <div class="serif hide-figure" style="font-size:1.2rem;font-weight:600;color:var(--ink)">${fmtUsd(sp.value)}</div>
+          <div style="display:flex;gap:16px;margin-top:8px">
+            <div><div style="font-size:10px;color:var(--ink3)">Unrealized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${combined.stockPricedCount?(combined.stockUnrealized>=0?'var(--green)':'var(--red)'):'var(--ink3)'}">${combined.stockPricedCount?(combined.stockUnrealized>=0?'+':'')+fmtUsd(combined.stockUnrealized):'—'}</div></div>
+          </div>
+        </div>`;
+      });
+    }
 
     html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
 
@@ -1516,8 +1563,20 @@ async function renderDashboard(){
     // currentPortfolioId at this point (setDashViewMode already switched it).
     const cp=currentPortfolio();
     const isSpotEmpty=cp&&cp.kind==='spot';
+    const isStockEmpty=cp&&isStockKind(cp.kind);
     if(!coins.length){
-      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div>${selectorHtml}</div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${isSpotEmpty?'No positions yet. Fund with USDT to start trading.':'No tiers or coins in this portfolio yet.'}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${isSpotEmpty?`<button class="btn-primary" onclick="openFundSpotModal()">💵 Fund with USDT</button>`:`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button>`}</div></div>`;
+      let emptyMsg,emptyButtons;
+      if(isSpotEmpty){
+        emptyMsg='No positions yet. Fund with USDT to start trading.';
+        emptyButtons=`<button class="btn-primary" onclick="openFundSpotModal()">💵 Fund with USDT</button>`;
+      } else if(isStockEmpty){
+        emptyMsg='No tiers or stocks in this portfolio yet.';
+        emptyButtons=`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button>`;
+      } else {
+        emptyMsg='No tiers or coins in this portfolio yet.';
+        emptyButtons=`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button>`;
+      }
+      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div>${selectorHtml}</div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${emptyMsg}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${emptyButtons}</div></div>`;
       return;
     }
     const total=totalActualValue();
@@ -1567,7 +1626,8 @@ async function renderDashboard(){
     });
 
     const activePortfolio=currentPortfolio();
-    const isRebalanceKind=!activePortfolio||activePortfolio.kind==='rebalance';
+    const isRebalanceKind=!activePortfolio||isTieredKind(activePortfolio.kind);
+    const isCryptoRebalance=!activePortfolio||activePortfolio.kind==='rebalance';
 
     if(isRebalanceKind){
       html+=`<div class="card">
@@ -1629,7 +1689,7 @@ async function renderDashboard(){
     if(driftedTiers.length){
       html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
     }
-    if(isRebalanceKind){
+    if(isCryptoRebalance){
       const dd=ladder.drawdownPct!=null?Math.max(0,ladder.drawdownPct):0;
       const ddPos=Math.min(100,(dd/50)*100);
       html+=`<div style="background:var(--ink);border-radius:14px;padding:16px;color:#F1F3F5">
@@ -1937,7 +1997,7 @@ function addPositionSearch(query){
   const dropdown=document.getElementById('ap-search-dropdown');
   if(query.trim().length<2){dropdown.innerHTML='';return;}
   _apSearchTimer=setTimeout(async()=>{
-    const results=await searchCoinGecko(query);
+    const results=await searchAssetsForCurrentPortfolio(query);
     window._apSearchResults=results;
     if(!results.length){dropdown.innerHTML='';return;}
     dropdown.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="addPositionSelectCoin(${ri})">${escapeHtml(r.name)} <span style="color:var(--ink3)">${escapeHtml(r.symbol.toUpperCase())}</span>${r.rank?` · rank #${r.rank}`:''}</div>`).join('')}</div>`;
@@ -1979,24 +2039,37 @@ async function ensureCoinInTier(tierId,{name,ticker,coingecko_id}){
 }
 function openFundSpotModal(){
   document.getElementById('fund-spot-amount').value='';
+  const cp=currentPortfolio();
+  const isStocks=cp&&isStockKind(cp.kind);
+  const ticker=reserveTickerFor(cp?.kind);
+  document.getElementById('fund-spot-modal-title').textContent=isStocks?'💵 Fund with USD':'💵 Fund with USDT';
+  document.getElementById('fund-spot-modal-desc').textContent=isStocks
+    ?'US-Stocks works like a brokerage cash balance — deposit USD first, then buy and sell stocks against it. Selling always returns proceeds to USD.'
+    :'Spot Trading works like an exchange wallet — deposit USDT first, then buy and sell coins against that balance. Selling always returns proceeds to USDT.';
+  document.getElementById('fund-spot-amount-label').textContent=ticker+' amount';
   openModal('fund-spot-modal');
 }
-// Finds (or reasonably creates) a USDT coin to fund — used by both portfolio
-// kinds now. Prefers an existing stablecoin-named tier over forcing a new one,
-// so this doesn't disturb a Rebalance portfolio's existing tier structure.
+// Finds (or reasonably creates) the portfolio's reserve-asset coin to fund —
+// USDT for crypto kinds, USD for US-Stocks. Prefers an existing stablecoin/
+// reserve-named tier over forcing a new one, so this doesn't disturb an
+// existing tier structure.
 async function ensureUsdtCoinForFunding(){
-  let usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='USDT');
+  const ticker=reserveTickerFor(currentPortfolio()?.kind);
+  let usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()===ticker);
   if(usdtCoin)return usdtCoin;
-  let targetTier=tiers.find(t=>/stable/i.test(t.name))||tiers[0];
+  let targetTier=tiers.find(t=>/stable|reserve|cash/i.test(t.name))||tiers[0];
   if(!targetTier){
     targetTier=await ensureHoldingsTier();
     if(!targetTier)return null;
   }
-  return await ensureCoinInTier(targetTier.id,{name:'Tether',ticker:'USDT',coingecko_id:'tether'});
+  return ticker==='USD'
+    ?await ensureCoinInTier(targetTier.id,{name:'US Dollar',ticker:'USD',coingecko_id:'USD'})
+    :await ensureCoinInTier(targetTier.id,{name:'Tether',ticker:'USDT',coingecko_id:'tether'});
 }
 async function confirmFundSpot(){
   const amount=parseFloat(document.getElementById('fund-spot-amount').value);
-  if(!amount||amount<=0){showToast('Enter a valid USDT amount.');return;}
+  const ticker=reserveTickerFor(currentPortfolio()?.kind);
+  if(!amount||amount<=0){showToast(`Enter a valid ${ticker} amount.`);return;}
   if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
   const usdtCoin=await ensureUsdtCoinForFunding();
   if(!usdtCoin)return;
@@ -2234,17 +2307,18 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   coin.units_held=newUnitsHeld;
   coin.avg_cost_usd=newAvgCost;
 
-  // Every buy/sell moves the opposite amount of USDT in the same portfolio —
-  // buying spends USDT, selling receives it — same as a real exchange spot
-  // wallet, and applies to Rebalance portfolios too, not just Spot Trading.
-  if((coin.ticker||'').toUpperCase()!=='USDT'){
-    const usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()==='USDT');
+  // Every buy/sell moves the opposite amount of the portfolio's reserve asset
+  // (USDT for crypto, USD for US-Stocks) — buying spends it, selling receives
+  // it, same as a real exchange/brokerage cash balance.
+  const reserveTicker=reserveTickerFor(currentPortfolio()?.kind);
+  if((coin.ticker||'').toUpperCase()!==reserveTicker){
+    const usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
     if(usdtCoin){
       const amountUsd=actualUnits*pricePerUnit;
       const usdtPrice=livePrices[usdtCoin.coingecko_id]||1;
       const usdtUnitsMoved=amountUsd/usdtPrice;
       if(action==='sell'){
-        // Sell proceeds credit USDT
+        // Sell proceeds credit the reserve asset
         const newUsdtUnits=(usdtCoin.units_held||0)+usdtUnitsMoved;
         const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
         const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+amountUsd)/newUsdtUnits:usdtPrice;
@@ -2257,7 +2331,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         usdtCoin.units_held=newUsdtUnits;
         usdtCoin.avg_cost_usd=newUsdtAvgCost;
       } else {
-        // Buy spends USDT — debit whatever USDT is available (never below zero)
+        // Buy spends the reserve asset — debit whatever's available (never below zero)
         const actualUsdtSpent=Math.min(usdtUnitsMoved,usdtCoin.units_held||0);
         const newUsdtUnits=(usdtCoin.units_held||0)-actualUsdtSpent;
         const usdtRealizedPnl=usdtCoin.avg_cost_usd!=null?(usdtPrice-usdtCoin.avg_cost_usd)*actualUsdtSpent:null;
@@ -2269,11 +2343,11 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         });
         usdtCoin.units_held=newUsdtUnits;
         if(actualUsdtSpent<usdtUnitsMoved){
-          showToast(`Bought ${coin.ticker}, but USDT balance was insufficient to cover the full cost — USDT went to zero rather than negative.`);
+          showToast(`Bought ${coin.ticker}, but ${reserveTicker} balance was insufficient to cover the full cost — went to zero rather than negative.`);
         }
       }
     } else if(action==='sell'){
-      showToast('Sold — but no USDT holding found in this portfolio, so proceeds weren\'t credited anywhere. Add a USDT coin if you want this tracked automatically.');
+      showToast(`Sold — but no ${reserveTicker} holding found in this portfolio, so proceeds weren't credited anywhere. Add a ${reserveTicker} position if you want this tracked automatically.`);
     }
   }
 }
@@ -2285,21 +2359,39 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
 //  JOURNAL — combined across all portfolios, table format with INR columns
 // ═══════════════════════════════
 let allJournalTrades=[];
+let journalViewMode='crypto'; // 'crypto' | 'stocks' — separate journals per the user's request
 async function loadAllTradesForJournal(){
   const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
   return data||[];
 }
+function setJournalViewMode(mode){
+  journalViewMode=mode;
+  renderJournal();
+}
 async function renderJournal(){
   const el=document.getElementById('journal-content');
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
-  allJournalTrades=await loadAllTradesForJournal();
+  const rawTrades=await loadAllTradesForJournal();
+  const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+  allJournalTrades=rawTrades.filter(t=>journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id));
+
+  const hasAnyStockPortfolio=portfolios.some(p=>isStockKind(p.kind));
+  let toggleHtml='';
+  if(hasAnyStockPortfolio){
+    toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
+      <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
+      <button class="tab-btn ${journalViewMode==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>
+    </div>`;
+  }
+
   if(!allJournalTrades.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
+    el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
   }
   const totalRealized=allJournalTrades.reduce((s,t)=>s+(t.realized_pnl||0),0);
-  let html=`<div class="card" style="text-align:center">
-    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (all portfolios)</div>
+  let html=toggleHtml;
+  html+=`<div class="card" style="text-align:center">
+    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalViewMode==='stocks'?'US-Stocks':'crypto'} portfolios)</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
   </div>`;
   html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
@@ -2310,7 +2402,7 @@ async function renderJournal(){
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink);color:#F1F3F5">
         <th style="padding:8px 10px;text-align:left">Date</th>
-        <th style="padding:8px 10px;text-align:left">Coin</th>
+        <th style="padding:8px 10px;text-align:left">${journalViewMode==='stocks'?'Stock':'Coin'}</th>
         <th style="padding:8px 10px;text-align:right">Qty</th>
         <th style="padding:8px 10px;text-align:center">Type</th>
         <th style="padding:8px 10px;text-align:right">Price (USD)</th>
@@ -2411,11 +2503,19 @@ function exportJournalPDF(){
 //  WATCHLIST — personal coin tracking, independent of your portfolios
 // ═══════════════════════════════
 let watchlist=[];
-let watchlistData={}; // coingecko_id -> {price, change24h, low30d, high30d}
+let watchlistData={}; // coingecko_id (or stock symbol) -> {price, change24h, low30d, high30d}
+let watchlistViewMode='crypto'; // 'crypto' | 'stocks' — separate lists per the user's request
 
 async function loadWatchlist(){
   const{data}=await sb.from('watchlist').select('*').eq('user_id',currentUser.id).order('sort_order');
   watchlist=data||[];
+}
+function setWatchlistViewMode(mode){
+  watchlistViewMode=mode;
+  renderWatchlist();
+}
+function currentWatchlist(){
+  return watchlist.filter(w=>(w.kind||'crypto')===watchlistViewMode);
 }
 
 let _wlSelectedCoin=null;
@@ -2423,6 +2523,7 @@ let _wlSearchTimer=null;
 function openAddWatchlistModal(){
   _wlSelectedCoin=null;
   document.getElementById('wl-search-input').value='';
+  document.getElementById('wl-search-input').placeholder=watchlistViewMode==='stocks'?'Search ticker or company name...':'Search coin name or ticker...';
   document.getElementById('wl-search-dropdown').innerHTML='';
   document.getElementById('wl-selected-coin').textContent='';
   openModal('add-watchlist-modal');
@@ -2432,9 +2533,11 @@ function watchlistSearch(query){
   document.getElementById('wl-selected-coin').textContent='';
   clearTimeout(_wlSearchTimer);
   const dropdown=document.getElementById('wl-search-dropdown');
-  if(query.trim().length<2){dropdown.innerHTML='';return;}
+  if(query.trim().length<1){dropdown.innerHTML='';return;}
   _wlSearchTimer=setTimeout(async()=>{
-    const results=await searchCoinGecko(query);
+    const results=watchlistViewMode==='stocks'
+      ?await searchFinnhubStocks(query).catch(()=>[])
+      :await searchCoinGecko(query);
     window._wlSearchResults=results;
     const dd=document.getElementById('wl-search-dropdown');
     if(!dd)return;
@@ -2449,12 +2552,12 @@ function watchlistSelectCoin(ri){
   document.getElementById('wl-selected-coin').textContent=`Selected: ${_wlSelectedCoin.name} (${_wlSelectedCoin.symbol.toUpperCase()})`;
 }
 async function confirmAddWatchlist(){
-  if(!_wlSelectedCoin){showToast('Search and select a coin first.');return;}
-  if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id)){showToast('Already in your watchlist.');closeModal('add-watchlist-modal');return;}
-  if(watchlist.length>=20){showToast('Watchlist is capped at 20 coins.');return;}
+  if(!_wlSelectedCoin){showToast('Search and select one first.');return;}
+  if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id&&(w.kind||'crypto')===watchlistViewMode)){showToast('Already in this watchlist.');closeModal('add-watchlist-modal');return;}
+  if(currentWatchlist().length>=20){showToast('Watchlist is capped at 20 per list.');return;}
   const{error}=await sb.from('watchlist').insert({
     user_id:currentUser.id,name:_wlSelectedCoin.name,ticker:_wlSelectedCoin.symbol.toUpperCase(),
-    coingecko_id:_wlSelectedCoin.id,sort_order:watchlist.length
+    coingecko_id:_wlSelectedCoin.id,kind:watchlistViewMode,sort_order:watchlist.length
   });
   if(error){showToast('Error: '+error.message);return;}
   closeModal('add-watchlist-modal');
@@ -2463,23 +2566,57 @@ async function confirmAddWatchlist(){
   showToast('Added to watchlist ✅');
 }
 async function removeFromWatchlist(id){
-  if(!confirm('Remove this coin from your watchlist?'))return;
+  if(!confirm('Remove this from your watchlist?'))return;
   await sb.from('watchlist').delete().eq('id',id);
   await loadWatchlist();
   renderWatchlist();
 }
 
-// Fetches live price + 24h change (batched, one call) and 30-day high/low
-// (one call per coin — support/resistance here is a simple, honest proxy:
-// the 30-day low/high, not a real technical-analysis indicator).
+// Fetches live price + 24h change and 30-day high/low (support/resistance as
+// a simple, honest proxy — not a real technical-analysis indicator) for
+// whichever list (crypto or stocks) is currently shown.
+// Runs async work over a list in small batches with a pause between batches,
+// rather than firing everything at once — free-tier rate limits (CoinGecko,
+// Finnhub) reject a burst of simultaneous requests, which is why some coins
+// were silently missing support/resistance while others worked fine.
+async function runThrottled(items,fn,batchSize=4,delayMs=1100){
+  for(let i=0;i<items.length;i+=batchSize){
+    const batch=items.slice(i,i+batchSize);
+    await Promise.all(batch.map(fn));
+    if(i+batchSize<items.length)await new Promise(r=>setTimeout(r,delayMs));
+  }
+}
 async function fetchWatchlistData(){
-  if(!watchlist.length)return;
-  const ids=watchlist.map(w=>w.coingecko_id).join(',');
+  const list=currentWatchlist();
+  if(!list.length)return;
+  if(watchlistViewMode==='stocks'){
+    await runThrottled(list,async w=>{
+      try{
+        const q=await fetchFinnhubQuote(w.coingecko_id);
+        watchlistData[w.coingecko_id]={...(watchlistData[w.coingecko_id]||{}),price:q.price,change24h:q.changePct};
+      }catch(e){console.error('watchlist stock quote failed for',w.coingecko_id,e);}
+      try{
+        const to=Math.floor(Date.now()/1000);
+        const from=to-30*86400;
+        const res=await fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(w.coingecko_id)}&resolution=D&from=${from}&to=${to}&token=${FINNHUB_API_KEY}`);
+        if(res.ok){
+          const data=await res.json();
+          if(data.s==='ok'&&data.l&&data.h&&data.l.length){
+            watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
+            watchlistData[w.coingecko_id].low30d=Math.min(...data.l);
+            watchlistData[w.coingecko_id].high30d=Math.max(...data.h);
+          }
+        }
+      }catch(e){console.error('30d candle fetch failed for',w.coingecko_id,e);}
+    });
+    return;
+  }
+  const ids=list.map(w=>w.coingecko_id).join(',');
   try{
     const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
     if(res.ok){
       const data=await res.json();
-      watchlist.forEach(w=>{
+      list.forEach(w=>{
         if(data[w.coingecko_id]){
           watchlistData[w.coingecko_id]=watchlistData[w.coingecko_id]||{};
           watchlistData[w.coingecko_id].price=data[w.coingecko_id].usd;
@@ -2489,7 +2626,7 @@ async function fetchWatchlistData(){
     }
   }catch(e){console.error('watchlist price fetch failed',e);}
 
-  await Promise.all(watchlist.map(async w=>{
+  await runThrottled(list,async w=>{
     try{
       const res=await fetch(`https://api.coingecko.com/api/v3/coins/${w.coingecko_id}/market_chart?vs_currency=usd&days=30`);
       if(!res.ok)return;
@@ -2501,24 +2638,31 @@ async function fetchWatchlistData(){
         watchlistData[w.coingecko_id].high30d=Math.max(...prices);
       }
     }catch(e){console.error('30d range fetch failed for',w.coingecko_id,e);}
-  }));
+  });
 }
 
 async function renderWatchlist(){
   const el=document.getElementById('watchlist-content');
-  if(!watchlist.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">⭐</div><div>No coins in your watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
+  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  await loadWatchlist(); // always fresh — also guards against the initial app-load fetch still being in flight
+  const toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
+    <button class="tab-btn ${watchlistViewMode==='crypto'?'active':''}" onclick="setWatchlistViewMode('crypto')">⚖️ Crypto</button>
+    <button class="tab-btn ${watchlistViewMode==='stocks'?'active':''}" onclick="setWatchlistViewMode('stocks')">🇺🇸 US-Stocks</button>
+  </div>`;
+  const list=currentWatchlist();
+  if(!list.length){
+    el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⭐</div><div>No ${watchlistViewMode==='stocks'?'stocks':'coins'} in this watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
     return;
   }
-  el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
   await fetchWatchlistData();
 
-  const withChange=watchlist.filter(w=>watchlistData[w.coingecko_id]?.change24h!=null)
+  const withChange=list.filter(w=>watchlistData[w.coingecko_id]?.change24h!=null)
     .map(w=>({w,change:watchlistData[w.coingecko_id].change24h}));
   const gainers=[...withChange].filter(x=>x.change>0).sort((a,b)=>b.change-a.change).slice(0,3);
   const losers=[...withChange].filter(x=>x.change<0).sort((a,b)=>a.change-b.change).slice(0,3);
 
-  let html='';
+  let html=toggleHtml;
   if(withChange.length){
     html+=`<div class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div>
@@ -2535,7 +2679,7 @@ async function renderWatchlist(){
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.72rem;white-space:nowrap">
       <thead><tr style="background:var(--ink);color:#F1F3F5">
-        <th style="padding:7px 9px;text-align:left">Coin</th>
+        <th style="padding:7px 9px;text-align:left">${watchlistViewMode==='stocks'?'Stock':'Coin'}</th>
         <th style="padding:7px 9px;text-align:right">Price</th>
         <th style="padding:7px 9px;text-align:right">24h</th>
         <th style="padding:7px 9px;text-align:right">Support (30d low)</th>
@@ -2543,7 +2687,7 @@ async function renderWatchlist(){
         <th style="padding:7px 9px"></th>
       </tr></thead>
       <tbody>
-        ${watchlist.map((w,i)=>{
+        ${list.map((w,i)=>{
           const d=watchlistData[w.coingecko_id]||{};
           const rowBg=i%2===1?'background:var(--card2)':'';
           return`<tr style="border-bottom:1px solid var(--border);${rowBg}">
@@ -2799,7 +2943,7 @@ const CURATED_SEED_TIERS=[
 ];
 
 async function seedCuratedPortfolio(){
-  if(currentPortfolioId&&currentPortfolio()?.kind==='spot'){showToast('Spot Trading doesn\'t use tiers — use "+ Add Position" from Holdings instead.');return;}
+  if(currentPortfolioId&&['spot','us-stocks'].includes(currentPortfolio()?.kind)){showToast('This portfolio type doesn\'t use crypto seed data — use "+ Add Position" or the Setup Wizard instead.');return;}
   if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the curated 18-coin portfolio will add these 5 tiers alongside what you have. Continue?'))return;
   if(!currentPortfolioId){
     const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
@@ -2824,7 +2968,7 @@ async function seedCuratedPortfolio(){
 }
 
 async function seedDefaultPortfolio(){
-  if(currentPortfolioId&&currentPortfolio()?.kind==='spot'){showToast('Spot Trading doesn\'t use tiers — use "+ Add Position" from Holdings instead.');return;}
+  if(currentPortfolioId&&['spot','us-stocks'].includes(currentPortfolio()?.kind)){showToast('This portfolio type doesn\'t use crypto seed data — use "+ Add Position" or the Setup Wizard instead.');return;}
   if(tiers.length&&!confirm('You already have tiers set up in this portfolio. Loading the starter portfolio will add these 5 tiers and 25 coins alongside what you have. Continue?'))return;
   if(!currentPortfolioId){
     const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Rebalance Portfolio',kind:'rebalance',sort_order:portfolios.length}).select().single();
