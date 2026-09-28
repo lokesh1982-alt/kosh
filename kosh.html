@@ -429,6 +429,29 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 </div>
 
 <!-- MANUAL TRADE MODAL -->
+<div class="modal-overlay" id="past-trade-modal">
+  <div class="modal">
+    <div class="modal-title">Add a past trade to the Journal</div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45" id="past-trade-note"></div>
+    <div class="form-group"><label class="form-label">Coin in this portfolio</label><select class="form-select" id="pt-coin" onchange="pastTradePickCoin()"></select></div>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="pt-name" placeholder="Bitcoin"/></div>
+    <div class="form-group"><label class="form-label">Ticker</label><input class="form-input" id="pt-ticker" placeholder="BTC"/></div>
+    <div class="form-group"><label class="form-label">Action</label>
+      <select class="form-select" id="pt-action"><option value="sell">Sell</option><option value="buy">Buy</option></select>
+    </div>
+    <div class="form-group"><label class="form-label">Date of the trade</label><input class="form-input" type="date" id="pt-date"/></div>
+    <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="pt-units" step="0.00000001"/></div>
+    <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="pt-price" step="0.0001"/></div>
+    <div class="form-group"><label class="form-label">Your average buy price (USD)</label><input class="form-input" type="number" id="pt-cost" step="0.0001"/>
+      <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">Sells only. Used to work out the profit or loss. Leave it empty to record no profit or loss.</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('past-trade-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmPastTrade()">Add to Journal</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="manual-trade-modal">
   <div class="modal">
     <div class="modal-title">Log a Trade</div>
@@ -2335,6 +2358,13 @@ async function getHistoricalInrRate(dateStr){
   return null;
 }
 
+let tradeLogErrors=[];
+// Journal writes used to fail silently (no error check). Now any failure is recorded
+// and shown to the user instead of the app claiming the trade was logged.
+async function logTrade(row){
+  const r=await sb.from('trades').insert(row);
+  if(r.error){console.error('Journal insert failed',r.error);tradeLogErrors.push(r.error.message);}
+}
 async function executeTrade(coinId,action,units,pricePerUnit,notes){
   const coin=coins.find(c=>c.id===coinId);
   if(!coin)return;
@@ -2352,7 +2382,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
     realizedPnl=coin.avg_cost_usd!=null?(pricePerUnit-coin.avg_cost_usd)*actualUnits:null;
   }
   await sb.from('coins').update({units_held:newUnitsHeld,avg_cost_usd:newAvgCost}).eq('id',coinId);
-  await sb.from('trades').insert({
+  await logTrade({
     user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:coinId,coin_name:coin.name,coin_ticker:coin.ticker,action,units:actualUnits,
     price_per_unit:pricePerUnit,total_usd:actualUnits*pricePerUnit,
     realized_pnl:realizedPnl,inr_rate:inrRate,notes:notes||null
@@ -2376,7 +2406,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
         const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+amountUsd)/newUsdtUnits:usdtPrice;
         await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
-        await sb.from('trades').insert({
+        await logTrade({
           user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsMoved,
           price_per_unit:usdtPrice,total_usd:amountUsd,
           realized_pnl:null,inr_rate:inrRate,notes:'Proceeds from selling '+coin.ticker
@@ -2389,7 +2419,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         const newUsdtUnits=(usdtCoin.units_held||0)-actualUsdtSpent;
         const usdtRealizedPnl=usdtCoin.avg_cost_usd!=null?(usdtPrice-usdtCoin.avg_cost_usd)*actualUsdtSpent:null;
         await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:usdtCoin.avg_cost_usd}).eq('id',usdtCoin.id);
-        await sb.from('trades').insert({
+        await logTrade({
           user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'sell',units:actualUsdtSpent,
           price_per_unit:usdtPrice,total_usd:actualUsdtSpent*usdtPrice,
           realized_pnl:usdtRealizedPnl,inr_rate:inrRate,notes:'Spent to buy '+coin.ticker
@@ -2412,6 +2442,47 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
 //  JOURNAL — combined across all portfolios, table format with INR columns
 // ═══════════════════════════════
 let allJournalTrades=[];
+function openPastTradeModal(){
+  const cp=currentPortfolio();
+  if(!cp){showToast('Select a portfolio first.');return;}
+  document.getElementById('past-trade-note').textContent='Recorded in: '+cp.name+'. This only adds a line to the Journal. It does not change your holdings or your '+reserveTickerFor(cp.kind)+' balance. To record it in a different portfolio, select that portfolio first.';
+  document.getElementById('pt-coin').innerHTML='<option value="">Other (type it below)</option>'+coins.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker||'')})</option>`).join('');
+  ['pt-name','pt-ticker','pt-units','pt-price','pt-cost'].forEach(id=>{document.getElementById(id).value='';});
+  document.getElementById('pt-action').value='sell';
+  document.getElementById('pt-date').value=new Date().toISOString().slice(0,10);
+  openModal('past-trade-modal');
+}
+function pastTradePickCoin(){
+  const c=coins.find(x=>x.id===document.getElementById('pt-coin').value);
+  if(!c)return;
+  document.getElementById('pt-name').value=c.name;
+  document.getElementById('pt-ticker').value=c.ticker||'';
+  if(c.avg_cost_usd!=null)document.getElementById('pt-cost').value=c.avg_cost_usd;
+}
+async function confirmPastTrade(){
+  const cp=currentPortfolio();
+  const name=document.getElementById('pt-name').value.trim();
+  const ticker=document.getElementById('pt-ticker').value.trim().toUpperCase();
+  const action=document.getElementById('pt-action').value;
+  const dateStr=document.getElementById('pt-date').value;
+  const units=parseFloat(document.getElementById('pt-units').value);
+  const price=parseFloat(document.getElementById('pt-price').value);
+  const cost=parseFloat(document.getElementById('pt-cost').value);
+  if(!cp||(!name&&!ticker)||!dateStr||!(units>0)||!(price>0)){showToast('Fill in the coin, date, units and price.');return;}
+  const inrRate=await getHistoricalInrRate(dateStr);
+  const realized=(action==='sell'&&cost>0)?(price-cost)*units:null;
+  const r=await sb.from('trades').insert({
+    user_id:currentUser.id,portfolio_id:cp.id,coin_id:document.getElementById('pt-coin').value||null,
+    coin_name:name||ticker,coin_ticker:ticker||name,action,units,price_per_unit:price,total_usd:units*price,
+    realized_pnl:realized,inr_rate:inrRate,notes:'Added manually (past trade)',
+    trade_date:new Date(dateStr+'T12:00:00').toISOString()
+  });
+  if(r.error){showToast('Could not save: '+r.error.message);return;}
+  closeModal('past-trade-modal');
+  await renderJournal();
+  showToast('Added to the Journal ✅');
+}
+
 let journalViewMode='crypto'; // 'crypto' | 'stocks' — separate journals per the user's request
 async function loadAllTradesForJournal(){
   const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
@@ -2437,8 +2508,9 @@ async function renderJournal(){
     </div>`;
   }
 
+  const addPastBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
   if(!allJournalTrades.length){
-    el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
+    el.innerHTML=toggleHtml+addPastBtn+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
   }
   const totalRealized=allJournalTrades.reduce((s,t)=>s+(t.realized_pnl||0),0);
@@ -2447,6 +2519,7 @@ async function renderJournal(){
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalViewMode==='stocks'?'US-Stocks':'crypto'} portfolios)</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
   </div>`;
+  html+=addPastBtn;
   html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalPDF()">📄 Export PDF</button>
@@ -2885,11 +2958,12 @@ async function confirmManualTrade(){
   const units=parseFloat(document.getElementById('trade-units').value);
   const price=parseFloat(document.getElementById('trade-price').value);
   if(!coinId||!units||units<=0||!price||price<=0){showToast('Please fill in all fields with valid numbers.');return;}
+  tradeLogErrors=[];
   await executeTrade(coinId,action,units,price,'manual');
   closeModal('manual-trade-modal');
   await loadAllData();
   renderAll();
-  showToast('Trade logged ✅');
+  showToast(tradeLogErrors.length?('Holding updated, but the Journal entry was NOT saved: '+tradeLogErrors[0]):'Trade logged ✅');
 }
 
 // ═══════════════════════════════
