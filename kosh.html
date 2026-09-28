@@ -859,6 +859,13 @@ async function loadAllData(){
   // it's been set to NULL.
   const tradesRes=await sb.from('trades').select('*').eq('portfolio_id',currentPortfolioId).order('trade_date',{ascending:false});
   trades=tradesRes.data||[];
+  // US-Stocks: make sure the USD cash holding exists in the reserve tier, so the
+  // cash balance can be entered with "Correct" and sale proceeds have somewhere to go.
+  const cp0=currentPortfolio();
+  if(cp0&&isStockKind(cp0.kind)&&!coins.some(c=>(c.ticker||'').toUpperCase()==='USD')){
+    const rt=tiers.find(t=>/stable|reserve|cash/i.test(t.name));
+    if(rt)await ensureCoinInTier(rt.id,{name:'US Dollar',ticker:'USD',coingecko_id:'USD'});
+  }
 }
 
 function renderPortfolioSwitcher(){
@@ -2395,7 +2402,11 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   // it, same as a real exchange/brokerage cash balance.
   const reserveTicker=reserveTickerFor(currentPortfolio()?.kind);
   if((coin.ticker||'').toUpperCase()!==reserveTicker){
-    const usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
+    let usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
+    // Sale proceeds used to vanish silently when the portfolio had no USD/USDT
+    // holding yet. Create it so the cash is always tracked.
+    const rk=currentPortfolio()?.kind;
+    if(!usdtCoin&&action==='sell'&&(isStockKind(rk)||rk==='spot'))usdtCoin=await ensureUsdtCoinForFunding();
     if(usdtCoin){
       const amountUsd=actualUnits*pricePerUnit;
       const usdtPrice=livePrices[usdtCoin.coingecko_id]||1;
