@@ -56,6 +56,13 @@ button{cursor:pointer;}
 @media(min-width:1360px){
   #dash-content,#holdings-content,#tiers-content{column-count:3;}
 }
+.dash-section{column-span:all;display:flex;align-items:baseline;gap:10px;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+.dash-section:first-child{margin-top:0;}
+.dash-section h3{margin:0;font-size:0.92rem;font-weight:700;color:var(--ink);}
+.dash-section span{font-size:0.7rem;color:var(--ink3);}
+.pf-panel{break-inside:avoid;margin-bottom:6px;}
+.trend-btn{border:1px solid rgba(255,255,255,0.25);background:transparent;color:#F1F3F5;border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
+.trend-btn.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700;}
 
 .tile-grid{
   display:grid;grid-template-columns:repeat(7,1fr);gap:4px;
@@ -753,14 +760,14 @@ function renderBackRowPortfolioSelect(){
   const sel=document.getElementById('back-row-portfolio-select');
   if(!sel)return;
   sel.style.display='';
-  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>`
+  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Combined Portfolios</option>`
     +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
     +`<option value="__new__">+ New Portfolio</option>`;
 }
 function renderSidebarPortfolioSelect(){
   const sel=document.getElementById('sidebar-portfolio-select');
   if(!sel)return;
-  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Both Portfolios</option>`
+  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Combined Portfolios</option>`
     +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
     +`<option value="__new__">+ New Portfolio</option>`;
 }
@@ -850,7 +857,7 @@ let btc90dHigh=null;
 //  variation = (value now - base) / base. When it reaches a level you set, a rebalance is proposed;
 //  once you finish rebalancing, the base becomes the new total, so the variation restarts at 0.
 // ═══════════════════════════════
-const bandStore={},capitalStore={},bandValueCache={};
+const bandStore={},capitalStore={},realizedStore={},bandValueCache={};
 const BAND_DEFAULT={up:[5,10,20],down:[5,10,20]};
 const bandOk=a=>Array.isArray(a)&&a.length>=1&&a.length<=3&&a.every((x,i)=>typeof x==='number'&&x>0&&(i===0||x>a[i-1]));
 function getBand(p){
@@ -859,10 +866,14 @@ function getBand(p){
   return {up:raw&&bandOk(raw.up)?raw.up:BAND_DEFAULT.up,down:raw&&bandOk(raw.down)?raw.down:BAND_DEFAULT.down,base:raw&&raw.base>0?raw.base:null};
 }
 const capitalOf=p=>p.id===currentPortfolioId?(settings.total_capital||0):(capitalStore[p.id]||0);
+const realizedOf=p=>p.id===currentPortfolioId?trades.reduce((a,t)=>a+(t.realized_pnl||0),0):(realizedStore[p.id]||0);
+// Before the first rebalance the base is funded capital plus or minus realized profit or loss,
+// so a loss you have already taken is not counted again as a fall in value.
+function defaultBase(p,fallback){const c=capitalOf(p),b=c+realizedOf(p);return b>0?b:(c>0?c:fallback);}
 const portfolioValue=list=>list.reduce((a,c)=>{const v=livePrices[c.coingecko_id];return a+(v!=null?(c.units_held||0)*v:0);},0);
 function bandStats(p,coinList){
   const b=getBand(p),value=portfolioValue(coinList),cap=capitalOf(p);
-  const base=b.base||(cap>0?cap:value);
+  const base=b.base||defaultBase(p,value);
   const variation=base>0?(value-base)/base*100:0;
   const dir=variation>=0?'up':'down';
   const level=b[dir].filter(l=>Math.abs(variation)+1e-9>=l).length;
@@ -896,7 +907,8 @@ function bandCardHtml(p,coinList,combined){
   const marks=ticks.map(t=>`<div style="position:absolute;left:${pos(t.x)}%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.35)"></div>`).join('');
   const labels=ticks.map(t=>{const x=pos(t.x);return `<span style="position:absolute;left:${x}%;transform:translateX(${x<=4?'0':x>=96?'-100%':'-50%'})">${t.t}</span>`;}).join('');
   const sign=s.variation>=0?'+':'−';
-  const baseNote=s.fromCapital?(capitalOf(p)>0?'your funded capital, until your first rebalance':'no base yet, set one in Edit levels'):'the portfolio total at your last rebalance';
+  const rz=realizedOf(p);
+  const baseNote=s.fromCapital?(capitalOf(p)>0?'funded capital '+fmtUsd(capitalOf(p))+(rz<0?' − realized loss '+fmtUsd(-rz):' + realized profit '+fmtUsd(rz))+', until your first rebalance':'no base yet, set one in Edit levels'):'the portfolio total at your last rebalance';
   const status=s.level>=1
     ?`<div style="margin-top:12px;padding:10px;border-radius:9px;background:rgba(255,255,255,0.07);font-size:0.7rem;line-height:1.45"><b>Level ${s.level} reached.</b> ${combined?'Open this portfolio to see the proposed trades.':'Propose Rebalance restores your tier targets on the current value. When you finish, the base becomes the new total.'}${combined?`<div style="margin-top:8px"><button class="btn-primary" style="width:100%" onclick="setDashViewMode('${p.id}')">Open to rebalance</button></div>`:''}</div>`
     :`<div style="margin-top:12px;font-size:0.7rem;opacity:.75;line-height:1.45">Inside your first levels (+${b.up[0]}% and −${b.down[0]}%), so no rebalance is proposed.</div>`;
@@ -918,7 +930,7 @@ function openBandModal(pid){
     document.getElementById('bd-d'+n).value=b.down[i]!=null?b.down[i]:'';
   });
   document.getElementById('bd-base').value=b.base||'';
-  document.getElementById('bd-hint').textContent='Leave empty to use your funded capital ('+fmtUsd(capitalOf(p))+'). Current portfolio value: '+fmtUsd(bandValueCache[p.id]||0)+'.';
+  document.getElementById('bd-hint').textContent='Leave empty to use your funded capital plus or minus realized profit or loss ('+fmtUsd(defaultBase(p,0))+'). Current portfolio value: '+fmtUsd(bandValueCache[p.id]||0)+'.';
   openModal('band-modal');
 }
 function bandUseNow(){
@@ -1338,6 +1350,69 @@ function renderAll(){
 // in the background (fire-and-forget) rather than blocking the render on a
 // separate read-then-write-then-reread sequence — the chart can draw
 // immediately using the value already computed this call.
+
+// ═══════════════════════════════
+//  COMBINED VIEW HELPERS
+// ═══════════════════════════════
+let trendMode='capital',lastTrend=null;
+try{trendMode=localStorage.getItem('kosh-trend-mode')==='profit'?'profit':'capital';}catch(e){}
+function buildProfitSVG(vals,width,height){
+  if(vals.length<2)return'';
+  let min=Math.min(0,...vals),max=Math.max(0,...vals);
+  if(min===max){min-=1;max+=1;}
+  const pad=6,range=max-min,stepX=width/(vals.length-1);
+  const y=v=>pad+(height-2*pad)-((v-min)/range)*(height-2*pad);
+  const pts=vals.map((v,i)=>[i*stepX,y(v)]),last=vals[vals.length-1],col=last>=0?'#17B6A7':'#F4A6A6',y0=y(0);
+  const line='M'+pts.map(c=>c.join(',')).join('L');
+  return`<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;display:block" preserveAspectRatio="none"><path d="${line}L${width},${y0}L0,${y0}Z" fill="${col}" fill-opacity="0.22"/><line x1="0" y1="${y0}" x2="${width}" y2="${y0}" stroke="#8B93A1" stroke-width="1" stroke-dasharray="4,4"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+const signedDisplay=x=>(x>=0?'+':'−')+fmtDisplay(Math.abs(x));
+function trendBlockHtml(){
+  const t=lastTrend;
+  if(!t||t.snapshots.length<2)return'<div style="font-size:0.68rem;opacity:0.5;margin-top:10px">Trend line will build up as you use the app daily</div>';
+  const snaps=t.snapshots,vals=snaps.map(x=>x.total_value_usd),caps=snaps.map(x=>x.capital_at_snapshot!=null?x.capital_at_snapshot:t.totalCapital);
+  const since=snaps[0].snapshot_date;
+  const sel=`<div style="display:flex;gap:6px;margin-top:12px"><button class="trend-btn ${trendMode==='capital'?'on':''}" onclick="setTrendMode('capital')">Capital growth</button><button class="trend-btn ${trendMode==='profit'?'on':''}" onclick="setTrendMode('profit')">Profit growth</button></div>`;
+  if(trendMode==='profit'){
+    const pr=vals.map((v,i)=>v-caps[i]),now=pr[pr.length-1],capNow=caps[caps.length-1],pct=capNow>0?now/capNow*100:0;
+    return`<div style="margin-top:12px">${buildProfitSVG(pr,400,60)}<div style="margin-top:6px;font-size:0.68rem;opacity:0.85"><b class="hide-figure">Profit ${signedDisplay(now)}</b> (${pct>=0?'+':'−'}${Math.abs(pct).toFixed(1)}% of capital). Change since ${since}: <span class="hide-figure">${signedDisplay(now-pr[0])}</span></div></div>${sel}`;
+  }
+  const growth=vals[0]>0?(vals[vals.length-1]/vals[0]-1)*100:0;
+  return`<div style="margin-top:12px">${buildDualSparklineSVG(vals,caps,400,60)}<div style="display:flex;gap:14px;margin-top:6px;font-size:0.64rem;opacity:0.75"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#17B6A7;margin-right:4px"></span>Value</span><span><span style="display:inline-block;width:8px;height:2px;background:#8B93A1;margin-right:4px;vertical-align:middle"></span>Capital funded to date</span></div><div style="margin-top:4px;font-size:0.68rem;opacity:0.85">Value ${growth>=0?'+':'−'}${Math.abs(growth).toFixed(1)}% since ${since}</div></div>${sel}`;
+}
+function setTrendMode(m){
+  trendMode=m==='profit'?'profit':'capital';
+  try{localStorage.setItem('kosh-trend-mode',trendMode);}catch(e){}
+  const slot=document.getElementById('trend-slot');
+  if(slot)slot.innerHTML=trendBlockHtml();
+}
+function portfolioPanelHtml(pp,total,palette,idx){
+  const p=pp.portfolio,share=total>0?pp.value/total*100:0;
+  const vs=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
+  const kindLabel=p.kind==='spot'?'Spot trading':isStockKind(p.kind)?'US stocks, tiered':'Crypto, tiered';
+  const col=x=>x>=0?'var(--green)':'var(--red)';
+  let inner='';
+  if(p.kind==='spot'){
+    const top=pp.coins.map(c=>({c,v:coinValue(c)||0})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v).slice(0,5);
+    inner=`<div class="card"><div class="card-title">Top holdings</div>${top.length?top.map(x=>`<div class="coin-row"><div class="coin-name">${escapeHtml(x.c.name)}</div><div class="coin-val hide-figure">${pp.value>0?(x.v/pp.value*100).toFixed(1):'0.0'}%</div></div>`).join(''):'<div style="font-size:0.74rem;color:var(--ink3)">No positions yet.</div>'}</div>`;
+  }else{
+    const ts=calcTierStatsGeneric(pp.tiers,pp.coins,0);
+    inner=`<div class="card"><div class="card-title">Allocation vs target</div>${ts.map(t=>{
+      const off=Math.abs(t.driftPP)>=5;
+      return`<div class="drift-row"><div class="drift-head"><span style="font-weight:500">${escapeHtml(t.name)}</span><span style="font-weight:600;color:${off?'var(--amber-dark)':'var(--ink2)'}">${fmtPct(t.actualPct)} / ${fmtPct(t.targetPct)}</span></div><div class="drift-bar-track"><div class="drift-bar-fill" style="width:${Math.min(100,t.actualPct*200)}%;background:${off?'var(--amber)':'var(--teal)'}"></div><div class="drift-marker" style="left:${Math.min(100,t.targetPct*200)}%"></div></div></div>`;
+    }).join('')}</div>`+bandCardHtml(p,pp.coins,true);
+  }
+  return`<div class="pf-panel"><div class="card" style="border-top:3px solid ${palette[idx%palette.length]}">
+    <div style="display:flex;justify-content:space-between;align-items:center"><div><div class="card-title" style="margin:0">${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</div><div style="font-size:0.66rem;color:var(--ink3)">${kindLabel}</div></div><button class="link-btn" onclick="setDashViewMode('${p.id}')">Open →</button></div>
+    <div class="serif hide-figure" style="font-size:1.35rem;font-weight:600;margin-top:8px">${fmtDisplay(pp.value)}</div>
+    <div style="font-size:0.7rem;color:var(--ink3)">${share.toFixed(1)}% of combined${vs!=null?` · <span style="color:${col(vs)};font-weight:600">${vs>=0?'+':'−'}${Math.abs(vs).toFixed(1)}%</span> vs capital`:''}</div>
+    <div style="display:flex;gap:18px;margin-top:10px">
+      <div><div style="font-size:10px;color:var(--ink3)">Unrealized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${pp.priced?col(pp.unrealized):'var(--ink3)'}">${pp.priced?signedDisplay(pp.unrealized):'—'}</div></div>
+      <div><div style="font-size:10px;color:var(--ink3)">Realized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${col(pp.realized)}">${signedDisplay(pp.realized)}</div></div>
+      <div><div style="font-size:10px;color:var(--ink3)">Capital in</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600">${fmtDisplay(pp.capital)}</div></div>
+    </div></div>${inner}</div>`;
+}
+
 async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
   const today=new Date().toISOString().slice(0,10);
   const{data:snapshots}=await sb.from('portfolio_snapshots').select('*').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
@@ -1354,7 +1429,11 @@ async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
     list.push({snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
     sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
   }
-  return list;
+  // Snapshots taken before US-Stocks joined the combined total only held the crypto portfolios,
+  // so the trend starts on the first day this version ran on this device.
+  let from=null;
+  try{from=localStorage.getItem('kosh-combined-from');if(!from){from=today;localStorage.setItem('kosh-combined-from',from);}}catch(e){}
+  return from?list.filter(x=>x.snapshot_date>=from):list;
 }
 
 // ═══════════════════════════════
@@ -1399,6 +1478,7 @@ function findConcentrationWarningsGeneric(coinList){
   return coinList.filter(c=>{
     const ticker=(c.ticker||'').toUpperCase();
     if(ticker==='BTC'||ticker==='ETH')return false;
+    if(/^(USD|USDT|USDC|DAI|FDUSD|TUSD|PYUSD)$/.test(ticker))return false;
     const v=livePrices[c.coingecko_id];
     if(v==null)return false;
     return((c.units_held||0)*v/total)>0.10;
@@ -1508,14 +1588,14 @@ function fearGreedCardHtml(){
   let color='#8B93A1';
   if(value<=25)color='#DC4C4C';else if(value<=45)color='#E8A93E';else if(value<=55)color='#8B93A1';else if(value<=75)color='#4E9E6E';else color='#1E9E6E';
   return`<div class="card">
-    <div class="card-title">Market Fear &amp; Greed Index</div>
+    <div class="card-title">Crypto Fear &amp; Greed Index</div>
     <div style="display:flex;align-items:center;gap:14px">
       <div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(${color} ${value*3.6}deg, var(--card2) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0">
         <div style="width:46px;height:46px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:${color}">${value}</div>
       </div>
       <div>
         <div style="font-weight:700;font-size:0.88rem;color:${color}">${escapeHtml(label)}</div>
-        <div style="font-size:0.68rem;color:var(--ink3)">Overall crypto market sentiment</div>
+        <div style="font-size:0.68rem;color:var(--ink3)">Sentiment of the crypto market only, not stocks</div>
       </div>
     </div>
   </div>`;
@@ -1524,25 +1604,14 @@ function fearGreedCardHtml(){
 // Loads tiers/coins across ALL portfolios (for the hero's "Both Portfolios" view),
 // computing per-portfolio value, combined unrealized/realized P&L, and total capital.
 async function computeCombinedDashboardData(){
-  const allTiersRes=await sb.from('tiers').select('*');
-  const allTiers=allTiersRes.data||[];
-  const allTierIds=allTiers.map(t=>t.id);
-  const allCoinsRes=allTierIds.length?await sb.from('coins').select('*').in('tier_id',allTierIds):{data:[]};
-  const allCoins=allCoinsRes.data||[];
-
-  // US-Stocks portfolios are kept entirely separate from this crypto combined
-  // view — their own card is computed further down and shown alongside, not
-  // merged into these totals.
-  const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
-  const cryptoTiers=allTiers.filter(t=>!stockPortfolioIds.has(t.portfolio_id));
-  const cryptoTierIds=new Set(cryptoTiers.map(t=>t.id));
-  const cryptoCoins=allCoins.filter(c=>cryptoTierIds.has(c.tier_id));
-  const stockTiers=allTiers.filter(t=>stockPortfolioIds.has(t.portfolio_id));
-  const stockTierIds=new Set(stockTiers.map(t=>t.id));
+  const allTiers=(await sb.from('tiers').select('*')).data||[];
+  const tierIds=allTiers.map(t=>t.id);
+  const allCoins=tierIds.length?((await sb.from('coins').select('*').in('tier_id',tierIds)).data||[]):[];
+  const stockPids=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+  const stockTierIds=new Set(allTiers.filter(t=>stockPids.has(t.portfolio_id)).map(t=>t.id));
   const stockCoins=allCoins.filter(c=>stockTierIds.has(c.tier_id));
-
-  const allGeckoIds=[...new Set(cryptoCoins.map(c=>c.coingecko_id).filter(Boolean))];
-  const missingIds=allGeckoIds.filter(id=>livePrices[id]==null);
+  const cryptoCoins=allCoins.filter(c=>!stockTierIds.has(c.tier_id));
+  const missingIds=[...new Set(cryptoCoins.map(c=>c.coingecko_id).filter(Boolean))].filter(id=>livePrices[id]==null);
   await Promise.all([
     (async()=>{
       if(!missingIds.length)return;
@@ -1556,58 +1625,28 @@ async function computeCombinedDashboardData(){
     })(),
     stockCoins.length?fetchFinnhubPricesForCoins(stockCoins):Promise.resolve()
   ]);
-
-  const cryptoPortfolios=portfolios.filter(p=>!isStockKind(p.kind));
-  const perPortfolio=cryptoPortfolios.map(p=>{
-    const pTierIds=cryptoTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
-    const pTiers=cryptoTiers.filter(t=>t.portfolio_id===p.id);
-    const pCoins=cryptoCoins.filter(c=>pTierIds.includes(c.tier_id));
-    const value=pCoins.reduce((s,c)=>{const v=livePrices[c.coingecko_id];return s+(v!=null?(c.units_held||0)*v:0);},0);
-    return{portfolio:p,tiers:pTiers,coins:pCoins,value};
-  });
-  const combinedTotal=perPortfolio.reduce((s,p)=>s+p.value,0);
-
-  let combinedUnrealized=0,pricedCount=0;
-  cryptoCoins.forEach(c=>{
-    if(c.avg_cost_usd==null)return;
-    const v=livePrices[c.coingecko_id];
-    if(v==null)return;
-    pricedCount++;
-    combinedUnrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
-  });
-
-  // Stock portfolios get their own separate summary figures.
-  const stockPerPortfolio=portfolios.filter(p=>isStockKind(p.kind)).map(p=>{
-    const pTierIds=stockTiers.filter(t=>t.portfolio_id===p.id).map(t=>t.id);
-    const pTiers=stockTiers.filter(t=>t.portfolio_id===p.id);
-    const pCoins=stockCoins.filter(c=>pTierIds.includes(c.tier_id));
-    const value=pCoins.reduce((s,c)=>{const v=livePrices[c.coingecko_id];return s+(v!=null?(c.units_held||0)*v:0);},0);
-    return{portfolio:p,tiers:pTiers,coins:pCoins,value};
-  });
-  const stockTotal=stockPerPortfolio.reduce((s,p)=>s+p.value,0);
-
-  // Fetch all of the user's trades directly (not filtered via coin_id, since a
-  // deleted coin's trades have coin_id=NULL and would otherwise vanish from
-  // this total) — realized P&L across every CRYPTO portfolio combined.
-  const cryptoPortfolioIds=cryptoPortfolios.map(p=>p.id);
+  // Trades are read straight from the table (not via coin_id) so sales of deleted coins still count.
   const[tradesRes,settingsRes]=await Promise.all([
-    cryptoPortfolioIds.length?sb.from('trades').select('realized_pnl').eq('user_id',currentUser.id).in('portfolio_id',cryptoPortfolioIds):Promise.resolve({data:[]}),
+    sb.from('trades').select('portfolio_id,realized_pnl').eq('user_id',currentUser.id),
     sb.from('kosh_settings').select('*')
   ]);
-  const combinedRealized=(tradesRes.data||[]).reduce((s,t)=>s+(t.realized_pnl||0),0);
+  Object.keys(realizedStore).forEach(k=>{delete realizedStore[k];});
+  (tradesRes.data||[]).forEach(t=>{realizedStore[t.portfolio_id]=(realizedStore[t.portfolio_id]||0)+(t.realized_pnl||0);});
   (settingsRes.data||[]).forEach(r=>{capitalStore[r.portfolio_id]=r.total_capital||0;if(r.ladder)bandStore[r.portfolio_id]=r.ladder;});
-  const totalCapital=(settingsRes.data||[]).filter(r=>cryptoPortfolioIds.includes(r.portfolio_id)).reduce((s,r)=>s+(r.total_capital||0),0);
-
-  let stockUnrealized=0,stockPricedCount=0;
-  stockCoins.forEach(c=>{
-    if(c.avg_cost_usd==null)return;
-    const v=livePrices[c.coingecko_id];
-    if(v==null)return;
-    stockPricedCount++;
-    stockUnrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
+  // Every portfolio (crypto and US-Stocks) counts towards the combined figures, all in USD.
+  const perPortfolio=portfolios.map(p=>{
+    const pTiers=allTiers.filter(t=>t.portfolio_id===p.id),tid=new Set(pTiers.map(t=>t.id));
+    const pCoins=allCoins.filter(c=>tid.has(c.tier_id));
+    let unrealized=0,priced=0;
+    pCoins.forEach(c=>{
+      const v=livePrices[c.coingecko_id];
+      if(c.avg_cost_usd==null||v==null)return;
+      priced++;unrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
+    });
+    return{portfolio:p,tiers:pTiers,coins:pCoins,value:portfolioValue(pCoins),unrealized,priced,realized:realizedStore[p.id]||0,capital:capitalStore[p.id]||0};
   });
-
-  return{allTiers,allCoins,perPortfolio,combinedTotal,combinedUnrealized,pricedCount,combinedRealized,totalCapital,stockPerPortfolio,stockTotal,stockUnrealized,stockPricedCount};
+  const sum=f=>perPortfolio.reduce((a,x)=>a+f(x),0);
+  return{allTiers,allCoins,perPortfolio,combinedTotal:sum(x=>x.value),combinedUnrealized:sum(x=>x.unrealized),pricedCount:sum(x=>x.priced),combinedRealized:sum(x=>x.realized),totalCapital:sum(x=>x.capital)};
 }
 
 let dashViewMode=localStorage.getItem('kosh-dash-view')||'both';
@@ -1647,11 +1686,14 @@ async function renderDashboard(){
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
     const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
+    lastTrend={snapshots,totalCapital:combined.totalCapital};
     const gain=combined.combinedTotal-combined.totalCapital;
     const gainPct=combined.totalCapital>0?(gain/combined.totalCapital)*100:0;
-    const trendVals=snapshots.map(s=>s.total_value_usd);
-    const capitalTrendVals=snapshots.map(s=>s.capital_at_snapshot!=null?s.capital_at_snapshot:combined.totalCapital);
+    const pfPalette=['#17B6A7','#E8A93E','#2E6FA3','#7C6FE0','#C0392B','#1E9E6E'];
+    const head=(t,sub)=>`<div class="dash-section"><h3>${t}</h3>${sub?`<span>${sub}</span>`:''}</div>`;
 
+    // ── Overview ──
+    html+=head('Overview','all portfolios together, in USD');
     html+=`<div class="hero-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
         <div class="hero-label">Combined portfolio value</div>
@@ -1660,72 +1702,48 @@ async function renderDashboard(){
       <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
       <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
       <div style="display:flex;gap:16px;margin:10px 0 4px">
-        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?(combined.combinedUnrealized>=0?'+':'')+fmtDisplay(combined.combinedUnrealized):'—'}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${combined.combinedRealized>=0?'+':''}${fmtDisplay(combined.combinedRealized)}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?signedDisplay(combined.combinedUnrealized):'—'}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(combined.combinedRealized)}</div></div>
       </div>
-      ${trendVals.length>=2?buildDualSparklineSVG(trendVals,capitalTrendVals,400,60)+`<div style="display:flex;gap:14px;margin-top:6px;font-size:0.64rem;opacity:0.75"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#17B6A7;margin-right:4px"></span>Value</span><span><span style="display:inline-block;width:8px;height:2px;background:#8B93A1;margin-right:4px;vertical-align:middle"></span>Capital funded to date</span></div>`:'<div style="font-size:0.68rem;opacity:0.5;margin-top:8px">Trend line will build up as you use the app daily</div>'}
+      <div id="trend-slot">${trendBlockHtml()}</div>
     </div>`;
 
-    html+=`<div class="card"><div class="card-title">By portfolio</div>
-      ${combined.perPortfolio.map(p=>`<div class="coin-row">
-        <div class="coin-name">${portfolioIcon(p.portfolio.kind)} ${escapeHtml(p.portfolio.name)}</div>
-        <div class="coin-val hide-figure">${fmtUsd(p.value)}</div>
-      </div>`).join('')}
-    </div>`;
-
-    // US-Stocks portfolios shown as their own separate card — never merged
-    // into the crypto totals above, even while viewing "Both Portfolios".
-    if(combined.stockPerPortfolio.length){
-      combined.stockPerPortfolio.forEach(sp=>{
-        html+=`<div class="card" style="border:1px solid var(--border)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <div class="card-title" style="margin:0">🇺🇸 ${escapeHtml(sp.portfolio.name)}</div>
-            <button class="link-btn" onclick="setDashViewMode('${sp.portfolio.id}')">View →</button>
+    const donutRows=combined.perPortfolio.filter(x=>x.value>0);
+    if(donutRows.length){
+      html+=`<div class="card"><div class="card-title">Allocation between portfolios</div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="position:relative;width:130px;height:130px;flex-shrink:0"><canvas id="dash-portfolio-donut"></canvas></div>
+          <div style="font-size:0.74rem;flex:1">
+            ${donutRows.map((x,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${pfPalette[i%pfPalette.length]};margin-right:6px"></span>${escapeHtml(x.portfolio.name)}</span><span style="font-weight:700" class="hide-figure">${(x.value/combined.combinedTotal*100).toFixed(1)}%</span></div>`).join('')}
+            <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:6px;display:flex;justify-content:space-between;color:var(--ink3)"><span>Total</span><span class="hide-figure">${fmtDisplay(combined.combinedTotal)}</span></div>
           </div>
-          <div class="serif hide-figure" style="font-size:1.2rem;font-weight:600;color:var(--ink)">${fmtUsd(sp.value)}</div>
-          <div style="display:flex;gap:16px;margin-top:8px">
-            <div><div style="font-size:10px;color:var(--ink3)">Unrealized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${combined.stockPricedCount?(combined.stockUnrealized>=0?'var(--green)':'var(--red)'):'var(--ink3)'}">${combined.stockPricedCount?(combined.stockUnrealized>=0?'+':'')+fmtUsd(combined.stockUnrealized):'—'}</div></div>
-          </div>
-        </div>`;
-        html+=bandCardHtml(sp.portfolio,sp.coins,true);
-      });
+        </div></div>`;
+      allocDonutQueue.push({canvasId:'dash-portfolio-donut',tierStats:donutRows.map(x=>({name:x.portfolio.name,actualPct:x.value/combined.combinedTotal,driftPP:0}))});
     }
 
+    // ── Needs attention: one list instead of a wall of red boxes ──
+    const alerts=[];
+    combined.perPortfolio.forEach(pp=>{
+      const p=pp.portfolio,nm=escapeHtml(p.name);
+      if(p.kind!=='spot'){
+        const bs=bandStats(p,pp.coins);
+        if(bs.level>=1)alerts.push({icon:'⚖️',text:`<b>${nm}</b>: rebalance trigger level ${bs.level} reached (${bs.variation>=0?'+':'−'}${Math.abs(bs.variation).toFixed(1)}% vs base)`,open:p.id});
+        calcTierStatsGeneric(pp.tiers,pp.coins,0).filter(t=>Math.abs(t.driftPP)>=5).forEach(t=>alerts.push({icon:'⚠️',text:`<b>${nm}</b>: ${escapeHtml(t.name)} is ${Math.abs(t.driftPP).toFixed(1)}pp ${t.driftPP>0?'above':'below'} target`}));
+      }
+      const cw=findConcentrationWarningsGeneric(pp.coins);
+      if(cw.length)alerts.push({icon:'🚨',text:`<b>${nm}</b>: ${cw.length} holding${cw.length===1?'':'s'} above the ~10% cap (${cw.slice(0,3).map(w=>escapeHtml(w.coin.ticker)+' '+(w.pct*100).toFixed(1)+'%').join(', ')}${cw.length>3?' and '+(cw.length-3)+' more':''})`});
+    });
+    if(alerts.length){
+      html+=`<div class="card"><div class="card-title">Needs attention</div>${alerts.map(a=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);font-size:0.74rem;line-height:1.4"><span>${a.icon}</span><div style="flex:1">${a.text}</div>${a.open?`<button class="link-btn" onclick="setDashViewMode('${a.open}')">Open →</button>`:''}</div>`).join('')}</div>`;
+    }
+
+    // ── One panel per portfolio ──
+    html+=head('Portfolios','value, profit and loss, allocation and rebalance trigger for each');
+    combined.perPortfolio.forEach((pp,i)=>{html+=portfolioPanelHtml(pp,combined.combinedTotal,pfPalette,combined.perPortfolio.filter(x=>x.value>0).indexOf(pp)>=0?combined.perPortfolio.filter(x=>x.value>0).indexOf(pp):i);});
+
+    // ── Market ──
+    html+=head('Market','crypto sentiment and today\'s biggest movers');
     html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
-
-    // Concentration warnings across everything combined
-    findConcentrationWarningsGeneric(combined.allCoins).forEach(w=>{
-      html+=`<div class="alert-box danger"><span>🚨</span><div>
-        <div class="alert-title" style="color:var(--red-dark)">${escapeHtml(w.coin.name)} is ${(w.pct*100).toFixed(1)}% of your combined holdings</div>
-        <div class="alert-sub" style="color:var(--red-dark)">Exceeds the ~10% single-coin concentration cap (outside BTC/ETH)</div>
-      </div></div>`;
-    });
-
-    // Rebalance-kind portfolio(s) get their own read-only allocation + bearish
-    // ladder summary here too, so "how's my rebalance portfolio doing" is
-    // answerable without switching the selector — actions (Allocate/Rebalance)
-    // still require selecting that portfolio specifically, since they need to
-    // write trades against its properly-scoped data.
-    combined.perPortfolio.filter(p=>p.portfolio.kind==='rebalance').forEach(rp=>{
-      const tierStats=calcTierStatsGeneric(rp.tiers,rp.coins,0);
-      const drifted=tierStats.filter(t=>Math.abs(t.driftPP)>=5);
-      drifted.forEach(t=>{
-        html+=`<div class="alert-box warn"><span>⚠️</span><div style="font-size:0.76rem;color:var(--amber-dark)"><b>${escapeHtml(rp.portfolio.name)} · ${escapeHtml(t.name)}</b> is ${Math.abs(t.driftPP).toFixed(1)}pp ${t.driftPP>0?'above':'below'} target</div></div>`;
-      });
-      html+=`<div class="card">
-        <div class="card-title">${escapeHtml(rp.portfolio.name)} — allocation vs target</div>
-        ${tierStats.map(t=>{
-          const barColor=Math.abs(t.driftPP)>=5?'var(--amber)':'var(--teal)';
-          const fillPct=Math.min(100,t.actualPct*100*2);
-          return`<div class="drift-row">
-            <div class="drift-head"><span style="font-weight:500">${escapeHtml(t.name)}</span><span style="font-weight:600;color:${Math.abs(t.driftPP)>=5?'var(--amber-dark)':'var(--ink2)'}">${fmtPct(t.actualPct)} / ${fmtPct(t.targetPct)}</span></div>
-            <div class="drift-bar-track"><div class="drift-bar-fill" style="width:${fillPct}%;background:${barColor}"></div><div class="drift-marker" style="left:${Math.min(100,t.targetPct*100*2)}%"></div></div>
-          </div>`;
-        }).join('')}
-      </div>`;
-
-      html+=bandCardHtml(rp.portfolio,rp.coins,true);
-    });
 
     // Top Gainers / Top Losers across everything combined
     const withChange=combined.allCoins.filter(c=>priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
