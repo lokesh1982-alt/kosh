@@ -429,6 +429,24 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 </div>
 
 <!-- MANUAL TRADE MODAL -->
+<div class="modal-overlay" id="ladder-modal">
+  <div class="modal">
+    <div class="modal-title" id="ladder-modal-title">Ladder levels</div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45" id="ladder-modal-note"></div>
+    <div class="form-group"><label class="form-label">Bearish levels: % fall from the high (deploy the reserve)</label>
+      <div style="display:flex;gap:8px"><input class="form-input" type="number" id="lad-b1" step="0.5" min="1" max="99"/><input class="form-input" type="number" id="lad-b2" step="0.5" min="1" max="99"/><input class="form-input" type="number" id="lad-b3" step="0.5" min="1" max="99"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Bullish levels: % rise from the low (take profit)</label>
+      <div style="display:flex;gap:8px"><input class="form-input" type="number" id="lad-u1" step="0.5" min="1"/><input class="form-input" type="number" id="lad-u2" step="0.5" min="1"/><input class="form-input" type="number" id="lad-u3" step="0.5" min="1"/></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('ladder-modal')">Cancel</button>
+      <button class="btn-outline" style="flex:1" onclick="resetLadderInputs()">Reset</button>
+      <button class="btn-primary" style="flex:1" onclick="saveLadder()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="past-trade-modal">
   <div class="modal">
     <div class="modal-title">Add a past trade to the Journal</div>
@@ -659,6 +677,7 @@ async function onAuthed(user){
   await loadAllData();
   await fetchLivePrices();
   fetchBtcHigh(); // don't block initial render on this
+  if(portfolios.some(p=>isStockKind(p.kind)))fetchUsMarket();
   if(displayCurrency!=='USD'){
     // Fire-and-forget: re-render once rates arrive rather than blocking the
     // whole app open on this — fmtDisplay() shows a clear fallback in the
@@ -821,7 +840,97 @@ async function fetchFinnhubQuote(symbol){
   }
 }
 
-let btc90dHigh=null;
+let btc90dHigh=null,btc90dLow=null,btcNow=null,usMarket=null,usMarketErr=null,usMarketAt=0;
+const ladderStore={}; // portfolio id -> {bear:[3],bull:[3]}
+const LADDER_DEFAULTS={crypto:{bear:[20,35,50],bull:[25,50,100]},stocks:{bear:[10,20,30],bull:[20,35,50]}};
+function getLadderCfg(p){
+  const d=LADDER_DEFAULTS[isStockKind(p.kind)?'stocks':'crypto'];
+  let raw=ladderStore[p.id];
+  if(!raw){try{raw=JSON.parse(localStorage.getItem('kosh-ladder-'+p.id)||'null');}catch(e){raw=null;}}
+  const ok=a=>Array.isArray(a)&&a.length===3&&a.every(x=>typeof x==='number'&&x>0)&&a[0]<a[1]&&a[1]<a[2];
+  return {bear:raw&&ok(raw.bear)?raw.bear:d.bear,bull:raw&&ok(raw.bull)?raw.bull:d.bull};
+}
+function ladderMarket(stocks){
+  if(stocks)return {price:usMarket?usMarket.price:null,high:usMarket?usMarket.high:null,low:usMarket?usMarket.low:null};
+  const px=livePrices['bitcoin']!=null?livePrices['bitcoin']:btcNow;
+  return {price:px,high:btc90dHigh,low:btc90dLow};
+}
+function topWinners(list){
+  return list.filter(c=>!/^(USD|USDT|USDC|DAI|FDUSD|TUSD)$/i.test(c.ticker||'')&&c.avg_cost_usd>0&&(c.units_held||0)>0&&livePrices[c.coingecko_id]!=null)
+    .map(c=>({t:c.ticker,g:(livePrices[c.coingecko_id]/c.avg_cost_usd-1)*100})).filter(x=>x.g>0).sort((a,b)=>b.g-a.g).slice(0,3);
+}
+function ladderCardHtml(p,coinList){
+  const stocks=isStockKind(p.kind),cfg=getLadderCfg(p),m=ladderMarket(stocks);
+  const period=stocks?'52-week':'90-day';
+  const gauge=stocks?'the S&amp;P 500 (via '+((usMarket&&usMarket.symbol)||'SPY')+')':'Bitcoin';
+  const reserve=stocks?'USD reserve':'stablecoin reserve';
+  const down=(m.price!=null&&m.high>0)?Math.max(0,(m.high-m.price)/m.high*100):null;
+  const up=(m.price!=null&&m.low>0)?Math.max(0,(m.price-m.low)/m.low*100):null;
+  const bar=(title,val,levels,sign,fill)=>{
+    const max=levels[2],pos=val!=null?Math.min(100,val/max*100):0;
+    const marks=levels.map(l=>`<div style="position:absolute;left:${l/max*100}%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4)${l===max?';transform:translateX(-2px)':''}"></div>`).join('');
+    const labels=levels.map((l,i)=>`<span style="position:absolute;left:${l/max*100}%;transform:translateX(${i===2?'-100%':'-50%'})">${sign}${l}%</span>`).join('');
+    const now=val!=null?`Now: ${sign}${val.toFixed(1)}%`:(stocks&&usMarketErr&&!usMarket?'Market data unavailable':'loading...');
+    return `<div style="margin-top:14px"><div style="display:flex;justify-content:space-between;font-size:0.72rem;margin-bottom:8px"><span style="font-weight:600">${title}</span><span style="opacity:.75">${now}</span></div><div style="position:relative;height:6px;background:rgba(255,255,255,0.12);border-radius:3px;margin-bottom:8px"><div style="position:absolute;left:0;top:0;height:6px;width:${pos}%;background:${fill};border-radius:3px"></div>${marks}</div><div style="position:relative;height:14px;font-size:0.64rem;opacity:0.7">${labels}</div></div>`;
+  };
+  let msgs='';
+  const hitDown=down!=null?cfg.bear.filter(l=>down>=l):[],hitUp=up!=null?cfg.bull.filter(l=>up>=l):[];
+  if(hitDown.length)msgs+=`<div style="margin-top:10px;font-size:0.7rem;color:#F4A6A6">⚠️ ${hitDown.map(l=>'-'+l+'%').join(', ')} level${hitDown.length===1?'':'s'} reached — consider deploying the ${reserve}</div>`;
+  if(hitUp.length){
+    const w=topWinners(coinList);
+    msgs+=`<div style="margin-top:10px;font-size:0.7rem;color:#9BE3B0">🎯 ${hitUp.map(l=>'+'+l+'%').join(', ')} level${hitUp.length===1?'':'s'} reached — consider trimming winners and rebuilding the ${reserve}${w.length?'<div style="opacity:.85;margin-top:3px">Biggest gains: '+w.map(x=>escapeHtml(x.t)+' +'+x.g.toFixed(0)+'%').join(', ')+'</div>':''}</div>`;
+  }
+  return `<div style="background:var(--ink);border-radius:14px;padding:16px;color:#F1F3F5;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:0.78rem;font-weight:600">${escapeHtml(p.name)}: deployment ladders</div><button class="link-btn" style="color:#8ED9D2" onclick="openLadderModal('${p.id}')">Edit levels</button></div><div style="font-size:0.66rem;opacity:.6;margin-top:2px">Measured against ${gauge}: its ${period} high and low</div>${bar('Bearish: falls from the high',down,cfg.bear,'-','#17B6A7')}${bar('Bullish: rises from the low',up,cfg.bull,'+','#7BD88F')}${msgs}</div>`;
+}
+// US market gauge for the stock ladders. Finnhub's free plan gives the 52-week
+// high and low (basic financials) but not historical candles.
+async function fetchUsMarket(force){
+  if(!force&&usMarket&&Date.now()-usMarketAt<1800000)return;
+  for(const sym of ['SPY','VOO','IVV']){
+    try{
+      const [q,res]=await Promise.all([fetchFinnhubQuote(sym),fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${sym}&metric=all&token=${FINNHUB_API_KEY}`)]);
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const m=(await res.json()).metric||{},hi=m['52WeekHigh'],lo=m['52WeekLow'];
+      if(!(hi>0)||!(lo>0))throw new Error('no 52-week range returned');
+      usMarket={symbol:sym,price:q.price,high:Math.max(hi,q.price),low:Math.min(lo,q.price)};
+      usMarketErr=null;usMarketAt=Date.now();renderDashboard();return;
+    }catch(e){console.warn('US market data via',sym,'failed:',e.message||e);usMarketErr=e.message||String(e);}
+  }
+}
+let ladderEditId=null;
+function ladderInputs(cfg){['1','2','3'].forEach((n,i)=>{document.getElementById('lad-b'+n).value=cfg.bear[i];document.getElementById('lad-u'+n).value=cfg.bull[i];});}
+function openLadderModal(pid){
+  const p=portfolios.find(x=>x.id===pid);if(!p)return;
+  ladderEditId=pid;
+  document.getElementById('ladder-modal-title').textContent=p.name+': ladder levels';
+  const st=isStockKind(p.kind);
+  document.getElementById('ladder-modal-note').textContent=st
+    ?'Measured against the S&P 500: bearish is the fall from its 52-week high, bullish is the rise from its 52-week low. Three levels each, smallest first.'
+    :'Measured against Bitcoin: bearish is the fall from its 90-day high, bullish is the rise from its 90-day low. Three levels each, smallest first.';
+  ladderInputs(getLadderCfg(p));
+  openModal('ladder-modal');
+}
+function resetLadderInputs(){
+  const p=portfolios.find(x=>x.id===ladderEditId);if(!p)return;
+  ladderInputs(LADDER_DEFAULTS[isStockKind(p.kind)?'stocks':'crypto']);
+}
+async function saveLadder(){
+  const pid=ladderEditId;if(!pid)return;
+  const rd=pre=>['1','2','3'].map(n=>parseFloat(document.getElementById('lad-'+pre+n).value));
+  const bear=rd('b'),bull=rd('u');
+  const good=a=>a.every(x=>isFinite(x)&&x>0)&&a[0]<a[1]&&a[1]<a[2];
+  if(!good(bear)||!good(bull)||bear[2]>=100){showToast('Enter three levels for each ladder, smallest first. Bearish levels must be below 100.');return;}
+  const ladder={bear,bull};
+  ladderStore[pid]=ladder;
+  try{localStorage.setItem('kosh-ladder-'+pid,JSON.stringify(ladder));}catch(e){}
+  const ex=await sb.from('kosh_settings').select('id').eq('portfolio_id',pid).maybeSingle();
+  const r=ex.data
+    ?await sb.from('kosh_settings').update({ladder}).eq('id',ex.data.id)
+    :await sb.from('kosh_settings').insert({user_id:currentUser.id,portfolio_id:pid,total_capital:0,ladder});
+  closeModal('ladder-modal');
+  renderDashboard();
+  showToast(r.error?'Saved on this device only ('+r.error.message+'). Run migration-ladder.sql to sync across devices.':'Ladder levels saved ✅');
+}
 let trades=[];
 
 async function loadPortfolios(){
@@ -850,6 +959,7 @@ async function loadAllData(){
   ]);
   tiers=tiersRes.data||[];
   settings=settingsRes.data||{total_capital:0};
+  if(settings.ladder)ladderStore[currentPortfolioId]=settings.ladder;
   const tierIds=tiers.map(t=>t.id);
   const coinsRes=tierIds.length?await sb.from('coins').select('*').in('tier_id',tierIds).order('sort_order'):{data:[]};
   coins=coinsRes.data||[];
@@ -953,7 +1063,8 @@ async function fetchBtcHigh(){
     const res=await fetch('https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90');
     if(!res.ok)throw new Error('bad response');
     const data=await res.json();
-    btc90dHigh=Math.max(...data.prices.map(p=>p[1]));
+    const px=data.prices.map(p=>p[1]);
+    btc90dHigh=Math.max(...px);btc90dLow=Math.min(...px);btcNow=px[px.length-1];
     renderDashboard();
   }catch(e){console.error('btc high fetch failed',e);}
 }
@@ -961,6 +1072,7 @@ async function refreshPrices(){
   showToast('Refreshing prices...');
   await fetchLivePrices();
   await fetchBtcHigh();
+  if(portfolios.some(p=>isStockKind(p.kind)))await fetchUsMarket(true);
   renderAll();
   showToast('Prices updated ✅');
 }
@@ -1473,10 +1585,11 @@ async function computeCombinedDashboardData(){
   const cryptoPortfolioIds=cryptoPortfolios.map(p=>p.id);
   const[tradesRes,settingsRes]=await Promise.all([
     cryptoPortfolioIds.length?sb.from('trades').select('realized_pnl').eq('user_id',currentUser.id).in('portfolio_id',cryptoPortfolioIds):Promise.resolve({data:[]}),
-    cryptoPortfolioIds.length?sb.from('kosh_settings').select('total_capital').in('portfolio_id',cryptoPortfolioIds):Promise.resolve({data:[]})
+    sb.from('kosh_settings').select('*')
   ]);
   const combinedRealized=(tradesRes.data||[]).reduce((s,t)=>s+(t.realized_pnl||0),0);
-  const totalCapital=(settingsRes.data||[]).reduce((s,r)=>s+(r.total_capital||0),0);
+  (settingsRes.data||[]).forEach(r=>{if(r.ladder)ladderStore[r.portfolio_id]=r.ladder;});
+  const totalCapital=(settingsRes.data||[]).filter(r=>cryptoPortfolioIds.includes(r.portfolio_id)).reduce((s,r)=>s+(r.total_capital||0),0);
 
   let stockUnrealized=0,stockPricedCount=0;
   stockCoins.forEach(c=>{
@@ -1567,6 +1680,7 @@ async function renderDashboard(){
             <div><div style="font-size:10px;color:var(--ink3)">Unrealized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${combined.stockPricedCount?(combined.stockUnrealized>=0?'var(--green)':'var(--red)'):'var(--ink3)'}">${combined.stockPricedCount?(combined.stockUnrealized>=0?'+':'')+fmtUsd(combined.stockUnrealized):'—'}</div></div>
           </div>
         </div>`;
+        html+=ladderCardHtml(sp.portfolio,sp.coins);
       });
     }
 
@@ -1603,21 +1717,7 @@ async function renderDashboard(){
         }).join('')}
       </div>`;
 
-      const ladder=calcBearishLadderGeneric(rp.tiers,rp.coins);
-      const dd=ladder.drawdownPct!=null?Math.max(0,ladder.drawdownPct):0;
-      const ddPos=Math.min(100,(dd/50)*100);
-      html+=`<div style="background:var(--ink);border-radius:14px;padding:16px;color:#F1F3F5">
-        <div style="font-size:0.78rem;font-weight:600;margin-bottom:10px">${escapeHtml(rp.portfolio.name)} — bearish deployment ladder</div>
-        <div style="position:relative;height:6px;background:rgba(255,255,255,0.12);border-radius:3px;margin-bottom:8px">
-          <div style="position:absolute;left:0;top:0;height:6px;width:${ddPos}%;background:#17B6A7;border-radius:3px"></div>
-          <div style="position:absolute;left:40%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4)"></div>
-          <div style="position:absolute;left:70%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4)"></div>
-          <div style="position:absolute;left:100%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4);transform:translateX(-2px)"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.64rem;opacity:0.7">
-          <span>Now: ${ladder.drawdownPct!=null?'-'+dd.toFixed(1)+'%':'loading...'}</span><span>-20%</span><span>-35%</span><span>-50%</span>
-        </div>
-      </div>`;
+      html+=ladderCardHtml(rp.portfolio,rp.coins);
     });
 
     // Top Gainers / Top Losers across everything combined
@@ -1772,22 +1872,8 @@ async function renderDashboard(){
     if(driftedTiers.length){
       html+=`<button class="btn-dark" style="width:100%;margin-bottom:14px" onclick="openRebalanceModal()">⚖️ Propose Rebalance (${driftedTiers.length} tier${driftedTiers.length===1?'':'s'} off target)</button>`;
     }
-    if(isCryptoRebalance){
-      const dd=ladder.drawdownPct!=null?Math.max(0,ladder.drawdownPct):0;
-      const ddPos=Math.min(100,(dd/50)*100);
-      html+=`<div style="background:var(--ink);border-radius:14px;padding:16px;color:#F1F3F5">
-        <div style="font-size:0.78rem;font-weight:600;margin-bottom:10px">Bearish deployment ladder</div>
-        <div style="position:relative;height:6px;background:rgba(255,255,255,0.12);border-radius:3px;margin-bottom:8px">
-          <div style="position:absolute;left:0;top:0;height:6px;width:${ddPos}%;background:#17B6A7;border-radius:3px"></div>
-          <div style="position:absolute;left:40%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4)"></div>
-          <div style="position:absolute;left:70%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4)"></div>
-          <div style="position:absolute;left:100%;top:-3px;width:2px;height:12px;background:rgba(255,255,255,0.4);transform:translateX(-2px)"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.64rem;opacity:0.7">
-          <span>Now: ${ladder.drawdownPct!=null?'-'+dd.toFixed(1)+'%':'loading...'}</span><span>-20%</span><span>-35%</span><span>-50%</span>
-        </div>
-        ${ladder.triggers.some(tr=>tr.hit)?`<div style="margin-top:10px;font-size:0.7rem;color:#F4A6A6">⚠️ ${ladder.triggers.filter(tr=>tr.hit).map(tr=>'-'+tr.threshold+'%').join(', ')} trigger${ladder.triggers.filter(tr=>tr.hit).length===1?'':'s'} hit — consider deploying stablecoin reserve</div>`:''}
-      </div>`;
+    if(isCryptoRebalance||isStockKind(activePortfolio?.kind)){
+      html+=ladderCardHtml(activePortfolio,coins);
     }
   }
 
@@ -2353,15 +2439,46 @@ async function confirmProposal(idx){
 // USD→INR rates via Frankfurter (free, no key, ECB-sourced, supports historical
 // lookups) — cached by date so repeated lookups for the same day don't refetch.
 let inrRateCache={};
+// USD->INR rate for a given day. The Journal's INR columns depend on this, and
+// the previous single source (Frankfurter) was failing in the browser, leaving
+// every INR column empty. Sources are tried in order until one answers; the
+// result is remembered on this device so each date is only ever looked up once.
 async function getHistoricalInrRate(dateStr){
   if(inrRateCache[dateStr]!=null)return inrRateCache[dateStr];
   try{
-    const res=await fetch(`https://api.frankfurter.app/${dateStr}?from=USD&to=INR`);
+    const saved=JSON.parse(localStorage.getItem('kosh-inr-rates')||'{}');
+    if(saved[dateStr]>0){inrRateCache[dateStr]=saved[dateStr];return saved[dateStr];}
+  }catch(e){}
+  const ok=r=>typeof r==='number'&&r>10&&r<500;
+  const get=async(url,pick)=>{
+    const res=await fetch(url);
     if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const rate=data.rates?.INR;
-    if(rate){inrRateCache[dateStr]=rate;return rate;}
-  }catch(e){console.error('INR rate fetch failed for',dateStr,e);}
+    const v=pick(await res.json());
+    if(!ok(v))throw new Error('no usable rate');
+    return v;
+  };
+  const sources=[
+    ()=>get(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${dateStr}/v1/currencies/usd.json`,d=>d.usd&&d.usd.inr),
+    ()=>get(`https://${dateStr}.currency-api.pages.dev/v1/currencies/usd.json`,d=>d.usd&&d.usd.inr),
+    ()=>get(`https://api.frankfurter.dev/v1/${dateStr}?base=USD&symbols=INR`,d=>d.rates&&d.rates.INR),
+    ()=>get(`https://api.frankfurter.app/${dateStr}?from=USD&to=INR`,d=>d.rates&&d.rates.INR)
+  ];
+  // Very recent dates may not be published anywhere yet; today's live rate is close enough.
+  const ageDays=(Date.now()-new Date(dateStr+'T12:00:00Z').getTime())/86400000;
+  if(ageDays<3)sources.push(()=>get('https://open.er-api.com/v6/latest/USD',d=>d.rates&&d.rates.INR));
+  for(const src of sources){
+    try{
+      const rate=await src();
+      inrRateCache[dateStr]=rate;
+      try{
+        const saved=JSON.parse(localStorage.getItem('kosh-inr-rates')||'{}');
+        saved[dateStr]=rate;
+        localStorage.setItem('kosh-inr-rates',JSON.stringify(saved));
+      }catch(e){}
+      return rate;
+    }catch(e){console.warn('INR rate source failed for',dateStr,e.message||e);}
+  }
+  console.error('INR rate: every source failed for',dateStr);
   return null;
 }
 
@@ -2372,6 +2489,7 @@ async function logTrade(row){
   const r=await sb.from('trades').insert(row);
   if(r.error){console.error('Journal insert failed',r.error);tradeLogErrors.push(r.error.message);}
 }
+
 async function executeTrade(coinId,action,units,pricePerUnit,notes){
   const coin=coins.find(c=>c.id===coinId);
   if(!coin)return;
