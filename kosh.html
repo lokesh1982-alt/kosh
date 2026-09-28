@@ -2563,6 +2563,10 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
   // (USDT for crypto, USD for US-Stocks) — buying spends it, selling receives
   // it, same as a real exchange/brokerage cash balance.
   const reserveTicker=reserveTickerFor(currentPortfolio()?.kind);
+  // Stock portfolios: the reserve leg (USD) is just cash moving to/from a
+  // purchase, not a separate "trade" — don't clutter the Journal with it.
+  // Crypto portfolios keep both legs (USDT movement is still worth logging there).
+  const logReserveLeg=!isStockKind(currentPortfolio()?.kind);
   if((coin.ticker||'').toUpperCase()!==reserveTicker){
     let usdtCoin=coins.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
     // Sale proceeds used to vanish silently when the portfolio had no USD/USDT
@@ -2579,7 +2583,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         const oldUsdtCostTotal=(usdtCoin.units_held||0)*(usdtCoin.avg_cost_usd||0);
         const newUsdtAvgCost=newUsdtUnits>0?(oldUsdtCostTotal+amountUsd)/newUsdtUnits:usdtPrice;
         await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:newUsdtAvgCost}).eq('id',usdtCoin.id);
-        await logTrade({
+        if(logReserveLeg)await logTrade({
           user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'buy',units:usdtUnitsMoved,
           price_per_unit:usdtPrice,total_usd:amountUsd,
           realized_pnl:null,inr_rate:inrRate,notes:'Proceeds from selling '+coin.ticker
@@ -2592,7 +2596,7 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
         const newUsdtUnits=(usdtCoin.units_held||0)-actualUsdtSpent;
         const usdtRealizedPnl=usdtCoin.avg_cost_usd!=null?(usdtPrice-usdtCoin.avg_cost_usd)*actualUsdtSpent:null;
         await sb.from('coins').update({units_held:newUsdtUnits,avg_cost_usd:usdtCoin.avg_cost_usd}).eq('id',usdtCoin.id);
-        await logTrade({
+        if(logReserveLeg)await logTrade({
           user_id:currentUser.id,portfolio_id:currentPortfolioId,coin_id:usdtCoin.id,coin_name:usdtCoin.name,coin_ticker:usdtCoin.ticker,action:'sell',units:actualUsdtSpent,
           price_per_unit:usdtPrice,total_usd:actualUsdtSpent*usdtPrice,
           realized_pnl:usdtRealizedPnl,inr_rate:inrRate,notes:'Spent to buy '+coin.ticker
