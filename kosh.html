@@ -2215,12 +2215,11 @@ function renderHoldings(){
 
   if(isSpot){
     // Flat list, P&L-focused — target %/drift aren't meaningful for spot trading
-    html+='<div class="card">';
-    coins.forEach(c=>{
+    const spotRowHtml=c=>{
       const stats=calcCoinStats(c);
       const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
       const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
-      html+=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      return`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
         <div class="coin-row" style="border:none;padding:0 0 8px">
           <div>
             <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
@@ -2237,8 +2236,25 @@ function renderHoldings(){
           <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
         </div>
       </div>`;
-    });
+    };
+    // A coin sold down to (effectively) zero is a closed position — still
+    // kept in the database for its cost history, but tucked away instead of
+    // cluttering the list of what you actually hold right now.
+    const openCoins=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+    const closedCoins=coins.filter(c=>Math.abs(c.units_held||0)<=1e-8);
+    html+='<div class="card">';
+    if(openCoins.length){
+      html+=openCoins.map(spotRowHtml).join('');
+    } else {
+      html+=`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`;
+    }
     html+='</div>';
+    if(closedCoins.length){
+      html+=`<details class="card" style="padding:0">
+        <summary style="padding:16px;cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--ink3)">Closed positions (${closedCoins.length})</summary>
+        <div style="padding:0 16px 8px">${closedCoins.map(spotRowHtml).join('')}</div>
+      </details>`;
+    }
     el.innerHTML=html;
     return;
   }
