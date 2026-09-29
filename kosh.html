@@ -565,11 +565,18 @@ try{
 // server-to-server and hands the JSON back with CORS allowed. This calls it
 // the same way api.coingecko.com was called directly before.
 const CG_PROXY_URL=SUPABASE_URL+'/functions/v1/cg-proxy';
+// The Edge Functions gateway checks the apikey/Authorization header against
+// the PROJECT'S LEGACY (JWT-format) anon key — the newer "publishable key"
+// format (SUPABASE_ANON_KEY above) isn't accepted there yet, which is why
+// this needed its own key even though the main Supabase client works fine
+// with the publishable key. This is a public, read-only anon key (same kind
+// as the publishable key, just the older format) — safe to ship in the page.
+const CG_PROXY_AUTH_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVheXplcWh1ZWdkbnVkenp4a3N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwMTUxMjcsImV4cCI6MjEwNTU5MTEyN30.oW8ipE6Nw7B8xghujy2jAFjrhAqdeACEkQVHv1xyWU8';
 async function cgFetch(path,params){
   const qs=new URLSearchParams(params||{});
   qs.set('path',path);
   return fetch(`${CG_PROXY_URL}?${qs.toString()}`,{
-    headers:{'Authorization':'Bearer '+SUPABASE_ANON_KEY,'apikey':SUPABASE_ANON_KEY}
+    headers:{'Authorization':'Bearer '+CG_PROXY_AUTH_KEY,'apikey':CG_PROXY_AUTH_KEY}
   });
 }
 let currentUser=null;
