@@ -1043,11 +1043,22 @@ async function saveNewPortfolio(){
 }
 
 // Binance's public ticker API needs no key and has always allowed browser
+// If a price source fails once (blocked, down, or unreachable on this
+// network), don't hammer it again on every render — that's what was making
+// the app feel "very slow": each dashboard render re-tried both CoinGecko
+// AND Binance from scratch, and if both are unreachable that's 2 failed
+// round-trips repeated on every single screen. After one failure this
+// session, skip that source for a few minutes instead.
+const _priceSourceCooldown={};
+function sourceIsCoolingDown(name){return(_priceSourceCooldown[name]||0)>Date.now();}
+function markSourceCooldown(name,ms=5*60*1000){_priceSourceCooldown[name]=Date.now()+ms;}
+
 // (CORS) requests, which is why it's the fallback whenever CoinGecko's public
 // API blocks or rate-limits us (as it started doing, without warning, on
 // 2026-09-29 — see the "blocked by CORS policy" console errors). Only fills
 // in whatever's still missing after the CoinGecko attempt, keyed by ticker.
 async function fetchBinancePrices(coinList){
+  if(sourceIsCoolingDown('binance'))return;
   const wanted=coinList.filter(c=>{
     const t=(c.ticker||'').toUpperCase();
     return t&&t!=='USDT'&&t!=='USD'&&livePrices[c.coingecko_id]==null;
@@ -1067,7 +1078,7 @@ async function fetchBinancePrices(coinList){
         priceChange24h[c.coingecko_id]=parseFloat(d.priceChangePercent);
       }
     });
-  }catch(e){console.error('Binance fallback price fetch failed',e);}
+  }catch(e){console.error('Binance fallback price fetch failed',e);markSourceCooldown('binance');}
 }
 // Shared by fetchLivePrices and the Combined-portfolios view: CoinGecko first
 // (best data — includes 24h change for every id in one call), then Binance
@@ -1078,19 +1089,22 @@ async function fetchCryptoPricesForCoins(coinList){
   if(usdtCoin){livePrices[usdtCoin.coingecko_id]=1;priceChange24h[usdtCoin.coingecko_id]=0;} // reserve stablecoin, always $1 regardless of API state
   const ids=[...new Set(coinList.map(c=>c.coingecko_id).filter(Boolean))];
   if(!ids.length)return;
-  try{
-    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=usd&include_24hr_change=true`);
-    if(!res.ok)throw new Error('bad response');
-    const data=await res.json();
-    ids.forEach(id=>{
-      if(data[id]){
-        livePrices[id]=data[id].usd;
-        priceChange24h[id]=data[id].usd_24h_change;
-      }
-    });
-  }catch(e){console.error('CoinGecko price fetch failed, falling back to Binance',e);}
+  if(!sourceIsCoolingDown('coingecko')){
+    try{
+      const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=usd&include_24hr_change=true`);
+      if(!res.ok)throw new Error('bad response');
+      const data=await res.json();
+      ids.forEach(id=>{
+        if(data[id]){
+          livePrices[id]=data[id].usd;
+          priceChange24h[id]=data[id].usd_24h_change;
+        }
+      });
+    }catch(e){console.error('CoinGecko price fetch failed, falling back to Binance',e);markSourceCooldown('coingecko');}
+  }
   await fetchBinancePrices(coinList);
 }
+let _cryptoSourcesDeadToastShown=false;
 async function fetchLivePrices(){
   const cp=currentPortfolio();
   if(cp&&isStockKind(cp.kind)){
@@ -1098,6 +1112,10 @@ async function fetchLivePrices(){
     return;
   }
   await fetchCryptoPricesForCoins(coins);
+  if(!_cryptoSourcesDeadToastShown&&sourceIsCoolingDown('coingecko')&&sourceIsCoolingDown('binance')){
+    _cryptoSourcesDeadToastShown=true;
+    showToast('Crypto prices unreachable from this network (CoinGecko + Binance both blocked). Try a different network, or tell Claude and it can add another source.');
+  }
 }
 // Finnhub has no bulk quote endpoint, so this fetches one symbol at a time in
 // parallel — fine for a personal portfolio's coin/stock count. Results land in
@@ -1126,7 +1144,12 @@ async function fetchBtcHigh(){
 }
 async function refreshPrices(){
   showToast('Refreshing prices...');
+  // A manual refresh is a deliberate retry — clear any cooldown so it
+  // actually re-checks sources instead of silently skipping them.
+  Object.keys(_priceSourceCooldown).forEach(k=>{delete _priceSourceCooldown[k];});
+  _cryptoSourcesDeadToastShown=false;
   await fetchLivePrices();
+  await fetchTopCoinsTicker(true);
   renderAll();
   showToast('Prices updated ✅');
 }
@@ -1588,14 +1611,24 @@ function buildDualSparklineSVG(valueVals,capitalVals,width=400,height=70){
 
 // Top-10-by-market-cap ticker (independent of what you actually hold) and the
 // Fear & Greed index — both free, no-key public APIs, fetched once per session.
+// (This used to re-fetch on EVERY dashboard render — every portfolio/tab
+// switch — which is most of what made things feel slow once both sources
+// started failing. Now it tries at most once per session unless a manual
+// refresh is requested.)
 let tickerData=null;
-async function fetchTopCoinsTicker(){
-  try{
-    const res=await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1&price_change_percentage=24h');
-    if(!res.ok)throw new Error('bad response');
-    tickerData=await res.json();
-    return;
-  }catch(e){console.error('CoinGecko ticker fetch failed, falling back to Binance',e);}
+let _tickerFetchAttempted=false;
+async function fetchTopCoinsTicker(force){
+  if(_tickerFetchAttempted&&!force)return;
+  _tickerFetchAttempted=true;
+  if(!sourceIsCoolingDown('coingecko')){
+    try{
+      const res=await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1&price_change_percentage=24h');
+      if(!res.ok)throw new Error('bad response');
+      tickerData=await res.json();
+      return;
+    }catch(e){console.error('CoinGecko ticker fetch failed, falling back to Binance',e);markSourceCooldown('coingecko');}
+  }
+  if(sourceIsCoolingDown('binance'))return;
   // Fallback: a fixed large-cap list via Binance. No live market-cap ranking
   // without a key, but it keeps the ribbon populated when CoinGecko is blocked.
   try{
@@ -1609,7 +1642,7 @@ async function fetchTopCoinsTicker(){
       const d=bySymbol[s+'USDT'];
       return d?{symbol:s.toLowerCase(),current_price:parseFloat(d.lastPrice),price_change_percentage_24h:parseFloat(d.priceChangePercent)}:null;
     }).filter(Boolean);
-  }catch(e){console.error('Binance ticker fallback failed',e);}
+  }catch(e){console.error('Binance ticker fallback failed',e);markSourceCooldown('binance');}
 }
 function renderTickerBar(){
   const el=document.getElementById('ticker-bar');
@@ -2949,24 +2982,26 @@ async function fetchWatchlistData(onProgress){
     return;
   }
   const ids=list.map(w=>w.coingecko_id).join(',');
-  try{
-    const res=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=1h,24h,7d`);
-    if(!res.ok)throw new Error('bad response');
-    const data=await res.json();
-    data.forEach(c=>{
-      watchlistData[c.id]={
-        price:c.current_price,
-        change1h:c.price_change_percentage_1h_in_currency,
-        change24h:c.price_change_percentage_24h_in_currency,
-        change7d:c.price_change_percentage_7d_in_currency
-      };
-    });
-  }catch(e){console.error('watchlist bulk fetch failed, falling back to Binance (price + 24h only — 1h/7d need CoinGecko)',e);}
+  if(!sourceIsCoolingDown('coingecko')){
+    try{
+      const res=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=1h,24h,7d`);
+      if(!res.ok)throw new Error('bad response');
+      const data=await res.json();
+      data.forEach(c=>{
+        watchlistData[c.id]={
+          price:c.current_price,
+          change1h:c.price_change_percentage_1h_in_currency,
+          change24h:c.price_change_percentage_24h_in_currency,
+          change7d:c.price_change_percentage_7d_in_currency
+        };
+      });
+    }catch(e){console.error('watchlist bulk fetch failed, falling back to Binance (price + 24h only — 1h/7d need CoinGecko)',e);markSourceCooldown('coingecko');}
+  }
   // Whatever's still missing (CoinGecko blocked, or just didn't have that id)
   // gets price + 24h change from Binance. 1h/7d aren't available there without
   // per-coin candle calls, so those columns show "—" for a fallback-priced coin.
   const stillMissing=list.filter(w=>watchlistData[w.coingecko_id]==null);
-  if(stillMissing.length){
+  if(stillMissing.length&&!sourceIsCoolingDown('binance')){
     try{
       const symbols=[...new Set(stillMissing.map(w=>(w.ticker||'').toUpperCase()+'USDT'))];
       const res=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`);
@@ -2978,7 +3013,7 @@ async function fetchWatchlistData(onProgress){
         const d=bySymbol[(w.ticker||'').toUpperCase()+'USDT'];
         if(d)watchlistData[w.coingecko_id]={price:parseFloat(d.lastPrice),change1h:null,change24h:parseFloat(d.priceChangePercent),change7d:null};
       });
-    }catch(e){console.error('watchlist Binance fallback failed',e);}
+    }catch(e){console.error('watchlist Binance fallback failed',e);markSourceCooldown('binance');}
   }
   if(onProgress)onProgress(list.length,list.length);
 }
