@@ -572,9 +572,15 @@ const CG_PROXY_URL=SUPABASE_URL+'/functions/v1/cg-proxy';
 // with the publishable key. This is a public, read-only anon key (same kind
 // as the publishable key, just the older format) — safe to ship in the page.
 const CG_PROXY_AUTH_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVheXplcWh1ZWdkbnVkenp4a3N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwMTUxMjcsImV4cCI6MjEwNTU5MTEyN30.oW8ipE6Nw7B8xghujy2jAFjrhAqdeACEkQVHv1xyWU8';
-async function cgFetch(path,params){
+// provider: omit for CoinGecko (default), or 'binance' — the proxy forwards
+// to api.binance.com instead. Binance turned out to be blocked only on the
+// CALLER's network, not reachable-in-general, so calling it from here (the
+// Supabase server side) sidesteps that block entirely — and unlike
+// CoinGecko, it hasn't been throttling cloud/server-origin requests.
+async function cgFetch(path,params,provider){
   const qs=new URLSearchParams(params||{});
   qs.set('path',path);
+  if(provider)qs.set('provider',provider);
   return fetch(`${CG_PROXY_URL}?${qs.toString()}`,{
     headers:{'Authorization':'Bearer '+CG_PROXY_AUTH_KEY,'apikey':CG_PROXY_AUTH_KEY}
   });
@@ -1088,7 +1094,7 @@ async function fetchBinancePrices(coinList){
   if(!wanted.length)return;
   const symbols=[...new Set(wanted.map(c=>(c.ticker||'').toUpperCase()+'USDT'))];
   try{
-    const res=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`);
+    const res=await cgFetch('/api/v3/ticker/24hr',{symbols:JSON.stringify(symbols)},'binance');
     if(!res.ok)throw new Error('bad response');
     const data=await res.json();
     const bySymbol={};
@@ -1102,29 +1108,33 @@ async function fetchBinancePrices(coinList){
     });
   }catch(e){console.error('Binance fallback price fetch failed',e);markSourceCooldown('binance');}
 }
-// Shared by fetchLivePrices and the Combined-portfolios view: CoinGecko first
-// (best data — includes 24h change for every id in one call), then Binance
-// fills in anything still missing. Two independent sources means one outage
-// or CORS block doesn't blank every crypto price at once.
+// Shared by fetchLivePrices and the Combined-portfolios view: Binance (via
+// the proxy) first — it's proven fast and reliable server-to-server even
+// though it's blocked on some client networks directly — then CoinGecko
+// fills in anything Binance doesn't list (newer/smaller coins). CoinGecko has
+// started both blocking direct browser requests AND timing out (504) for a
+// lot of cloud/server-origin traffic, so it's slow to fail and no longer a
+// good first choice; kept as a secondary source since it covers more coins.
 async function fetchCryptoPricesForCoins(coinList){
   const usdtCoin=coinList.find(c=>(c.ticker||'').toUpperCase()==='USDT');
   if(usdtCoin){livePrices[usdtCoin.coingecko_id]=1;priceChange24h[usdtCoin.coingecko_id]=0;} // reserve stablecoin, always $1 regardless of API state
   const ids=[...new Set(coinList.map(c=>c.coingecko_id).filter(Boolean))];
   if(!ids.length)return;
-  if(!sourceIsCoolingDown('coingecko')){
+  await fetchBinancePrices(coinList);
+  const stillMissing=ids.filter(id=>livePrices[id]==null);
+  if(stillMissing.length&&!sourceIsCoolingDown('coingecko')){
     try{
-      const res=await cgFetch('/api/v3/simple/price',{ids:ids.join(','),vs_currencies:'usd',include_24hr_change:'true'});
+      const res=await cgFetch('/api/v3/simple/price',{ids:stillMissing.join(','),vs_currencies:'usd',include_24hr_change:'true'});
       if(!res.ok)throw new Error('bad response');
       const data=await res.json();
-      ids.forEach(id=>{
+      stillMissing.forEach(id=>{
         if(data[id]){
           livePrices[id]=data[id].usd;
           priceChange24h[id]=data[id].usd_24h_change;
         }
       });
-    }catch(e){console.error('CoinGecko price fetch failed, falling back to Binance',e);markSourceCooldown('coingecko');}
+    }catch(e){console.error('CoinGecko price fetch failed (Binance already tried first)',e);markSourceCooldown('coingecko');}
   }
-  await fetchBinancePrices(coinList);
 }
 let _cryptoSourcesDeadToastShown=false;
 async function fetchLivePrices(){
@@ -1655,7 +1665,7 @@ async function fetchTopCoinsTicker(force){
   // without a key, but it keeps the ribbon populated when CoinGecko is blocked.
   try{
     const symbols=['BTC','ETH','BNB','SOL','XRP','DOGE','ADA','TRX','LINK','AVAX'];
-    const res=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols.map(s=>s+'USDT')))}`);
+    const res=await cgFetch('/api/v3/ticker/24hr',{symbols:JSON.stringify(symbols.map(s=>s+'USDT'))},'binance');
     if(!res.ok)throw new Error('bad response');
     const data=await res.json();
     const bySymbol={};
@@ -3026,7 +3036,7 @@ async function fetchWatchlistData(onProgress){
   if(stillMissing.length&&!sourceIsCoolingDown('binance')){
     try{
       const symbols=[...new Set(stillMissing.map(w=>(w.ticker||'').toUpperCase()+'USDT'))];
-      const res=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`);
+      const res=await cgFetch('/api/v3/ticker/24hr',{symbols:JSON.stringify(symbols)},'binance');
       if(!res.ok)throw new Error('bad response');
       const data=await res.json();
       const bySymbol={};
