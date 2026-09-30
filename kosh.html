@@ -1793,6 +1793,7 @@ async function renderDashboard(){
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
     const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
+    console.log('snapshot history:',snapshots.length,'day(s) recorded:',snapshots.map(s=>s.snapshot_date));
     lastTrend={snapshots,totalCapital:combined.totalCapital};
     const gain=combined.combinedTotal-combined.totalCapital;
     const gainPct=combined.totalCapital>0?(gain/combined.totalCapital)*100:0;
