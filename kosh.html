@@ -1505,7 +1505,8 @@ function portfolioPanelHtml(pp,total,palette,idx){
 
 async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
   const today=new Date().toISOString().slice(0,10);
-  const{data:snapshots}=await sb.from('portfolio_snapshots').select('*').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
+  const{data:snapshots,error:selErr}=await sb.from('portfolio_snapshots').select('*').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
+  if(selErr)console.error('snapshot history: failed to load',selErr);
   const list=snapshots||[];
   const todayEntry=list.find(s=>s.snapshot_date===today);
   if(todayEntry){
@@ -1513,17 +1514,18 @@ async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
     if(needsUpdate){
       todayEntry.total_value_usd=combinedTotal;
       todayEntry.capital_at_snapshot=totalCapital;
-      sb.from('portfolio_snapshots').update({total_value_usd:combinedTotal,capital_at_snapshot:totalCapital}).eq('id',todayEntry.id);
+      sb.from('portfolio_snapshots').update({total_value_usd:combinedTotal,capital_at_snapshot:totalCapital}).eq('id',todayEntry.id).then(({error})=>{if(error)console.error('snapshot history: failed to update today',error);});
     }
   } else {
     list.push({snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
-    sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital});
+    sb.from('portfolio_snapshots').insert({user_id:currentUser.id,snapshot_date:today,total_value_usd:combinedTotal,capital_at_snapshot:totalCapital}).then(({error})=>{if(error)console.error('snapshot history: failed to insert today',error);});
   }
-  // Snapshots taken before US-Stocks joined the combined total only held the crypto portfolios,
-  // so the trend starts on the first day this version ran on this device.
-  let from=null;
-  try{from=localStorage.getItem('kosh-combined-from');if(!from){from=today;localStorage.setItem('kosh-combined-from',from);}}catch(e){}
-  return from?list.filter(x=>x.snapshot_date>=from):list;
+  // Previously this filtered out snapshots older than a per-device "first run"
+  // date stored in localStorage — meant to hide pre-US-Stocks history, but it
+  // meant the trend line reset to empty on every new browser/device (e.g.
+  // switching between phone and computer), and could re-hide already-recorded
+  // days. The DB is the single source of truth now, so just return everything.
+  return list;
 }
 
 // ═══════════════════════════════
