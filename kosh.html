@@ -2978,7 +2978,7 @@ function watchlistSelectCoin(ri){
 async function confirmAddWatchlist(){
   if(!_wlSelectedCoin){showToast('Search and select one first.');return;}
   if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id&&(w.kind||'crypto')===watchlistViewMode)){showToast('Already in this watchlist.');closeModal('add-watchlist-modal');return;}
-  if(currentWatchlist().length>=20){showToast('Watchlist is capped at 20 per list.');return;}
+  if(currentWatchlist().length>=30){showToast('Watchlist is capped at 30 per list.');return;}
   const{error}=await sb.from('watchlist').insert({
     user_id:currentUser.id,name:_wlSelectedCoin.name,ticker:_wlSelectedCoin.symbol.toUpperCase(),
     coingecko_id:_wlSelectedCoin.id,kind:watchlistViewMode,sort_order:watchlist.length
