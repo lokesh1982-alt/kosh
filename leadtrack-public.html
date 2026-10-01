@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Trading — Public Track Record</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  :root{color-scheme:dark;}
+  body{margin:0;background:#0B0D10;font-family:'IBM Plex Sans',sans-serif;color:#E7E9EC;}
+  a{color:#4FD1C5;text-decoration:none;}
+  a:hover{color:#7EE8DA;}
+  .num{font-family:'IBM Plex Mono',monospace;}
+  .disp{font-family:'Space Grotesk',sans-serif;}
+  .wrap{width:100%;max-width:1000px;margin:0 auto;min-height:100vh;box-sizing:border-box;padding:0 24px 60px;}
+  .card{background:#13171D;border:1px solid #1E232B;border-radius:16px;padding:24px;}
+  .tile{background:#13171D;border:1px solid #1E232B;border-radius:14px;padding:18px 26px;text-align:center;min-width:140px;}
+  .btn{font-family:'IBM Plex Sans',sans-serif;background:#4FD1C5;border:none;color:#06201C;padding:12px 22px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-block;}
+  .state{text-align:center;padding:100px 20px;color:#8B93A1;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="state">Loading track record…</div>
+</div>
+<script>
+const SUPABASE_URL='https://eayzeqhuegdnudzzxksy.supabase.co';
+const SUPABASE_ANON_KEY='sb_publishable_tgqt8-_nPLz97H-BfV0a4A_L1YtHcWJ';
+
+function fmtDate(d){
+  return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+function buildCurveSVG(points){
+  if(!points||points.length<2)return'<div style="color:#5B6472;font-size:13px;padding:30px 0;text-align:center">Not enough history yet for a chart — check back soon.</div>';
+  const vals=points.map(p=>p.return_pct);
+  const w=1000,h=260,pad=10;
+  let min=Math.min(0,...vals),max=Math.max(0,...vals);
+  if(min===max){min-=1;max+=1;}
+  const range=max-min,stepX=(w-2*pad)/(vals.length-1);
+  const y=v=>pad+(h-2*pad)-((v-min)/range)*(h-2*pad);
+  const pts=vals.map((v,i)=>[pad+i*stepX,y(v)]);
+  const line='M'+pts.map(c=>c.join(',')).join('L');
+  const y0=y(0);
+  const last=vals[vals.length-1],col=last>=0?'#4FD1C5':'#F2A7A7';
+  return`<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:260px;display:block" preserveAspectRatio="none">
+    <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${col}" stop-opacity="0.32"></stop>
+      <stop offset="100%" stop-color="${col}" stop-opacity="0"></stop>
+    </linearGradient></defs>
+    <line x1="0" y1="${y0}" x2="${w}" y2="${y0}" stroke="#2A313C" stroke-width="1" stroke-dasharray="4,4"></line>
+    <path d="${line}L${w-pad},${h}L${pad},${h}Z" fill="url(#fill)"></path>
+    <path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>
+  </svg>`;
+}
+function render(data){
+  const app=document.getElementById('app');
+  if(!data){
+    app.innerHTML=`<div class="state">This track record isn't public (or the link is wrong).</div>`;
+    return;
+  }
+  const curve=data.equity_curve||[];
+  const totalReturn=curve.length?curve[curve.length-1].return_pct:0;
+  const col=totalReturn>=0?'#3DD68C':'#F2A7A7';
+  app.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:26px 0;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#4FD1C5,#60A5FA);display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:700;color:#06201C;font-size:18px;">L</div>
+        <div><div class="disp" style="font-size:17px;font-weight:700;color:#F1F3F5;">Lead Trading</div><div style="font-size:12px;color:#8B93A1;">Binance Spot — live track record</div></div>
+      </div>
+    </div>
+    <div style="text-align:center;padding:30px 0 10px;">
+      <div style="font-size:13px;color:#8B93A1;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px;">Total return${data.since?' since '+fmtDate(data.since):''}</div>
+      <div class="num" style="font-size:64px;font-weight:600;color:${col};line-height:1;">${totalReturn>=0?'+':''}${totalReturn.toFixed(1)}%</div>
+      <div style="font-size:13px;color:#8B93A1;margin-top:14px;">Synced automatically from live Binance trade history.</div>
+    </div>
+    <div style="display:flex;justify-content:center;gap:14px;margin:30px 0;flex-wrap:wrap;">
+      <div class="tile"><div style="font-size:11px;color:#8B93A1;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Win rate</div><div class="num" style="font-size:24px;font-weight:600;color:#F1F3F5;">${data.win_rate!=null?data.win_rate.toFixed(1)+'%':'—'}</div></div>
+      <div class="tile"><div style="font-size:11px;color:#8B93A1;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Closed trades</div><div class="num" style="font-size:24px;font-weight:600;color:#F1F3F5;">${data.trade_count!=null?data.trade_count:'—'}</div></div>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:600;color:#F1F3F5;margin-bottom:16px;">Return over time</div>
+      ${buildCurveSVG(curve)}
+    </div>
+    <div style="text-align:center;font-size:11px;color:#5B6472;margin-top:28px;line-height:1.6;padding:0 20px;">
+      Past performance does not guarantee future results. Copy trading carries risk, including loss of principal. Figures reflect this trader's own account history and are not independently audited.
+    </div>
+  `;
+}
+(async function(){
+  const slug=new URLSearchParams(location.search).get('u');
+  if(!slug){render(null);return;}
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_public_lead_stats`,{
+      method:'POST',
+      headers:{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({p_slug:slug})
+    });
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const rows=await res.json();
+    render(Array.isArray(rows)?rows[0]:rows);
+  }catch(e){
+    console.error('Failed to load public stats',e);
+    document.getElementById('app').innerHTML='<div class="state">Could not load this track record right now. Please try again shortly.</div>';
+  }
+})();
+</script>
+</body>
+</html>

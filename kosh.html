@@ -301,6 +301,30 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Shift a coin (e.g. USDT) from any of your portfolios to another existing one, or a brand-new one.</div>
         <button class="btn-outline" style="width:100%" onclick="openTransferModal()">⇄ Transfer</button>
       </div>
+      <div class="card" id="settings-binance-card">
+        <div class="card-title">Binance sync</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Alpha are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to.</div>
+        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
+        <button class="btn-outline" style="width:100%;margin-bottom:14px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
+        <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Symbol → portfolio map</div>
+        <div id="binance-symbol-map-list" style="margin-bottom:8px"></div>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <input class="form-input" id="bsm-symbol" placeholder="e.g. BTCUSDT" style="flex:1.2"/>
+          <select class="form-select" id="bsm-portfolio" style="flex:1"></select>
+          <button class="btn-outline" onclick="addSymbolMapping()">+ Add</button>
+        </div>
+        <button class="btn-primary" style="width:100%" onclick="syncBinanceNow()">🔄 Sync Binance now</button>
+        <div id="binance-sync-status" style="font-size:0.68rem;color:var(--ink3);margin-top:8px"></div>
+      </div>
+      <div class="card" id="settings-public-card">
+        <div class="card-title">Public page</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Share a no-login page with your % return, win rate and trade count for <b id="public-card-portfolio-name"></b> — never your balance, position sizes, or any other portfolio. Turn this on for Lead Trading, not Alpha.</div>
+        <div class="form-group"><label class="form-label">Public URL slug</label><input class="form-input" id="public-slug" placeholder="e.g. lokesh-leadtrading"/></div>
+        <div class="form-group"><label class="form-label">Starting capital shown publicly (optional)</label><input class="form-input" type="number" id="public-starting-capital" placeholder="Defaults to this portfolio's Total capital above"/></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.78rem;margin:10px 0"><input type="checkbox" id="public-enabled"/> Make this portfolio's public page live</label>
+        <button class="btn-primary" style="width:100%" onclick="savePublicSettings()">Save public page settings</button>
+        <div id="public-link-slot" style="font-size:0.72rem;margin-top:10px;word-break:break-all"></div>
+      </div>
       <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
@@ -823,6 +847,8 @@ function switchTab(name){
     document.getElementById('settings-fund-button').textContent=isStockSettings?'💵 Fund with USD':'💵 Fund with USDT';
     document.getElementById('settings-data-card').style.display=(isSpotSettings||isStockSettings)?'none':'';
     document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
+    renderBinanceSettingsCard();
+    renderPublicSettingsCard();
   }
 }
 function goToDashboard(){switchTab('dashboard');}
@@ -3545,6 +3571,250 @@ async function confirmTransfer(){
   renderAll();
   renderPortfolioSwitcher();
   showToast(`Moved ${amount} ${sourceCoin.ticker} to ${destPortfolio.name} ✅`);
+}
+
+// ═══════════════════════════════
+//  BINANCE SYNC (Lead Trading + Alpha)
+// ═══════════════════════════════
+// Binance's own API has no "lead trading vs personal" concept — a synced
+// account is just one stream of fills per symbol. binance_symbol_map is
+// what recreates the Lead Trading / Alpha split: each mapped symbol's fills
+// are replayed into that portfolio's coins/trades exactly like a manual
+// buy/sell (same weighted-average-cost + realized-P&L logic as
+// executeTrade), except idempotent via binance_trade_id so re-running sync
+// never double-counts a fill.
+const BINANCE_PROXY_URL=SUPABASE_URL+'/functions/v1/binance-proxy';
+let binanceSymbolMap=[];
+async function binanceFetch(action,params){
+  const{data:{session}}=await sb.auth.getSession();
+  if(!session){showToast('Your session expired — please sign in again.');return null;}
+  const qs=new URLSearchParams(params||{});
+  qs.set('action',action);
+  return fetch(`${BINANCE_PROXY_URL}?${qs.toString()}`,{
+    headers:{'Authorization':'Bearer '+session.access_token,'apikey':SUPABASE_ANON_KEY}
+  });
+}
+async function loadBinanceSymbolMap(){
+  const{data}=await sb.from('binance_symbol_map').select('*').order('symbol');
+  binanceSymbolMap=data||[];
+}
+function renderBinanceSettingsCard(){
+  loadBinanceSymbolMap().then(()=>{
+    const list=document.getElementById('binance-symbol-map-list');
+    if(!list)return;
+    list.innerHTML=binanceSymbolMap.length?binanceSymbolMap.map(m=>{
+      const p=portfolios.find(x=>x.id===m.portfolio_id);
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.76rem">
+        <span><b>${escapeHtml(m.symbol)}</b> → ${escapeHtml(p?p.name:'(deleted portfolio)')}</span>
+        <button class="link-btn" style="color:var(--red)" onclick="removeSymbolMapping('${m.id}')">Remove</button>
+      </div>`;
+    }).join(''):'<div style="font-size:0.72rem;color:var(--ink3)">No symbols mapped yet.</div>';
+    const sel=document.getElementById('bsm-portfolio');
+    if(sel)sel.innerHTML=portfolios.filter(p=>!isStockKind(p.kind)).map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  });
+}
+async function addSymbolMapping(){
+  const symbol=document.getElementById('bsm-symbol').value.trim().toUpperCase();
+  const portfolioId=document.getElementById('bsm-portfolio').value;
+  if(!symbol){showToast('Enter a Binance symbol, e.g. BTCUSDT.');return;}
+  if(!portfolioId){showToast('Create Lead Trading / Alpha first (Step 1 above).');return;}
+  showToast('Looking up '+symbol+'…');
+  let baseAsset,quoteAsset;
+  try{
+    const res=await binanceFetch('public',{path:'/api/v3/exchangeInfo',symbol});
+    if(!res||!res.ok)throw new Error('lookup failed');
+    const data=await res.json();
+    const info=(data.symbols||[])[0];
+    if(!info)throw new Error('symbol not found');
+    baseAsset=info.baseAsset;quoteAsset=info.quoteAsset;
+  }catch(e){showToast('Could not find that symbol on Binance. Check the spelling (e.g. BTCUSDT).');return;}
+  const{error}=await sb.from('binance_symbol_map').upsert(
+    {user_id:currentUser.id,symbol,base_asset:baseAsset,quote_asset:quoteAsset,portfolio_id:portfolioId},
+    {onConflict:'user_id,symbol'}
+  );
+  if(error){showToast('Error: '+error.message);return;}
+  document.getElementById('bsm-symbol').value='';
+  renderBinanceSettingsCard();
+  showToast(`${symbol} (${baseAsset}/${quoteAsset}) mapped ✅`);
+}
+async function removeSymbolMapping(id){
+  // Leaves binance_sync_cursor alone — if this symbol gets re-mapped later,
+  // picking up from where it left off (rather than re-pulling full history)
+  // is the right behavior, not a leak.
+  await sb.from('binance_symbol_map').delete().eq('id',id);
+  renderBinanceSettingsCard();
+  showToast('Mapping removed');
+}
+// Step 1 — one-time, destructive: wipes the manually-maintained crypto
+// portfolios (their tiers/coins/trades cascade-delete with them) and creates
+// fresh, empty Lead Trading + Alpha portfolios ready to be symbol-mapped and
+// synced. US-Stocks is never touched.
+async function runBinanceSetup(){
+  const toDelete=portfolios.filter(p=>!isStockKind(p.kind));
+  const names=toDelete.map(p=>p.name).join(', ')||'(none yet)';
+  if(!confirm(`This permanently deletes these portfolios and all their tiers/coins/trade history: ${names}.\n\nIt then creates fresh "Lead Trading" and "Alpha" portfolios, ready to sync from Binance. US-Stocks is not affected.\n\nThis cannot be undone — continue?`))return;
+  showToast('Replacing portfolios…');
+  for(const p of toDelete){
+    const{error}=await sb.from('portfolios').delete().eq('id',p.id);
+    if(error){showToast('Error deleting '+p.name+': '+error.message);return;}
+  }
+  const{data:lead,error:e1}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Lead Trading',kind:'spot',sort_order:0}).select().single();
+  if(e1){showToast('Error creating Lead Trading: '+e1.message);return;}
+  const{data:alpha,error:e2}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Alpha',kind:'spot',sort_order:1}).select().single();
+  if(e2){showToast('Error creating Alpha: '+e2.message);return;}
+  currentPortfolioId=lead.id;
+  dashViewMode=lead.id;
+  localStorage.setItem('kosh-current-portfolio',lead.id);
+  localStorage.setItem('kosh-dash-view',lead.id);
+  await loadAllData();
+  renderPortfolioSwitcher();
+  renderAll();
+  renderBinanceSettingsCard();
+  showToast('Lead Trading + Alpha created — now map your symbols below ✅');
+}
+// Finds/creates the coin for an asset inside a given portfolio, querying the
+// DB directly (not the globally-loaded, current-portfolio-only tiers/coins) —
+// same approach as the Transfer feature's ensureCoinInPortfolio, reused here
+// since sync writes into whichever portfolio a symbol is mapped to, not
+// necessarily the one currently open in the UI.
+// (ensureCoinInPortfolio is defined above, in the Transfer section.)
+async function applySyncedFill(portfolioId,portfolioKind,fill){
+  const{baseAsset,quoteAsset,isBuy,qty,price,quoteQty,commission,commissionAsset,tradeTime,binanceSymbol,binanceTradeId}=fill;
+  const baseCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:baseAsset,ticker:baseAsset,coingecko_id:baseAsset.toLowerCase()});
+  if(!baseCoin)return false;
+  const quoteCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:quoteAsset,ticker:quoteAsset,coingecko_id:quoteAsset.toLowerCase()==='usdt'?'tether':quoteAsset.toLowerCase()});
+  let realizedPnl=null,newBaseUnits,newAvgCost;
+  if(isBuy){
+    newBaseUnits=(baseCoin.units_held||0)+qty;
+    const oldCostTotal=(baseCoin.units_held||0)*(baseCoin.avg_cost_usd||0);
+    newAvgCost=newBaseUnits>0?(oldCostTotal+qty*price)/newBaseUnits:price;
+  } else {
+    newBaseUnits=Math.max(0,(baseCoin.units_held||0)-qty);
+    newAvgCost=baseCoin.avg_cost_usd;
+    realizedPnl=baseCoin.avg_cost_usd!=null?(price-baseCoin.avg_cost_usd)*qty:null;
+  }
+  await sb.from('coins').update({units_held:newBaseUnits,avg_cost_usd:newAvgCost}).eq('id',baseCoin.id);
+  baseCoin.units_held=newBaseUnits;baseCoin.avg_cost_usd=newAvgCost;
+  // Commission paid in the quote asset is netted out of the quote-asset
+  // leg; commission paid in another asset (e.g. BNB) is a small known
+  // simplification — left out rather than guessing its price at trade time.
+  const commissionInQuote=(commissionAsset===quoteAsset)?commission:0;
+  const newQuoteUnits=isBuy
+    ?(quoteCoin.units_held||0)-quoteQty-commissionInQuote
+    :(quoteCoin.units_held||0)+quoteQty-commissionInQuote;
+  await sb.from('coins').update({units_held:newQuoteUnits}).eq('id',quoteCoin.id);
+  quoteCoin.units_held=newQuoteUnits;
+  await logTrade({
+    user_id:currentUser.id,portfolio_id:portfolioId,coin_id:baseCoin.id,coin_name:baseCoin.name,coin_ticker:baseCoin.ticker,
+    action:isBuy?'buy':'sell',units:qty,price_per_unit:price,total_usd:quoteQty,realized_pnl:realizedPnl,
+    inr_rate:null,notes:'Synced from Binance',trade_date:tradeTime,
+    binance_symbol:binanceSymbol,binance_trade_id:binanceTradeId
+  });
+  return true;
+}
+async function syncSymbolMapping(mapping){
+  const{data:cursorRow}=await sb.from('binance_sync_cursor').select('*').eq('user_id',currentUser.id).eq('symbol',mapping.symbol).maybeSingle();
+  let lastId=cursorRow?cursorRow.last_trade_id:0;
+  const portfolio=portfolios.find(p=>p.id===mapping.portfolio_id);
+  if(!portfolio)return 0;
+  let totalSynced=0;
+  for(let page=0;page<50;page++){ // 50×1000 = up to 50,000 fills per symbol per run — generous ceiling against a runaway loop
+    const params={symbol:mapping.symbol};
+    if(lastId>0)params.fromId=String(lastId+1);
+    const res=await binanceFetch('myTrades',params);
+    if(!res){return totalSynced;}
+    if(!res.ok){
+      const errBody=await res.text();
+      showToast(`Binance sync error for ${mapping.symbol}: ${errBody.slice(0,140)}`);
+      return totalSynced;
+    }
+    const fills=await res.json();
+    if(!Array.isArray(fills)||!fills.length)break;
+    for(const f of fills){
+      const ok=await applySyncedFill(mapping.portfolio_id,portfolio.kind,{
+        baseAsset:mapping.base_asset,quoteAsset:mapping.quote_asset,
+        isBuy:!!f.isBuyer,qty:parseFloat(f.qty),price:parseFloat(f.price),quoteQty:parseFloat(f.quoteQty),
+        commission:parseFloat(f.commission||0),commissionAsset:f.commissionAsset,
+        tradeTime:new Date(f.time).toISOString(),binanceSymbol:mapping.symbol,binanceTradeId:f.id
+      });
+      if(ok){totalSynced++;lastId=Math.max(lastId,f.id);}
+    }
+    await sb.from('binance_sync_cursor').upsert(
+      {user_id:currentUser.id,symbol:mapping.symbol,last_trade_id:lastId,last_synced_at:new Date().toISOString()},
+      {onConflict:'user_id,symbol'}
+    );
+    if(fills.length<1000)break; // fewer than a full page = caught up
+    await new Promise(r=>setTimeout(r,300)); // be polite to Binance's rate limits between pages
+  }
+  return totalSynced;
+}
+async function syncBinanceNow(){
+  await loadBinanceSymbolMap();
+  if(!binanceSymbolMap.length){showToast('Map at least one symbol first.');return;}
+  tradeLogErrors=[];
+  const statusEl=document.getElementById('binance-sync-status');
+  let totalNew=0;
+  for(const mapping of binanceSymbolMap){
+    if(statusEl)statusEl.textContent=`Syncing ${mapping.symbol}…`;
+    totalNew+=await syncSymbolMapping(mapping);
+  }
+  // One equity snapshot per affected portfolio, for the equity-curve chart
+  // (private dashboard and, for Lead Trading, the public page).
+  const affectedPortfolioIds=[...new Set(binanceSymbolMap.map(m=>m.portfolio_id))];
+  for(const pid of affectedPortfolioIds){
+    await recordPortfolioEquitySnapshot(pid);
+  }
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  renderBinanceSettingsCard();
+  if(statusEl)statusEl.textContent=`Last synced ${new Date().toLocaleTimeString()} — ${totalNew} new trade${totalNew===1?'':'s'}.`;
+  if(tradeLogErrors.length)showToast(`Synced, but ${tradeLogErrors.length} Journal entr${tradeLogErrors.length===1?'y':'ies'} failed to save: ${tradeLogErrors[0]}`);
+  else showToast(totalNew?`Synced ${totalNew} new trade${totalNew===1?'':'s'} ✅`:'Already up to date ✅');
+}
+async function recordPortfolioEquitySnapshot(portfolioId){
+  const portfolio=portfolios.find(p=>p.id===portfolioId);
+  if(!portfolio)return;
+  const portfolioCoins=portfolioId===currentPortfolioId?coins:await getPortfolioCoins(portfolioId);
+  if(!portfolioCoins.length)return;
+  await fetchCryptoPricesForCoins(portfolioCoins);
+  const value=portfolioCoins.reduce((a,c)=>{const v=livePrices[c.coingecko_id];return a+(v!=null?(c.units_held||0)*v:0);},0);
+  const today=new Date().toISOString().slice(0,10);
+  await sb.from('portfolio_equity_snapshots').upsert(
+    {user_id:currentUser.id,portfolio_id:portfolioId,snapshot_date:today,equity_usd:value},
+    {onConflict:'user_id,portfolio_id,snapshot_date'}
+  );
+}
+function renderPublicSettingsCard(){
+  const cp=currentPortfolio();
+  const nameEl=document.getElementById('public-card-portfolio-name');
+  if(nameEl)nameEl.textContent=cp?cp.name:'this portfolio';
+  document.getElementById('public-slug').value=settings.public_slug||'';
+  document.getElementById('public-starting-capital').value=settings.starting_capital_override||'';
+  document.getElementById('public-enabled').checked=!!settings.public_enabled;
+  const linkSlot=document.getElementById('public-link-slot');
+  if(linkSlot){
+    linkSlot.innerHTML=(settings.public_enabled&&settings.public_slug)
+      ?`Live at: <a href="leadtrack-public.html?u=${encodeURIComponent(settings.public_slug)}" target="_blank">leadtrack-public.html?u=${escapeHtml(settings.public_slug)}</a>`
+      :'';
+  }
+}
+async function savePublicSettings(){
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+  const slug=document.getElementById('public-slug').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'-');
+  const enabled=document.getElementById('public-enabled').checked;
+  const startCapRaw=document.getElementById('public-starting-capital').value;
+  const startCap=startCapRaw?parseFloat(startCapRaw):null;
+  if(enabled&&!slug){showToast('Enter a URL slug before making this live.');return;}
+  const{error}=await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:currentPortfolioId,total_capital:settings.total_capital||0,
+     public_slug:slug||null,public_enabled:enabled,starting_capital_override:startCap,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
+  if(error){showToast('Error: '+error.message+(error.message.includes('unique')?' (that slug is taken — try another)':''));return;}
+  settings.public_slug=slug||null;settings.public_enabled=enabled;settings.starting_capital_override=startCap;
+  renderPublicSettingsCard();
+  showToast('Public page settings saved ✅');
 }
 
 // ═══════════════════════════════
