@@ -306,8 +306,15 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Alpha are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to.</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
         <button class="btn-outline" style="width:100%;margin-bottom:14px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
+        <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Default portfolio for new coins</div>
+        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:8px;line-height:1.4">Every time you sync, any coin you've traded that isn't mapped yet is auto-added here — you don't have to type each symbol. Reassign a coin to Alpha below if it belongs there instead.</div>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <select class="form-select" id="bsm-default-portfolio" style="flex:1"></select>
+          <button class="btn-outline" onclick="saveBinanceDefaultPortfolio()">Save</button>
+        </div>
         <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Symbol → portfolio map</div>
         <div id="binance-symbol-map-list" style="margin-bottom:8px"></div>
+        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:6px">Only needed to map a symbol by hand ahead of time, or move one to a different portfolio:</div>
         <div style="display:flex;gap:6px;margin-bottom:14px">
           <input class="form-input" id="bsm-symbol" placeholder="e.g. BTCUSDT" style="flex:1.2"/>
           <select class="form-select" id="bsm-portfolio" style="flex:1"></select>
@@ -3585,6 +3592,12 @@ async function confirmTransfer(){
 // never double-counts a fill.
 const BINANCE_PROXY_URL=SUPABASE_URL+'/functions/v1/binance-proxy';
 let binanceSymbolMap=[];
+let binanceDefaultPortfolioId=null;
+// Common stablecoin/quote assets tried, in order, when auto-discovering a
+// base asset's pair — skipped as base-asset candidates themselves, since
+// "USDTUSDT" isn't a real symbol.
+const BINANCE_QUOTE_FALLBACKS=['USDT','FDUSD','USDC','BUSD','TUSD'];
+const BINANCE_QUOTE_ASSET_SET=new Set(['USDT','FDUSD','USDC','BUSD','TUSD','DAI']);
 async function binanceFetch(action,params){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){showToast('Your session expired — please sign in again.');return null;}
@@ -3598,20 +3611,45 @@ async function loadBinanceSymbolMap(){
   const{data}=await sb.from('binance_symbol_map').select('*').order('symbol');
   binanceSymbolMap=data||[];
 }
+async function loadBinanceDefaultPortfolio(){
+  const{data}=await sb.from('binance_sync_settings').select('*').eq('user_id',currentUser.id).maybeSingle();
+  binanceDefaultPortfolioId=data?data.default_portfolio_id:null;
+}
+async function saveBinanceDefaultPortfolio(){
+  const val=document.getElementById('bsm-default-portfolio').value;
+  if(!val){showToast('Pick a portfolio first.');return;}
+  const{error}=await sb.from('binance_sync_settings').upsert({user_id:currentUser.id,default_portfolio_id:val},{onConflict:'user_id'});
+  if(error){showToast('Error: '+error.message);return;}
+  binanceDefaultPortfolioId=val;
+  showToast('Default portfolio saved — new coins route here automatically ✅');
+}
 function renderBinanceSettingsCard(){
-  loadBinanceSymbolMap().then(()=>{
+  Promise.all([loadBinanceSymbolMap(),loadBinanceDefaultPortfolio()]).then(()=>{
     const list=document.getElementById('binance-symbol-map-list');
-    if(!list)return;
-    list.innerHTML=binanceSymbolMap.length?binanceSymbolMap.map(m=>{
-      const p=portfolios.find(x=>x.id===m.portfolio_id);
-      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.76rem">
-        <span><b>${escapeHtml(m.symbol)}</b> → ${escapeHtml(p?p.name:'(deleted portfolio)')}</span>
-        <button class="link-btn" style="color:var(--red)" onclick="removeSymbolMapping('${m.id}')">Remove</button>
-      </div>`;
-    }).join(''):'<div style="font-size:0.72rem;color:var(--ink3)">No symbols mapped yet.</div>';
+    const cryptoPortfolios=portfolios.filter(p=>!isStockKind(p.kind));
+    if(list){
+      list.innerHTML=binanceSymbolMap.length?binanceSymbolMap.map(m=>{
+        const options=cryptoPortfolios.map(p=>`<option value="${p.id}"${p.id===m.portfolio_id?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
+        return`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.76rem">
+          <span><b>${escapeHtml(m.symbol)}</b></span>
+          <select class="form-select" style="flex:1;font-size:0.74rem" onchange="reassignSymbolMapping('${m.id}',this.value)">${options}</select>
+          <button class="link-btn" style="color:var(--red)" onclick="removeSymbolMapping('${m.id}')">Remove</button>
+        </div>`;
+      }).join(''):'<div style="font-size:0.72rem;color:var(--ink3)">No symbols mapped yet — sync once your default portfolio is set below, and they\'ll appear here automatically.</div>';
+    }
     const sel=document.getElementById('bsm-portfolio');
-    if(sel)sel.innerHTML=portfolios.filter(p=>!isStockKind(p.kind)).map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    if(sel)sel.innerHTML=cryptoPortfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    const defSel=document.getElementById('bsm-default-portfolio');
+    if(defSel)defSel.innerHTML='<option value="">— choose —</option>'+cryptoPortfolios.map(p=>`<option value="${p.id}"${p.id===binanceDefaultPortfolioId?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
   });
+}
+async function reassignSymbolMapping(id,portfolioId){
+  if(!portfolioId)return;
+  const{error}=await sb.from('binance_symbol_map').update({portfolio_id:portfolioId}).eq('id',id);
+  if(error){showToast('Error: '+error.message);return;}
+  const m=binanceSymbolMap.find(x=>x.id===id);
+  if(m)m.portfolio_id=portfolioId;
+  showToast('Reassigned ✅ — note: trades already synced stay where they landed; only new fills from here on go to the new portfolio.');
 }
 async function addSymbolMapping(){
   const symbol=document.getElementById('bsm-symbol').value.trim().toUpperCase();
@@ -3748,12 +3786,77 @@ async function syncSymbolMapping(mapping){
   }
   return totalSynced;
 }
+// Binance has no "list every symbol this account has ever traded"
+// endpoint — trade history only comes back one symbol at a time
+// (myTrades?symbol=...). So to auto-map a coin you haven't told Kosh
+// about yet, this looks at what you currently HOLD (GET /api/v3/account
+// balances) and, for each asset not already mapped, tries the common
+// quote assets against it until one resolves to a real Binance symbol
+// (via exchangeInfo), then maps that symbol to the default portfolio.
+// Limitation: a coin fully bought and fully sold again before this ever
+// ran (balance back to zero) won't be picked up this way — map it by
+// hand once, same as before, and it's remembered from then on.
+async function discoverNewBinanceSymbols(){
+  if(!binanceDefaultPortfolioId)return 0;
+  const statusEl=document.getElementById('binance-sync-status');
+  if(statusEl)statusEl.textContent='Checking your Binance balances for new coins…';
+  let res;
+  try{res=await binanceFetch('account',{});}catch(e){return 0;}
+  if(!res||!res.ok)return 0;
+  let data;
+  try{data=await res.json();}catch(e){return 0;}
+  const balances=(data&&data.balances)||[];
+  const mappedSymbols=new Set(binanceSymbolMap.map(m=>m.symbol));
+  let discovered=0;
+  for(const bal of balances){
+    const asset=(bal.asset||'').toUpperCase();
+    if(!asset||BINANCE_QUOTE_ASSET_SET.has(asset))continue;
+    const held=parseFloat(bal.free||0)+parseFloat(bal.locked||0);
+    if(!(held>0))continue;
+    let already=false;
+    for(const q of BINANCE_QUOTE_FALLBACKS){if(mappedSymbols.has(asset+q)){already=true;break;}}
+    if(already)continue;
+    for(const quote of BINANCE_QUOTE_FALLBACKS){
+      if(quote===asset)continue;
+      const candidate=asset+quote;
+      let mapped=false;
+      try{
+        const infoRes=await binanceFetch('public',{path:'/api/v3/exchangeInfo',symbol:candidate});
+        if(!infoRes||!infoRes.ok)continue; // not a real market for this quote — try the next fallback
+        const infoData=await infoRes.json();
+        const info=(infoData.symbols||[])[0];
+        if(!info)continue;
+        const{error}=await sb.from('binance_symbol_map').upsert(
+          {user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:binanceDefaultPortfolioId},
+          {onConflict:'user_id,symbol'}
+        );
+        if(!error){
+          mappedSymbols.add(candidate);
+          binanceSymbolMap.push({id:null,user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:binanceDefaultPortfolioId});
+          discovered++;
+          mapped=true;
+        }
+      }catch(e){/* lookup failed — try the next fallback */}
+      if(mapped)break; // found the real market for this asset — stop trying other quotes
+    }
+  }
+  if(discovered){
+    await loadBinanceSymbolMap(); // pick up real ids for the rows just inserted
+  }
+  return discovered;
+}
 async function syncBinanceNow(){
   await loadBinanceSymbolMap();
-  if(!binanceSymbolMap.length){showToast('Map at least one symbol first.');return;}
+  await loadBinanceDefaultPortfolio();
+  const newlyDiscovered=await discoverNewBinanceSymbols();
+  if(!binanceSymbolMap.length){
+    showToast(binanceDefaultPortfolioId?'No Binance balances found yet to auto-map. Trade something, or map a symbol by hand below.':'Set a default portfolio above (or map a symbol by hand) first.');
+    return;
+  }
   tradeLogErrors=[];
   const statusEl=document.getElementById('binance-sync-status');
   let totalNew=0;
+  if(newlyDiscovered)showToast(`Found ${newlyDiscovered} new coin${newlyDiscovered===1?'':'s'}, mapped automatically ✅`);
   for(const mapping of binanceSymbolMap){
     if(statusEl)statusEl.textContent=`Syncing ${mapping.symbol}…`;
     totalNew+=await syncSymbolMapping(mapping);
