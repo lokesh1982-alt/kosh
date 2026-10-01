@@ -61,6 +61,13 @@ button{cursor:pointer;}
 .dash-section h3{margin:0;font-size:0.92rem;font-weight:700;color:var(--ink);}
 .dash-section span{font-size:0.7rem;color:var(--ink3);}
 .pf-panel{break-inside:avoid;margin-bottom:6px;}
+/* Escapes the page's masonry column flow (same column-span:all trick as
+   .dash-section) so the portfolio panels lay out in their own left-to-right,
+   row-wrapping grid instead of being balanced into whichever column has
+   room — which is what let a short panel (e.g. a new portfolio with little
+   content yet) end up stranded alone under a taller neighbor. */
+.pf-grid{column-span:all;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:6px;}
+.pf-grid .pf-panel{margin-bottom:0;}
 .trend-btn{border:1px solid rgba(255,255,255,0.25);background:transparent;color:#F1F3F5;border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
 .trend-btn.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700;}
 
@@ -290,8 +297,8 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <button class="btn-primary" id="settings-fund-button" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
       </div>
       <div class="card" id="settings-transfer-card">
-        <div class="card-title">Move funds to another portfolio</div>
-        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Shift a coin (e.g. USDT) from this portfolio to an existing one, or a brand-new one.</div>
+        <div class="card-title">Move funds between portfolios</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Shift a coin (e.g. USDT) from any of your portfolios to another existing one, or a brand-new one.</div>
         <button class="btn-outline" style="width:100%" onclick="openTransferModal()">⇄ Transfer</button>
       </div>
       <div class="card" id="settings-data-card">
@@ -543,8 +550,10 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 <div class="modal-overlay" id="transfer-modal">
   <div class="modal">
     <div class="modal-title">⇄ Transfer between portfolios</div>
-    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45">Moves units of a coin from this portfolio to another, carrying their cost basis with them. Not a buy or sell — it won't show up as realized profit or loss, just a transfer in your Journal on both sides.</div>
-    <div class="form-group"><label class="form-label">From</label><input class="form-input" id="tr-from-name" disabled/></div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45">Moves units of a coin from one of your portfolios to another, carrying their cost basis with them. Not a buy or sell — it won't show up as realized profit or loss, just a transfer in your Journal on both sides.</div>
+    <div class="form-group"><label class="form-label">From</label>
+      <select class="form-select" id="tr-from-select" onchange="transferSourceChanged()"></select>
+    </div>
     <div class="form-group"><label class="form-label">Asset to move</label>
       <select class="form-select" id="tr-coin-select" onchange="transferCoinChanged()"></select>
     </div>
@@ -1499,6 +1508,21 @@ function buildProfitSVG(vals,width,height){
   return`<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;display:block" preserveAspectRatio="none"><path d="${line}L${width},${y0}L0,${y0}Z" fill="${col}" fill-opacity="0.22"/><line x1="0" y1="${y0}" x2="${width}" y2="${y0}" stroke="#8B93A1" stroke-width="1" stroke-dasharray="4,4"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
 const signedDisplay=x=>(x>=0?'+':'−')+fmtDisplay(Math.abs(x));
+// One gainers/losers card for a given list of {coin,change} movers — used to
+// show crypto and US-Stocks movers as separate cards on the Combined dashboard.
+function moversCardHtml(title,withChange){
+  const gainers=[...withChange].filter(x=>x.change>0).sort((a,b)=>b.change-a.change).slice(0,3);
+  const losers=[...withChange].filter(x=>x.change<0).sort((a,b)=>a.change-b.change).slice(0,3);
+  const row=(x,color)=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.76rem">${escapeHtml(x.coin.ticker)}</span><span style="font-size:0.76rem;font-weight:700;color:${color}">${x.change>=0?'+':''}${x.change.toFixed(1)}%</span></div>`;
+  return`<div class="card"><div class="card-title" style="margin-bottom:10px">${title}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div><div style="font-size:0.78rem;font-weight:600;color:var(--green);margin-bottom:8px">🟢 Top Gainers</div>
+      ${gainers.map(x=>row(x,'var(--green)')).join('')||'<div style="font-size:0.72rem;color:var(--ink3)">None today</div>'}
+    </div>
+    <div><div style="font-size:0.78rem;font-weight:600;color:var(--red);margin-bottom:8px">🔴 Top Losers</div>
+      ${losers.map(x=>row(x,'var(--red)')).join('')||'<div style="font-size:0.72rem;color:var(--ink3)">None today</div>'}
+    </div>
+  </div></div>`;
+}
 function trendBlockHtml(){
   const t=lastTrend;
   if(!t||t.snapshots.length<2)return'<div style="font-size:0.68rem;opacity:0.5;margin-top:10px">Trend line will build up as you use the app daily</div>';
@@ -1888,27 +1912,29 @@ async function renderDashboard(){
     }
 
     // ── One panel per portfolio ──
+    // Wrapped in its own grid (rather than left to flow in the page-wide
+    // masonry columns like the other sections) so the panels line up
+    // together in neat rows, regardless of how tall each one is — a short
+    // panel (e.g. a brand-new Spot portfolio with little content yet) no
+    // longer ends up stranded alone at the bottom of a column.
     html+=head('Portfolios','value, profit and loss, allocation and rebalance trigger for each');
+    html+='<div class="pf-grid">';
     combined.perPortfolio.forEach((pp,i)=>{html+=portfolioPanelHtml(pp,combined.combinedTotal,pfPalette,combined.perPortfolio.filter(x=>x.value>0).indexOf(pp)>=0?combined.perPortfolio.filter(x=>x.value>0).indexOf(pp):i);});
+    html+='</div>';
 
     // ── Market ──
     html+=head('Market','crypto sentiment and today\'s biggest movers');
     html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
 
-    // Top Gainers / Top Losers across everything combined
-    const withChange=combined.allCoins.filter(c=>priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
-    if(withChange.length){
-      const gainers=[...withChange].filter(x=>x.change>0).sort((a,b)=>b.change-a.change).slice(0,3);
-      const losers=[...withChange].filter(x=>x.change<0).sort((a,b)=>a.change-b.change).slice(0,3);
-      html+=`<div class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        <div><div style="font-size:0.78rem;font-weight:600;color:var(--green);margin-bottom:8px">🟢 Top Gainers</div>
-          ${gainers.map(x=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.76rem">${escapeHtml(x.coin.ticker)}</span><span style="font-size:0.76rem;font-weight:700;color:var(--green)">+${x.change.toFixed(1)}%</span></div>`).join('')||'<div style="font-size:0.72rem;color:var(--ink3)">None today</div>'}
-        </div>
-        <div><div style="font-size:0.78rem;font-weight:600;color:var(--red);margin-bottom:8px">🔴 Top Losers</div>
-          ${losers.map(x=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.76rem">${escapeHtml(x.coin.ticker)}</span><span style="font-size:0.76rem;font-weight:700;color:var(--red)">${x.change.toFixed(1)}%</span></div>`).join('')||'<div style="font-size:0.72rem;color:var(--ink3)">None today</div>'}
-        </div>
-      </div></div>`;
-    }
+    // Top Gainers / Top Losers — crypto and US-Stocks shown as separate
+    // cards, since lumping them together made it unclear which market a
+    // mover belonged to.
+    const stockPidsSet=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+    const stockTierIdsSet=new Set(combined.allTiers.filter(t=>stockPidsSet.has(t.portfolio_id)).map(t=>t.id));
+    const cryptoMovers=combined.allCoins.filter(c=>!stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
+    const stockMovers=combined.allCoins.filter(c=>stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
+    html+=moversCardHtml('🪙 Crypto movers (24h)',cryptoMovers);
+    if(stockPidsSet.size)html+=moversCardHtml('🇺🇸 US-Stocks movers (24h)',stockMovers);
 
   } else {
     // Single-portfolio mode — the portfolio selected in the dropdown IS
@@ -3349,31 +3375,57 @@ async function confirmManualTrade(){
 // changing which portfolio it sits in, so it should never show up as
 // realized profit or loss. Both sides get a plain record in the Journal
 // (action 'transfer_out' / 'transfer_in') so the history is still visible.
+let _trSourceCoins=[];
+function portfolioKindLabel(kind){return kind==='spot'?'Spot trading':isStockKind(kind)?'US stocks':'Rebalance';}
+// Coins live under a tier, and tiers belong to a portfolio — there's no
+// direct portfolio_id on coins — so picking a "From" portfolio other than
+// the one currently open means querying the DB for that portfolio's own
+// tiers/coins rather than relying on the globally-loaded (current-portfolio-
+// only) `coins` array.
+async function getPortfolioCoins(portfolioId){
+  const{data:tiersData}=await sb.from('tiers').select('id').eq('portfolio_id',portfolioId);
+  const tierIds=(tiersData||[]).map(t=>t.id);
+  if(!tierIds.length)return[];
+  const{data:coinsData}=await sb.from('coins').select('*').in('tier_id',tierIds);
+  return coinsData||[];
+}
 function openTransferModal(){
-  const cp=currentPortfolio();
-  if(!cp){showToast('Create a portfolio first.');return;}
-  if(!coins.some(c=>(c.units_held||0)>1e-8)){showToast('Nothing to transfer — this portfolio has no coins with units held.');return;}
-  document.getElementById('tr-from-name').value=cp.name;
-  const coinSel=document.getElementById('tr-coin-select');
-  const transferable=coins.filter(c=>(c.units_held||0)>1e-8);
-  coinSel.innerHTML=transferable.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker)})</option>`).join('');
-  const reserveTicker=reserveTickerFor(cp.kind);
-  const reserveCoin=transferable.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
-  if(reserveCoin)coinSel.value=reserveCoin.id;
-  const destSel=document.getElementById('tr-dest-select');
-  const others=portfolios.filter(p=>p.id!==cp.id);
-  destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
-    +`<option value="__new__">+ New portfolio…</option>`;
+  if(!portfolios.length){showToast('Create a portfolio first.');return;}
+  const fromSel=document.getElementById('tr-from-select');
+  fromSel.innerHTML=portfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('');
+  fromSel.value=currentPortfolioId||portfolios[0].id;
   document.getElementById('tr-new-name').value='';
   document.getElementById('tr-new-kind').value='spot';
   document.getElementById('tr-amount').value='';
-  transferCoinChanged();
-  transferDestChanged();
+  transferSourceChanged();
   openModal('transfer-modal');
 }
-function portfolioKindLabel(kind){return kind==='spot'?'Spot trading':isStockKind(kind)?'US stocks':'Rebalance';}
+async function transferSourceChanged(){
+  const sourceId=document.getElementById('tr-from-select').value;
+  const sourcePortfolio=portfolios.find(p=>p.id===sourceId);
+  const coinSel=document.getElementById('tr-coin-select');
+  coinSel.innerHTML=`<option>Loading…</option>`;
+  _trSourceCoins=(sourceId===currentPortfolioId?coins:await getPortfolioCoins(sourceId)).filter(c=>(c.units_held||0)>1e-8);
+  if(!_trSourceCoins.length){
+    coinSel.innerHTML=`<option value="">No coins with units held</option>`;
+  } else {
+    coinSel.innerHTML=_trSourceCoins.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker)})</option>`).join('');
+    const reserveTicker=reserveTickerFor(sourcePortfolio?.kind);
+    const reserveCoin=_trSourceCoins.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
+    if(reserveCoin)coinSel.value=reserveCoin.id;
+  }
+  transferCoinChanged();
+  // "To" can be any OTHER portfolio, re-filtered whenever "From" changes.
+  const destSel=document.getElementById('tr-dest-select');
+  const prevDest=destSel.value;
+  const others=portfolios.filter(p=>p.id!==sourceId);
+  destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
+    +`<option value="__new__">+ New portfolio…</option>`;
+  if(others.some(p=>p.id===prevDest))destSel.value=prevDest;
+  transferDestChanged();
+}
 function transferCoinChanged(){
-  const coin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  const coin=_trSourceCoins.find(c=>c.id===document.getElementById('tr-coin-select').value);
   const sub=document.getElementById('tr-coin-sub');
   sub.textContent=coin?`${coin.units_held||0} ${coin.ticker} held${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
 }
@@ -3382,7 +3434,7 @@ function transferDestChanged(){
   document.getElementById('tr-new-portfolio-fields').style.display=isNew?'':'none';
 }
 function fillMaxTransfer(){
-  const coin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  const coin=_trSourceCoins.find(c=>c.id===document.getElementById('tr-coin-select').value);
   if(!coin){showToast('Select an asset first.');return;}
   document.getElementById('tr-amount').value=coin.units_held||0;
 }
@@ -3425,13 +3477,14 @@ async function setPortfolioCapital(portfolioId,val){
   );
 }
 async function confirmTransfer(){
-  const cp=currentPortfolio();
-  if(!cp)return;
-  const sourceCoin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  const sourceId=document.getElementById('tr-from-select').value;
+  const sourcePortfolio=portfolios.find(p=>p.id===sourceId);
+  if(!sourcePortfolio){showToast('Choose a source portfolio.');return;}
+  const sourceCoin=_trSourceCoins.find(c=>c.id===document.getElementById('tr-coin-select').value);
   const amount=parseFloat(document.getElementById('tr-amount').value);
   if(!sourceCoin){showToast('Select an asset to move.');return;}
   if(!amount||amount<=0){showToast('Enter a valid amount.');return;}
-  if(amount>(sourceCoin.units_held||0)+1e-8){showToast(`You only have ${sourceCoin.units_held||0} ${sourceCoin.ticker} in this portfolio.`);return;}
+  if(amount>(sourceCoin.units_held||0)+1e-8){showToast(`You only have ${sourceCoin.units_held||0} ${sourceCoin.ticker} in ${sourcePortfolio.name}.`);return;}
 
   const destSelectVal=document.getElementById('tr-dest-select').value;
   let destPortfolio;
@@ -3447,7 +3500,7 @@ async function confirmTransfer(){
     destPortfolio=portfolios.find(p=>p.id===destSelectVal);
     if(!destPortfolio){showToast('Choose a destination portfolio.');return;}
   }
-  if(destPortfolio.id===cp.id){showToast('Pick a different destination portfolio.');return;}
+  if(destPortfolio.id===sourcePortfolio.id){showToast('Pick a different destination portfolio.');return;}
 
   const costBasis=sourceCoin.avg_cost_usd!=null?sourceCoin.avg_cost_usd:(livePrices[sourceCoin.coingecko_id]||0);
   const capitalMoved=amount*costBasis;
@@ -3458,15 +3511,16 @@ async function confirmTransfer(){
   const newSourceUnits=(sourceCoin.units_held||0)-amount;
   await sb.from('coins').update({units_held:newSourceUnits}).eq('id',sourceCoin.id);
   sourceCoin.units_held=newSourceUnits;
+  if(sourceId===currentPortfolioId){const liveCoin=coins.find(c=>c.id===sourceCoin.id);if(liveCoin)liveCoin.units_held=newSourceUnits;}
   await logTrade({
-    user_id:currentUser.id,portfolio_id:cp.id,coin_id:sourceCoin.id,coin_name:sourceCoin.name,coin_ticker:sourceCoin.ticker,
+    user_id:currentUser.id,portfolio_id:sourcePortfolio.id,coin_id:sourceCoin.id,coin_name:sourceCoin.name,coin_ticker:sourceCoin.ticker,
     action:'transfer_out',units:amount,price_per_unit:costBasis,total_usd:capitalMoved,realized_pnl:null,inr_rate:inrRate,
     notes:`Transfer to ${destPortfolio.name}`
   });
-  const newSourceCapital=Math.max(0,(await getPortfolioCapital(cp.id))-capitalMoved);
-  await setPortfolioCapital(cp.id,newSourceCapital);
-  if(cp.id===currentPortfolioId)settings.total_capital=newSourceCapital;
-  {const bd=getBand(cp);if(bd.base)await persistBand(cp.id,{up:bd.up,down:bd.down,base:Math.max(0,bd.base-capitalMoved)});}
+  const newSourceCapital=Math.max(0,(await getPortfolioCapital(sourcePortfolio.id))-capitalMoved);
+  await setPortfolioCapital(sourcePortfolio.id,newSourceCapital);
+  if(sourceId===currentPortfolioId)settings.total_capital=newSourceCapital;
+  {const bd=getBand(sourcePortfolio);if(bd.base)await persistBand(sourcePortfolio.id,{up:bd.up,down:bd.down,base:Math.max(0,bd.base-capitalMoved)});}
 
   // Destination side: find/create the matching coin there, weighted-average
   // its cost basis with whatever it already holds, capital up.
@@ -3479,7 +3533,7 @@ async function confirmTransfer(){
     await logTrade({
       user_id:currentUser.id,portfolio_id:destPortfolio.id,coin_id:destCoin.id,coin_name:destCoin.name,coin_ticker:destCoin.ticker,
       action:'transfer_in',units:amount,price_per_unit:costBasis,total_usd:capitalMoved,realized_pnl:null,inr_rate:inrRate,
-      notes:`Transfer from ${cp.name}`
+      notes:`Transfer from ${sourcePortfolio.name}`
     });
     const newDestCapital=(await getPortfolioCapital(destPortfolio.id))+capitalMoved;
     await setPortfolioCapital(destPortfolio.id,newDestCapital);
