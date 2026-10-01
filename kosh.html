@@ -289,6 +289,11 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div class="card-title">Fund this portfolio</div>
         <button class="btn-primary" id="settings-fund-button" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
       </div>
+      <div class="card" id="settings-transfer-card">
+        <div class="card-title">Move funds to another portfolio</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Shift a coin (e.g. USDT) from this portfolio to an existing one, or a brand-new one.</div>
+        <button class="btn-outline" style="width:100%" onclick="openTransferModal()">⇄ Transfer</button>
+      </div>
       <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
@@ -530,6 +535,43 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('new-portfolio-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="saveNewPortfolio()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- TRANSFER BETWEEN PORTFOLIOS MODAL -->
+<div class="modal-overlay" id="transfer-modal">
+  <div class="modal">
+    <div class="modal-title">⇄ Transfer between portfolios</div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45">Moves units of a coin from this portfolio to another, carrying their cost basis with them. Not a buy or sell — it won't show up as realized profit or loss, just a transfer in your Journal on both sides.</div>
+    <div class="form-group"><label class="form-label">From</label><input class="form-input" id="tr-from-name" disabled/></div>
+    <div class="form-group"><label class="form-label">Asset to move</label>
+      <select class="form-select" id="tr-coin-select" onchange="transferCoinChanged()"></select>
+    </div>
+    <div class="form-group">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <label class="form-label" style="margin-bottom:0">Amount</label>
+        <span class="link-btn" style="padding:0" onclick="fillMaxTransfer()">Use max</span>
+      </div>
+      <input class="form-input" type="number" id="tr-amount" step="0.00000001"/>
+      <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px" id="tr-coin-sub"></div>
+    </div>
+    <div class="form-group"><label class="form-label">To</label>
+      <select class="form-select" id="tr-dest-select" onchange="transferDestChanged()"></select>
+    </div>
+    <div id="tr-new-portfolio-fields" style="display:none">
+      <div class="form-group"><label class="form-label">New portfolio name</label><input class="form-input" id="tr-new-name" placeholder="e.g. Alpha"/></div>
+      <div class="form-group"><label class="form-label">New portfolio type</label>
+        <select class="form-select" id="tr-new-kind">
+          <option value="spot">📈 Spot Trading (crypto — active buy/sell, no rebalance rules)</option>
+          <option value="rebalance">⚖️ Rebalance (crypto — tier targets, drift alerts, bearish ladder)</option>
+          <option value="us-stocks">🇺🇸 US-Stocks (tier targets between stocks and a USD reserve)</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('transfer-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmTransfer()">Transfer</button>
     </div>
   </div>
 </div>
@@ -2847,6 +2889,16 @@ async function renderJournal(){
   el.innerHTML=html;
   backfillMissingInrRates();
 }
+function transferBadgeHtml(action){
+  const map={
+    buy:['Buy','var(--green-bg)','var(--green)'],
+    sell:['Sell','var(--red-bg)','var(--red)'],
+    transfer_out:['Transfer out','var(--card2)','var(--ink2)'],
+    transfer_in:['Transfer in','var(--card2)','var(--ink2)']
+  };
+  const[label,bg,fg]=map[action]||['—','var(--card2)','var(--ink2)'];
+  return`<span style="background:${bg};color:${fg};padding:2px 7px;border-radius:6px;font-weight:600">${label}</span>`;
+}
 function journalRowHtml(t,i){
   const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
   const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
@@ -2857,7 +2909,7 @@ function journalRowHtml(t,i){
     <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
     <td style="padding:7px 10px;font-weight:600">${escapeHtml(t.coin_ticker||t.coin_name||'')}</td>
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${t.units}</td>
-    <td style="padding:7px 10px;text-align:center"><span style="background:${t.action==='buy'?'var(--green-bg)':'var(--red-bg)'};color:${t.action==='buy'?'var(--green)':'var(--red)'};padding:2px 7px;border-radius:6px;font-weight:600">${t.action==='buy'?'Buy':'Sell'}</span></td>
+    <td style="padding:7px 10px;text-align:center">${transferBadgeHtml(t.action)}</td>
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.price_per_unit)}</td>
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${priceInr!=null?'₹'+priceInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.total_usd)}</td>
@@ -2890,7 +2942,8 @@ function journalExportRows(){
     const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
     const totalInr=t.inr_rate!=null?t.total_usd*t.inr_rate:null;
     const pnlInr=(t.realized_pnl!=null&&t.inr_rate!=null)?t.realized_pnl*t.inr_rate:null;
-    return[date,t.coin_ticker||t.coin_name||'',t.units,t.action==='buy'?'Buy':'Sell',
+    const typeLabel={buy:'Buy',sell:'Sell',transfer_out:'Transfer out',transfer_in:'Transfer in'}[t.action]||t.action;
+    return[date,t.coin_ticker||t.coin_name||'',t.units,typeLabel,
       t.price_per_unit,priceInr!=null?priceInr:'',t.total_usd,totalInr!=null?totalInr:'',
       t.realized_pnl!=null?t.realized_pnl:'',pnlInr!=null?pnlInr:'',t.inr_rate!=null?t.inr_rate:''];
   });
@@ -3284,6 +3337,160 @@ async function confirmManualTrade(){
   await loadAllData();
   renderAll();
   showToast(tradeLogErrors.length?('Holding updated, but the Journal entry was NOT saved: '+tradeLogErrors[0]):'Trade logged ✅');
+}
+
+// ═══════════════════════════════
+//  TRANSFER BETWEEN PORTFOLIOS
+// ═══════════════════════════════
+// Moves units of one coin from the currently open portfolio to another
+// (existing or brand new), carrying their average cost basis with them.
+// Deliberately NOT built on executeTrade()/logTrade(): a transfer isn't a
+// buy or sell against the portfolio's reserve asset, it's the same money
+// changing which portfolio it sits in, so it should never show up as
+// realized profit or loss. Both sides get a plain record in the Journal
+// (action 'transfer_out' / 'transfer_in') so the history is still visible.
+function openTransferModal(){
+  const cp=currentPortfolio();
+  if(!cp){showToast('Create a portfolio first.');return;}
+  if(!coins.some(c=>(c.units_held||0)>1e-8)){showToast('Nothing to transfer — this portfolio has no coins with units held.');return;}
+  document.getElementById('tr-from-name').value=cp.name;
+  const coinSel=document.getElementById('tr-coin-select');
+  const transferable=coins.filter(c=>(c.units_held||0)>1e-8);
+  coinSel.innerHTML=transferable.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker)})</option>`).join('');
+  const reserveTicker=reserveTickerFor(cp.kind);
+  const reserveCoin=transferable.find(c=>(c.ticker||'').toUpperCase()===reserveTicker);
+  if(reserveCoin)coinSel.value=reserveCoin.id;
+  const destSel=document.getElementById('tr-dest-select');
+  const others=portfolios.filter(p=>p.id!==cp.id);
+  destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
+    +`<option value="__new__">+ New portfolio…</option>`;
+  document.getElementById('tr-new-name').value='';
+  document.getElementById('tr-new-kind').value='spot';
+  document.getElementById('tr-amount').value='';
+  transferCoinChanged();
+  transferDestChanged();
+  openModal('transfer-modal');
+}
+function portfolioKindLabel(kind){return kind==='spot'?'Spot trading':isStockKind(kind)?'US stocks':'Rebalance';}
+function transferCoinChanged(){
+  const coin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  const sub=document.getElementById('tr-coin-sub');
+  sub.textContent=coin?`${coin.units_held||0} ${coin.ticker} held${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
+}
+function transferDestChanged(){
+  const isNew=document.getElementById('tr-dest-select').value==='__new__';
+  document.getElementById('tr-new-portfolio-fields').style.display=isNew?'':'none';
+}
+function fillMaxTransfer(){
+  const coin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  if(!coin){showToast('Select an asset first.');return;}
+  document.getElementById('tr-amount').value=coin.units_held||0;
+}
+// Finds (or creates) a coin by coingecko_id/ticker inside another portfolio,
+// querying the DB directly rather than the globally-loaded tiers/coins
+// (which only reflect the currently open portfolio). Mirrors
+// ensureUsdtCoinForFunding/ensureCoinInTier's tier-picking logic.
+async function ensureCoinInPortfolio(portfolioId,destKind,{name,ticker,coingecko_id}){
+  const{data:destTiers}=await sb.from('tiers').select('*').eq('portfolio_id',portfolioId).order('sort_order');
+  const tierList=destTiers||[];
+  const reserveTicker=reserveTickerFor(destKind);
+  let targetTier=(ticker||'').toUpperCase()===reserveTicker
+    ?tierList.find(t=>/stable|reserve|cash/i.test(t.name))||tierList[0]
+    :tierList.find(t=>t.name==='Holdings')||tierList[0];
+  if(!targetTier){
+    const{data:newTier,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:portfolioId,name:'Holdings',target_pct:1,sort_order:0}).select().single();
+    if(error){showToast('Error creating tier: '+error.message);return null;}
+    targetTier=newTier;
+  }
+  const{data:destCoins}=await sb.from('coins').select('*').eq('tier_id',targetTier.id);
+  let coin=(destCoins||[]).find(c=>(coingecko_id&&c.coingecko_id===coingecko_id)||(c.ticker||'').toUpperCase()===(ticker||'').toUpperCase());
+  if(!coin){
+    const{data:newCoin,error}=await sb.from('coins').insert({
+      user_id:currentUser.id,tier_id:targetTier.id,name,ticker,coingecko_id,
+      weight_in_tier:0,exchanges:'',rationale:'',units_held:0,sort_order:0
+    }).select().single();
+    if(error){showToast('Error creating coin: '+error.message);return null;}
+    coin=newCoin;
+  }
+  return coin;
+}
+async function getPortfolioCapital(portfolioId){
+  const{data}=await sb.from('kosh_settings').select('total_capital').eq('user_id',currentUser.id).eq('portfolio_id',portfolioId).maybeSingle();
+  return data?(data.total_capital||0):0;
+}
+async function setPortfolioCapital(portfolioId,val){
+  await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:portfolioId,total_capital:val,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
+}
+async function confirmTransfer(){
+  const cp=currentPortfolio();
+  if(!cp)return;
+  const sourceCoin=coins.find(c=>c.id===document.getElementById('tr-coin-select').value);
+  const amount=parseFloat(document.getElementById('tr-amount').value);
+  if(!sourceCoin){showToast('Select an asset to move.');return;}
+  if(!amount||amount<=0){showToast('Enter a valid amount.');return;}
+  if(amount>(sourceCoin.units_held||0)+1e-8){showToast(`You only have ${sourceCoin.units_held||0} ${sourceCoin.ticker} in this portfolio.`);return;}
+
+  const destSelectVal=document.getElementById('tr-dest-select').value;
+  let destPortfolio;
+  if(destSelectVal==='__new__'){
+    const name=document.getElementById('tr-new-name').value.trim();
+    const kind=document.getElementById('tr-new-kind').value;
+    if(!name){showToast('Enter a name for the new portfolio.');return;}
+    const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name,kind,sort_order:portfolios.length}).select().single();
+    if(error){showToast('Error creating portfolio: '+error.message);return;}
+    destPortfolio=data;
+    portfolios.push(destPortfolio);
+  } else {
+    destPortfolio=portfolios.find(p=>p.id===destSelectVal);
+    if(!destPortfolio){showToast('Choose a destination portfolio.');return;}
+  }
+  if(destPortfolio.id===cp.id){showToast('Pick a different destination portfolio.');return;}
+
+  const costBasis=sourceCoin.avg_cost_usd!=null?sourceCoin.avg_cost_usd:(livePrices[sourceCoin.coingecko_id]||0);
+  const capitalMoved=amount*costBasis;
+  const todayStr=new Date().toISOString().slice(0,10);
+  const inrRate=await getHistoricalInrRate(todayStr);
+
+  // Source side: units down, cost basis per unit unchanged, capital down.
+  const newSourceUnits=(sourceCoin.units_held||0)-amount;
+  await sb.from('coins').update({units_held:newSourceUnits}).eq('id',sourceCoin.id);
+  sourceCoin.units_held=newSourceUnits;
+  await logTrade({
+    user_id:currentUser.id,portfolio_id:cp.id,coin_id:sourceCoin.id,coin_name:sourceCoin.name,coin_ticker:sourceCoin.ticker,
+    action:'transfer_out',units:amount,price_per_unit:costBasis,total_usd:capitalMoved,realized_pnl:null,inr_rate:inrRate,
+    notes:`Transfer to ${destPortfolio.name}`
+  });
+  const newSourceCapital=Math.max(0,(await getPortfolioCapital(cp.id))-capitalMoved);
+  await setPortfolioCapital(cp.id,newSourceCapital);
+  if(cp.id===currentPortfolioId)settings.total_capital=newSourceCapital;
+  {const bd=getBand(cp);if(bd.base)await persistBand(cp.id,{up:bd.up,down:bd.down,base:Math.max(0,bd.base-capitalMoved)});}
+
+  // Destination side: find/create the matching coin there, weighted-average
+  // its cost basis with whatever it already holds, capital up.
+  const destCoin=await ensureCoinInPortfolio(destPortfolio.id,destPortfolio.kind,{name:sourceCoin.name,ticker:sourceCoin.ticker,coingecko_id:sourceCoin.coingecko_id});
+  if(destCoin){
+    const newDestUnits=(destCoin.units_held||0)+amount;
+    const oldDestCostTotal=(destCoin.units_held||0)*(destCoin.avg_cost_usd||0);
+    const newDestAvgCost=newDestUnits>0?(oldDestCostTotal+amount*costBasis)/newDestUnits:costBasis;
+    await sb.from('coins').update({units_held:newDestUnits,avg_cost_usd:newDestAvgCost}).eq('id',destCoin.id);
+    await logTrade({
+      user_id:currentUser.id,portfolio_id:destPortfolio.id,coin_id:destCoin.id,coin_name:destCoin.name,coin_ticker:destCoin.ticker,
+      action:'transfer_in',units:amount,price_per_unit:costBasis,total_usd:capitalMoved,realized_pnl:null,inr_rate:inrRate,
+      notes:`Transfer from ${cp.name}`
+    });
+    const newDestCapital=(await getPortfolioCapital(destPortfolio.id))+capitalMoved;
+    await setPortfolioCapital(destPortfolio.id,newDestCapital);
+  }
+
+  closeModal('transfer-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  renderPortfolioSwitcher();
+  showToast(`Moved ${amount} ${sourceCoin.ticker} to ${destPortfolio.name} ✅`);
 }
 
 // ═══════════════════════════════
