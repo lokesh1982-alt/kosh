@@ -1542,6 +1542,55 @@ function buildProfitSVG(vals,width,height){
   const line='M'+pts.map(c=>c.join(',')).join('L');
   return`<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;display:block" preserveAspectRatio="none"><path d="${line}L${width},${y0}L0,${y0}Z" fill="${col}" fill-opacity="0.22"/><line x1="0" y1="${y0}" x2="${width}" y2="${y0}" stroke="#8B93A1" stroke-width="1" stroke-dasharray="4,4"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
+// Small, self-contained sparkline for a dashboard card — unlike
+// buildProfitSVG (which anchors to a 0 baseline for profit curves), this
+// just fits the line to its own min/max, which reads better for a raw
+// value trend in a tiny space.
+function buildMiniSparklineSVG(vals,width,height){
+  if(!vals||vals.length<2)return`<div style="font-size:9px;color:var(--ink3)">—</div>`;
+  let min=Math.min(...vals),max=Math.max(...vals);
+  if(min===max){min-=1;max+=1;}
+  const pad=2,range=max-min,stepX=(width-2*pad)/(vals.length-1);
+  const y=v=>pad+(height-2*pad)-((v-min)/range)*(height-2*pad);
+  const pts=vals.map((v,i)=>[pad+i*stepX,y(v)]);
+  const line='M'+pts.map(c=>c.join(',')).join('L');
+  const col=vals[vals.length-1]>=vals[0]?'var(--green)':'var(--red)';
+  return`<svg viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px;display:block" preserveAspectRatio="none"><path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+// Builds a CSS conic-gradient donut (+ matching legend) from a list of
+// {label,value} items against a total — used for the small per-portfolio
+// donuts and the combined allocation donut on the Dashboard. Anything past
+// the top 3 items is grouped into a single "+N more" slice so the donut and
+// its legend stay readable regardless of how many coins/portfolios exist.
+function donutFromValues(items,totalValue,palette){
+  if(!(totalValue>0)||!items.length)return{gradient:'conic-gradient(var(--card2) 0% 100%)',legend:[]};
+  const sorted=[...items].sort((a,b)=>b.value-a.value);
+  const top=sorted.slice(0,3);
+  const rest=sorted.slice(3);
+  const restVal=rest.reduce((s,x)=>s+x.value,0);
+  const segs=top.map((x,i)=>({label:x.label,value:x.value,color:palette[i%palette.length]}));
+  if(restVal>0)segs.push({label:`+${rest.length} more`,value:restVal,color:'#8B93A1'});
+  let acc=0;
+  const stops=segs.map(s=>{
+    const pct=s.value/totalValue*100,start=acc,end=acc+pct;acc=end;
+    return`${s.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+  });
+  return{gradient:`conic-gradient(${stops.join(',')})`,legend:segs.map(s=>({label:s.label,pct:(s.value/totalValue*100).toFixed(1)+'%',color:s.color}))};
+}
+// Center-anchored +/- performance bar for one holding row — green filling
+// right of center for a gain, red filling left of center for a loss.
+function perfBarHtml(pct){
+  if(pct==null)return`<div style="flex:0 0 150px;display:flex;align-items:center;gap:8px"><div style="flex:1;height:6px;background:var(--card2);border-radius:3px"></div><span style="font-size:0.7rem;color:var(--ink3);width:46px;text-align:right">—</span></div>`;
+  const clamped=Math.max(-50,Math.min(50,pct)),positive=clamped>=0;
+  const color=positive?'var(--green)':'var(--red)',left=positive?50:50+clamped,width=Math.abs(clamped);
+  return`<div style="flex:0 0 150px;display:flex;align-items:center;gap:8px">
+    <div style="position:relative;flex:1;height:6px;background:var(--card2);border-radius:3px">
+      <span style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:var(--border)"></span>
+      <span style="position:absolute;top:0;bottom:0;border-radius:3px;background:${color};left:${left}%;width:${width}%"></span>
+    </div>
+    <span style="font-size:0.72rem;font-weight:700;color:${color};width:46px;text-align:right">${positive?'+':''}${clamped.toFixed(1)}%</span>
+  </div>`;
+}
 const signedDisplay=x=>(x>=0?'+':'−')+fmtDisplay(Math.abs(x));
 // One gainers/losers card for a given list of {coin,change} movers — used to
 // show crypto and US-Stocks movers as separate cards on the Combined dashboard.
@@ -1576,32 +1625,6 @@ function setTrendMode(m){
   try{localStorage.setItem('kosh-trend-mode',trendMode);}catch(e){}
   const slot=document.getElementById('trend-slot');
   if(slot)slot.innerHTML=trendBlockHtml();
-}
-function portfolioPanelHtml(pp,total,palette,idx){
-  const p=pp.portfolio,share=total>0?pp.value/total*100:0;
-  const vs=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
-  const kindLabel=p.kind==='spot'?'Spot trading':isStockKind(p.kind)?'US stocks, tiered':'Crypto, tiered';
-  const col=x=>x>=0?'var(--green)':'var(--red)';
-  let inner='';
-  if(p.kind==='spot'){
-    const top=pp.coins.map(c=>({c,v:coinValue(c)||0})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v).slice(0,5);
-    inner=`<div class="card"><div class="card-title">Top holdings</div>${top.length?top.map(x=>`<div class="coin-row"><div class="coin-name">${escapeHtml(x.c.name)}</div><div class="coin-val hide-figure">${pp.value>0?(x.v/pp.value*100).toFixed(1):'0.0'}%</div></div>`).join(''):'<div style="font-size:0.74rem;color:var(--ink3)">No positions yet.</div>'}</div>`;
-  }else{
-    const ts=calcTierStatsGeneric(pp.tiers,pp.coins,0);
-    inner=`<div class="card"><div class="card-title">Allocation vs target</div>${ts.map(t=>{
-      const off=Math.abs(t.driftPP)>=5;
-      return`<div class="drift-row"><div class="drift-head"><span style="font-weight:500">${escapeHtml(t.name)}</span><span style="font-weight:600;color:${off?'var(--amber-dark)':'var(--ink2)'}">${fmtPct(t.actualPct)} / ${fmtPct(t.targetPct)}</span></div><div class="drift-bar-track"><div class="drift-bar-fill" style="width:${Math.min(100,t.actualPct*200)}%;background:${off?'var(--amber)':'var(--teal)'}"></div><div class="drift-marker" style="left:${Math.min(100,t.targetPct*200)}%"></div></div></div>`;
-    }).join('')}</div>`+bandCardHtml(p,pp.coins,true);
-  }
-  return`<div class="pf-panel"><div class="card" style="border-top:3px solid ${palette[idx%palette.length]}">
-    <div style="display:flex;justify-content:space-between;align-items:center"><div><div class="card-title" style="margin:0">${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</div><div style="font-size:0.66rem;color:var(--ink3)">${kindLabel}</div></div><button class="link-btn" onclick="setDashViewMode('${p.id}')">Open →</button></div>
-    <div class="serif hide-figure" style="font-size:1.35rem;font-weight:600;margin-top:8px">${fmtDisplay(pp.value)}</div>
-    <div style="font-size:0.7rem;color:var(--ink3)">${share.toFixed(1)}% of combined${vs!=null?` · <span style="color:${col(vs)};font-weight:600">${vs>=0?'+':'−'}${Math.abs(vs).toFixed(1)}%</span> vs capital`:''}</div>
-    <div style="display:flex;gap:18px;margin-top:10px">
-      <div><div style="font-size:10px;color:var(--ink3)">Unrealized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${pp.priced?col(pp.unrealized):'var(--ink3)'}">${pp.priced?signedDisplay(pp.unrealized):'—'}</div></div>
-      <div><div style="font-size:10px;color:var(--ink3)">Realized</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600;color:${col(pp.realized)}">${signedDisplay(pp.realized)}</div></div>
-      <div><div style="font-size:10px;color:var(--ink3)">Capital in</div><div class="hide-figure" style="font-size:0.8rem;font-weight:600">${fmtDisplay(pp.capital)}</div></div>
-    </div></div>${inner}</div>`;
 }
 
 async function getSnapshotHistoryAndRecordToday(combinedTotal,totalCapital){
@@ -1925,17 +1948,61 @@ async function renderDashboard(){
       <div id="trend-slot">${trendBlockHtml()}</div>
     </div>`;
 
+    // ── Portfolio cards, one line — value, 30d-style trend and ROI, with
+    // that portfolio's own holdings donut underneath each ──
+    const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
+    const snapByPortfolio={};
+    (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
+    html+='<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:6px">';
+    combined.perPortfolio.forEach((pp,i)=>{
+      const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
+      const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
+      const gainPf=pp.value-pp.capital;
+      const col=vsCap==null?'var(--ink3)':vsCap>=0?'var(--green)':'var(--red)';
+      const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>0);
+      const donut=donutFromValues(items,pp.value,pfPalette);
+      html+=`<div class="card" style="flex:1 1 220px;min-width:220px;border-top:3px solid ${color};margin-bottom:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:6px;min-width:0">
+            <span style="width:8px;height:8px;border-radius:50%;background:${color};flex:none"></span>
+            <span style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</span>
+          </div>
+          ${buildMiniSparklineSVG(snapByPortfolio[p.id]||[],56,20)}
+        </div>
+        <div class="hide-figure" style="font-size:1.15rem;font-weight:700">${fmtDisplay(pp.value)}</div>
+        <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${col};margin-top:2px">${vsCap==null?'No capital set':signedDisplay(gainPf)+' ('+(vsCap>=0?'+':'')+vsCap.toFixed(1)+'%)'}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid var(--border)">
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
+          <span style="font-size:0.78rem;font-weight:700;color:${col}">${vsCap==null?'—':(vsCap>=0?'+':'')+vsCap.toFixed(1)+'%'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <div style="width:48px;height:48px;border-radius:50%;flex:none;background:${donut.gradient};position:relative"><div style="position:absolute;inset:9px;border-radius:50%;background:var(--card)"></div></div>
+          <div style="font-size:0.6rem;color:var(--ink3);display:flex;flex-direction:column;gap:2px;min-width:0;flex:1">
+            ${donut.legend.length?donut.legend.map(s=>`<div style="display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="width:6px;height:6px;border-radius:2px;background:${s.color};flex:none"></span>${escapeHtml(s.label)} ${s.pct}</div>`).join(''):'<div>No positions yet</div>'}
+          </div>
+        </div>
+        <button class="link-btn" style="margin-top:8px;font-size:0.7rem" onclick="setDashViewMode('${p.id}')">Open →</button>
+      </div>`;
+    });
+    html+='</div>';
+
+    // ── One donut of portfolio proportions ──
     const donutRows=combined.perPortfolio.filter(x=>x.value>0);
     if(donutRows.length){
+      const allocDonut=donutFromValues(donutRows.map(x=>({label:x.portfolio.name,value:x.value})),combined.combinedTotal,pfPalette);
       html+=`<div class="card"><div class="card-title">Allocation between portfolios</div>
-        <div style="display:flex;align-items:center;gap:14px">
-          <div style="position:relative;width:130px;height:130px;flex-shrink:0"><canvas id="dash-portfolio-donut"></canvas></div>
-          <div style="font-size:0.74rem;flex:1">
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <div style="width:140px;height:140px;flex-shrink:0;border-radius:50%;background:${allocDonut.gradient};position:relative">
+            <div style="position:absolute;inset:32px;border-radius:50%;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center">
+              <span style="font-size:0.6rem;color:var(--ink3)">Total</span>
+              <span class="hide-figure" style="font-size:0.78rem;font-weight:700">${fmtDisplay(combined.combinedTotal)}</span>
+            </div>
+          </div>
+          <div style="font-size:0.74rem;flex:1;min-width:180px">
             ${donutRows.map((x,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${pfPalette[i%pfPalette.length]};margin-right:6px"></span>${escapeHtml(x.portfolio.name)}</span><span style="font-weight:700" class="hide-figure">${(x.value/combined.combinedTotal*100).toFixed(1)}%</span></div>`).join('')}
             <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:6px;display:flex;justify-content:space-between;color:var(--ink3)"><span>Total</span><span class="hide-figure">${fmtDisplay(combined.combinedTotal)}</span></div>
           </div>
         </div></div>`;
-      allocDonutQueue.push({canvasId:'dash-portfolio-donut',tierStats:donutRows.map(x=>({name:x.portfolio.name,actualPct:x.value/combined.combinedTotal,driftPP:0}))});
     }
 
     // ── Needs attention: one list instead of a wall of red boxes ──
@@ -1954,16 +2021,39 @@ async function renderDashboard(){
       html+=`<div class="card"><div class="card-title">Needs attention</div>${alerts.map(a=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);font-size:0.74rem;line-height:1.4"><span>${a.icon}</span><div style="flex:1">${a.text}</div>${a.open?`<button class="link-btn" onclick="setDashViewMode('${a.open}')">Open →</button>`:''}</div>`).join('')}</div>`;
     }
 
-    // ── One panel per portfolio ──
-    // Wrapped in its own grid (rather than left to flow in the page-wide
-    // masonry columns like the other sections) so the panels line up
-    // together in neat rows, regardless of how tall each one is — a short
-    // panel (e.g. a brand-new Spot portfolio with little content yet) no
-    // longer ends up stranded alone at the bottom of a column.
-    html+=head('Portfolios','value, profit and loss, allocation and rebalance trigger for each');
-    html+='<div class="pf-grid">';
-    combined.perPortfolio.forEach((pp,i)=>{html+=portfolioPanelHtml(pp,combined.combinedTotal,pfPalette,combined.perPortfolio.filter(x=>x.value>0).indexOf(pp)>=0?combined.perPortfolio.filter(x=>x.value>0).indexOf(pp):i);});
-    html+='</div>';
+    // ── Holdings, one portfolio at a time — one/two lines per holding,
+    // with a center-anchored +/- performance bar ──
+    html+=head('Holdings','every position, by portfolio');
+    combined.perPortfolio.forEach((pp,i)=>{
+      const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
+      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+      const rows=openCoins.map(c=>{
+        const v=coinValue(c)||0,alloc=pp.value>0?(v/pp.value*100):0;
+        const price=livePrices[c.coingecko_id];
+        const pct=(c.avg_cost_usd>0&&price!=null)?((price-c.avg_cost_usd)/c.avg_cost_usd*100):null;
+        return{c,v,alloc,pct};
+      }).sort((a,b)=>b.v-a.v);
+      html+=`<div style="column-span:all">
+        <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${color}"></span>
+          <div style="font-weight:700;font-size:0.86rem">${escapeHtml(p.name)}</div>
+          <span class="hide-figure" style="font-size:0.7rem;color:var(--ink3)">${fmtDisplay(pp.value)}</span>
+        </div>
+        <div class="card" style="padding:0">
+          ${rows.length?rows.map(r=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border)">
+            <div style="flex:1 1 160px;min-width:0">
+              <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
+              <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
+            </div>
+            <div style="flex:0 0 120px;text-align:right">
+              <div class="hide-figure" style="font-size:0.78rem">${fmtUsd(r.v)}</div>
+              <div style="font-size:0.66rem;color:var(--ink3)">${r.alloc.toFixed(1)}% of portfolio</div>
+            </div>
+            ${perfBarHtml(r.pct)}
+          </div>`).join(''):`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`}
+        </div>
+      </div>`;
+    });
 
     // ── Market ──
     html+=head('Market','crypto sentiment and today\'s biggest movers');
