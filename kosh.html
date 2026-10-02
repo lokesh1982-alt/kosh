@@ -4038,6 +4038,46 @@ async function discoverNewBinanceSymbols(){
   }
   return discovered;
 }
+// A quote-asset (USDT/USDC/etc.) coin's units_held is accumulated purely by
+// subtracting/adding on every replayed fill, starting from an assumed zero —
+// there's no real "opening balance" to anchor it to. Across hundreds of
+// historical fills that drifts far from reality (often deeply negative,
+// since buys only ever subtract). Rather than trust that accumulation,
+// reconcile every quote-asset coin to Binance's real, authoritative wallet
+// balance after every sync — same idea as a bank statement reconciliation,
+// not a running ledger you hope never drifts.
+async function reconcileQuoteAssetBalances(){
+  const portfolioIdsByKeyset={main:new Set(),lead:new Set()};
+  binanceSymbolMap.forEach(m=>{
+    const p=portfolios.find(pp=>pp.id===m.portfolio_id);
+    if(!p)return;
+    portfolioIdsByKeyset[keysetForPortfolio(p)].add(m.portfolio_id);
+  });
+  for(const keyset of['main','lead']){
+    const pids=[...portfolioIdsByKeyset[keyset]];
+    if(!pids.length)continue;
+    let res;
+    try{res=await binanceFetch('account',{},keyset);}catch(e){continue;}
+    if(!res||!res.ok)continue;
+    let data;
+    try{data=await res.json();}catch(e){continue;}
+    const balances=(data&&data.balances)||[];
+    for(const pid of pids){
+      const portfolio=portfolios.find(p=>p.id===pid);
+      if(!portfolio)continue;
+      for(const bal of balances){
+        const asset=(bal.asset||'').toUpperCase();
+        if(!BINANCE_QUOTE_ASSET_SET.has(asset))continue;
+        const real=parseFloat(bal.free||0)+parseFloat(bal.locked||0);
+        const coin=await ensureCoinInPortfolio(pid,portfolio.kind,{
+          name:asset,ticker:asset,coingecko_id:asset==='USDT'?'tether':asset.toLowerCase()
+        });
+        if(!coin)continue;
+        await sb.from('coins').update({units_held:real,avg_cost_usd:1}).eq('id',coin.id);
+      }
+    }
+  }
+}
 async function syncBinanceNow(){
   await loadBinanceSymbolMap();
   await loadBinanceDefaultPortfolio();
@@ -4054,6 +4094,8 @@ async function syncBinanceNow(){
     if(statusEl)statusEl.textContent=`Syncing ${mapping.symbol}…`;
     totalNew+=await syncSymbolMapping(mapping);
   }
+  if(statusEl)statusEl.textContent='Reconciling cash balances…';
+  await reconcileQuoteAssetBalances();
   // One equity snapshot per affected portfolio, for the equity-curve chart
   // (private dashboard and, for Lead Trading, the public page).
   const affectedPortfolioIds=[...new Set(binanceSymbolMap.map(m=>m.portfolio_id))];
