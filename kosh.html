@@ -306,15 +306,19 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Alpha are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to.</div>
         <div style="font-size:0.68rem;color:var(--amber-dark);background:var(--amber-bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.45">⚠️ Lead Trading lives in a <b>separate Binance wallet</b> from your regular account (that's why "Copy Trading API" is a different button on Binance) — your regular API key can't see it. Create a second key in the Binance app: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b>, then add it in Supabase as <code>BINANCE_LEAD_API_KEY</code> / <code>BINANCE_LEAD_API_SECRET</code>, alongside your existing <code>BINANCE_API_KEY</code> / <code>BINANCE_API_SECRET</code> (which stays as-is, used for Alpha).</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
-        <button class="btn-outline" style="width:100%;margin-bottom:14px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
+        <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
+        <button class="btn-outline" style="width:100%;margin-bottom:14px;border-color:var(--amber-dark);color:var(--amber-dark)" onclick="moveAllLeadTradingDataToAlpha()">🧹 Move misrouted Lead Trading data to Alpha (one-time fix)</button>
         <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Default portfolio for new coins</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:8px;line-height:1.4">Every time you sync, any coin you've traded that isn't mapped yet is auto-added here — you don't have to type each symbol. Reassign a coin to Alpha below if it belongs there instead.</div>
         <div style="display:flex;gap:6px;margin-bottom:14px">
           <select class="form-select" id="bsm-default-portfolio" style="flex:1"></select>
           <button class="btn-outline" onclick="saveBinanceDefaultPortfolio()">Save</button>
         </div>
-        <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Symbol → portfolio map</div>
-        <div id="binance-symbol-map-list" style="margin-bottom:8px"></div>
+        <details id="binance-symbol-map-details" style="margin-bottom:8px">
+          <summary style="font-size:0.72rem;font-weight:600;color:var(--ink2);cursor:pointer;padding:4px 0" id="binance-symbol-map-summary">Symbol → portfolio map</summary>
+          <input class="form-input" id="bsm-search" placeholder="Search symbols…" style="margin:8px 0;display:none;font-size:0.76rem" oninput="filterBinanceSymbolMapList(this.value)"/>
+          <div id="binance-symbol-map-list" style="margin-top:6px"></div>
+        </details>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:6px">Only needed to map a symbol by hand ahead of time, or move one to a different portfolio:</div>
         <div style="display:flex;gap:6px;margin-bottom:14px">
           <input class="form-input" id="bsm-symbol" placeholder="e.g. BTCUSDT" style="flex:1.2"/>
@@ -822,6 +826,17 @@ function fmtUsd(v){
   return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(v);
 }
 function fmtPct(v){return(v*100).toFixed(1)+'%';}
+function timeAgo(iso){
+  if(!iso)return null;
+  const diffMs=Date.now()-new Date(iso).getTime();
+  const mins=Math.round(diffMs/60000);
+  if(mins<1)return'just now';
+  if(mins<60)return mins+' min ago';
+  const hrs=Math.round(mins/60);
+  if(hrs<24)return hrs+' hour'+(hrs===1?'':'s')+' ago';
+  const days=Math.round(hrs/24);
+  return days+' day'+(days===1?'':'s')+' ago';
+}
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;t.classList.add('show');
@@ -1975,7 +1990,20 @@ async function renderDashboard(){
     // currentPortfolioId at this point (setDashViewMode already switched it).
     const cp=currentPortfolio();
     if(cp&&(cp.name==='Lead Trading'||isStockKind(cp.kind))){
-      el.innerHTML=await renderTradingPerformanceDashboard(cp);
+      const tpResult=await renderTradingPerformanceDashboard(cp);
+      el.innerHTML=tpResult.html;
+      if(typeof Chart!=='undefined'){
+        if(window._dashAllocCharts)Object.values(window._dashAllocCharts).forEach(c=>c.destroy());
+        window._dashAllocCharts={};
+        const tpCanvas=document.getElementById('tp-alloc-donut');
+        if(tpCanvas&&tpResult.allocStats.length){
+          window._dashAllocCharts['tp-alloc-donut']=new Chart(tpCanvas,{
+            type:'doughnut',
+            data:{labels:tpResult.allocStats.map(s=>s.name),datasets:[{data:tpResult.allocStats.map(s=>s.actualPct),backgroundColor:tpResult.allocStats.map((s,i)=>tierPalette[i%tierPalette.length]),borderWidth:2,borderColor:'#fff'}]},
+            options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false}}}
+          });
+        }
+      }
       return;
     }
     const isSpotEmpty=cp&&cp.kind==='spot';
@@ -2280,6 +2308,50 @@ async function deleteCoin(coinId){
 // ═══════════════════════════════
 //  HOLDINGS
 // ═══════════════════════════════
+// Positions worth less than this are dust — the leftovers of fees, dust
+// conversions, and tiny fills — and clutter a list meant to show what you
+// actually hold. Hidden behind a collapsed toggle rather than dropped
+// entirely, so nothing is silently lost, just decluttered by default.
+const DUST_THRESHOLD_USD=1;
+function splitDust(coinList){
+  const shown=[],dust=[];
+  coinList.forEach(c=>{
+    const v=livePrices[c.coingecko_id];
+    const value=v!=null?(c.units_held||0)*v:null;
+    (value!=null&&value<DUST_THRESHOLD_USD?dust:shown).push(c);
+  });
+  return{shown,dust};
+}
+function spotCoinRowHtml(c){
+  const stats=calcCoinStats(c);
+  const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
+  const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
+  return`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+    <div class="coin-row" style="border:none;padding:0 0 8px">
+      <div>
+        <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+        <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · now ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg buy ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="coin-val hide-figure">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
+        ${gain!=null?`<div class="coin-drift" style="color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
+      <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
+      <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
+    </div>
+  </div>`;
+}
+function dustDetailsHtml(dustCoins){
+  if(!dustCoins.length)return'';
+  const total=dustCoins.reduce((s,c)=>{const v=livePrices[c.coingecko_id];return s+(v!=null?(c.units_held||0)*v:0);},0);
+  return`<details class="card" style="padding:0">
+    <summary style="padding:14px 16px;cursor:pointer;font-weight:600;font-size:0.8rem;color:var(--ink3)">+${dustCoins.length} small position${dustCoins.length===1?'':'s'} under ${fmtUsd(DUST_THRESHOLD_USD)} (${fmtUsd(total)} total)</summary>
+    <div style="padding:0 16px 8px">${dustCoins.map(spotCoinRowHtml).join('')}</div>
+  </details>`;
+}
 function renderHoldings(){
   const headerEl=document.getElementById('holdings-header');
   const activePortfolio=currentPortfolio();
@@ -2323,45 +2395,27 @@ function renderHoldings(){
   }
 
   if(isSpot){
-    // Flat list, P&L-focused — target %/drift aren't meaningful for spot trading
-    const spotRowHtml=c=>{
-      const stats=calcCoinStats(c);
-      const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
-      const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
-      return`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
-        <div class="coin-row" style="border:none;padding:0 0 8px">
-          <div>
-            <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
-            <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · now ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg buy ${fmtUsd(c.avg_cost_usd)}`:''}</div>
-          </div>
-          <div style="text-align:right">
-            <div class="coin-val hide-figure">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
-            ${gain!=null?`<div class="coin-drift" style="color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
-          </div>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
-          <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
-          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
-        </div>
-      </div>`;
-    };
+    // Flat list, P&L-focused — target %/drift aren't meaningful for spot trading.
     // A coin sold down to (effectively) zero is a closed position — still
     // kept in the database for its cost history, but tucked away instead of
-    // cluttering the list of what you actually hold right now.
-    const openCoins=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+    // cluttering the list of what you actually hold right now. Dust (under
+    // $1) gets the same collapsed-away treatment, separately.
+    const openCoinsAll=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
     const closedCoins=coins.filter(c=>Math.abs(c.units_held||0)<=1e-8);
+    const{shown:openCoins,dust}=splitDust(openCoinsAll);
+    openCoins.sort((a,b)=>{const va=livePrices[a.coingecko_id],vb=livePrices[b.coingecko_id];return((vb!=null?(b.units_held||0)*vb:0))-((va!=null?(a.units_held||0)*va:0));});
     html+='<div class="card">';
     if(openCoins.length){
-      html+=openCoins.map(spotRowHtml).join('');
+      html+=openCoins.map(spotCoinRowHtml).join('');
     } else {
       html+=`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`;
     }
     html+='</div>';
+    html+=dustDetailsHtml(dust);
     if(closedCoins.length){
       html+=`<details class="card" style="padding:0">
         <summary style="padding:16px;cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--ink3)">Closed positions (${closedCoins.length})</summary>
-        <div style="padding:0 16px 8px">${closedCoins.map(spotRowHtml).join('')}</div>
+        <div style="padding:0 16px 8px">${closedCoins.map(spotCoinRowHtml).join('')}</div>
       </details>`;
     }
     el.innerHTML=html;
@@ -2899,6 +2953,31 @@ function setJournalViewMode(mode){
   journalViewMode=mode;
   renderJournal();
 }
+let journalFilterText='';
+let journalSortMode='date_desc';
+function journalFilterSort(list){
+  let out=list;
+  if(journalFilterText){
+    const q=journalFilterText.toLowerCase();
+    out=out.filter(t=>(t.coin_ticker||'').toLowerCase().includes(q)||(t.coin_name||'').toLowerCase().includes(q));
+  }
+  out=[...out];
+  if(journalSortMode==='date_asc')out.sort((a,b)=>new Date(a.trade_date)-new Date(b.trade_date));
+  else if(journalSortMode==='date_desc')out.sort((a,b)=>new Date(b.trade_date)-new Date(a.trade_date));
+  else if(journalSortMode==='symbol_asc')out.sort((a,b)=>(a.coin_ticker||'').localeCompare(b.coin_ticker||''));
+  else if(journalSortMode==='symbol_desc')out.sort((a,b)=>(b.coin_ticker||'').localeCompare(a.coin_ticker||''));
+  return out;
+}
+// Re-renders only the table body from the already-loaded trades — filtering
+// or re-sorting as you type shouldn't re-fetch from the database.
+function renderJournalTableBody(){
+  const tbody=document.getElementById('journal-table-body');
+  if(!tbody)return;
+  const filtered=journalFilterSort(allJournalTrades);
+  tbody.innerHTML=filtered.length?filtered.map((t,i)=>journalRowHtml(t,i)).join(''):`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match "${escapeHtml(journalFilterText)}".</td></tr>`;
+}
+function setJournalFilterText(v){journalFilterText=v;renderJournalTableBody();}
+function setJournalSortMode(v){journalSortMode=v;renderJournalTableBody();}
 async function renderJournal(){
   const el=document.getElementById('journal-content');
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
@@ -2931,6 +3010,15 @@ async function renderJournal(){
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalPDF()">📄 Export PDF</button>
   </div>`;
+  html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
+    <input id="journal-filter-input" type="text" placeholder="Filter by symbol…" value="${escapeHtml(journalFilterText)}" oninput="setJournalFilterText(this.value)" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.76rem">
+    <select id="journal-sort-select" onchange="setJournalSortMode(this.value)" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.76rem">
+      <option value="date_desc" ${journalSortMode==='date_desc'?'selected':''}>Date ↓ (newest)</option>
+      <option value="date_asc" ${journalSortMode==='date_asc'?'selected':''}>Date ↑ (oldest)</option>
+      <option value="symbol_asc" ${journalSortMode==='symbol_asc'?'selected':''}>Symbol A→Z</option>
+      <option value="symbol_desc" ${journalSortMode==='symbol_desc'?'selected':''}>Symbol Z→A</option>
+    </select>
+  </div>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink);color:#F1F3F5">
@@ -2946,7 +3034,7 @@ async function renderJournal(){
         <th style="padding:8px 10px;text-align:right">P&amp;L (INR)</th>
         <th style="padding:8px 10px;text-align:right">FX Rate</th>
       </tr></thead>
-      <tbody id="journal-table-body">${allJournalTrades.map((t,i)=>journalRowHtml(t,i)).join('')}</tbody>
+      <tbody id="journal-table-body">${journalFilterSort(allJournalTrades).map((t,i)=>journalRowHtml(t,i)).join('')}</tbody>
     </table>
   </div>
   <div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">FX Rate is the USD→INR rate on the trading day (ECB reference rate). Older trades without a stored rate are backfilled automatically as you view this screen.</div>`;
@@ -3625,9 +3713,11 @@ async function loadBinanceSymbolMap(){
   const{data}=await sb.from('binance_symbol_map').select('*').order('symbol');
   binanceSymbolMap=data||[];
 }
+let binanceLastSyncedAt=null;
 async function loadBinanceDefaultPortfolio(){
   const{data}=await sb.from('binance_sync_settings').select('*').eq('user_id',currentUser.id).maybeSingle();
   binanceDefaultPortfolioId=data?data.default_portfolio_id:null;
+  binanceLastSyncedAt=data?data.last_synced_at:null;
 }
 async function saveBinanceDefaultPortfolio(){
   const val=document.getElementById('bsm-default-portfolio').value;
@@ -3644,17 +3734,30 @@ function renderBinanceSettingsCard(){
     if(list){
       list.innerHTML=binanceSymbolMap.length?binanceSymbolMap.map(m=>{
         const options=cryptoPortfolios.map(p=>`<option value="${p.id}"${p.id===m.portfolio_id?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
-        return`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.76rem">
+        return`<div class="bsm-row" data-symbol="${escapeHtml(m.symbol.toLowerCase())}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.76rem">
           <span><b>${escapeHtml(m.symbol)}</b></span>
           <select class="form-select" style="flex:1;font-size:0.74rem" onchange="reassignSymbolMapping('${m.id}',this.value)">${options}</select>
           <button class="link-btn" style="color:var(--red)" onclick="removeSymbolMapping('${m.id}')">Remove</button>
         </div>`;
       }).join(''):'<div style="font-size:0.72rem;color:var(--ink3)">No symbols mapped yet — sync once your default portfolio is set below, and they\'ll appear here automatically.</div>';
     }
+    const summaryEl=document.getElementById('binance-symbol-map-summary');
+    if(summaryEl)summaryEl.textContent=`Symbol → portfolio map (${binanceSymbolMap.length} mapped)`;
+    const searchEl=document.getElementById('bsm-search');
+    if(searchEl){
+      searchEl.style.display=binanceSymbolMap.length>15?'block':'none';
+      searchEl.value='';
+    }
     const sel=document.getElementById('bsm-portfolio');
     if(sel)sel.innerHTML=cryptoPortfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
     const defSel=document.getElementById('bsm-default-portfolio');
     if(defSel)defSel.innerHTML='<option value="">— choose —</option>'+cryptoPortfolios.map(p=>`<option value="${p.id}"${p.id===binanceDefaultPortfolioId?' selected':''}>${escapeHtml(p.name)}</option>`).join('');
+  });
+}
+function filterBinanceSymbolMapList(q){
+  const needle=(q||'').trim().toLowerCase();
+  document.querySelectorAll('#binance-symbol-map-list .bsm-row').forEach(row=>{
+    row.style.display=(!needle||row.dataset.symbol.includes(needle))?'flex':'none';
   });
 }
 async function reassignSymbolMapping(id,portfolioId){
@@ -3724,6 +3827,46 @@ async function runBinanceSetup(){
   renderBinanceSettingsCard();
   showToast('Lead Trading + Alpha created — now map your symbols below ✅');
 }
+// One-time cleanup for the "my coins ended up in the wrong portfolio"
+// situation: while the Lead Trading API key wasn't set up yet, the Default
+// portfolio for new coins was pointed at Lead Trading, so everything synced
+// from your REGULAR Binance wallet (really Alpha's trading) landed there
+// instead. This moves it all to Alpha in one go — coins (by relocating them
+// to an Alpha tier), their full Journal/trade history, and the symbol-map
+// rows that caused it — then empties Lead Trading and clears its equity
+// snapshots so the next real sync (via the separate Lead Trading API key)
+// starts clean. Unlike the Transfer feature, this doesn't merge into any
+// existing Alpha coin — safe only because Alpha is empty beforehand.
+async function moveAllLeadTradingDataToAlpha(){
+  const lead=portfolios.find(p=>p.name==='Lead Trading');
+  const alpha=portfolios.find(p=>p.name==='Alpha');
+  if(!lead||!alpha){showToast('Need both Lead Trading and Alpha to exist first (run Step 1 above).');return;}
+  if(!confirm(`This moves everything currently shown under Lead Trading — all coins, balances and trade history — into Alpha, and empties Lead Trading out.\n\nOnly do this if what's under Lead Trading right now is actually your regular/Alpha trading (misrouted because the default portfolio was set to Lead Trading before your Lead Trading API key was configured).\n\nThis cannot be undone — continue?`))return;
+  showToast('Moving data to Alpha…');
+  const{data:alphaTiers}=await sb.from('tiers').select('*').eq('portfolio_id',alpha.id).order('sort_order');
+  let alphaTier=(alphaTiers||[]).find(t=>t.name==='Holdings')||(alphaTiers||[])[0];
+  if(!alphaTier){
+    const{data:newTier,error}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:alpha.id,name:'Holdings',target_pct:1,sort_order:0}).select().single();
+    if(error){showToast('Error creating Alpha tier: '+error.message);return;}
+    alphaTier=newTier;
+  }
+  const{data:leadTiers}=await sb.from('tiers').select('id').eq('portfolio_id',lead.id);
+  const leadTierIds=(leadTiers||[]).map(t=>t.id);
+  if(leadTierIds.length){
+    const{error:coinErr}=await sb.from('coins').update({tier_id:alphaTier.id}).in('tier_id',leadTierIds);
+    if(coinErr){showToast('Error moving coins: '+coinErr.message);return;}
+  }
+  const{error:tradeErr}=await sb.from('trades').update({portfolio_id:alpha.id}).eq('portfolio_id',lead.id);
+  if(tradeErr){showToast('Error moving trades: '+tradeErr.message);return;}
+  await sb.from('binance_symbol_map').update({portfolio_id:alpha.id}).eq('portfolio_id',lead.id);
+  await sb.from('portfolio_equity_snapshots').delete().eq('portfolio_id',lead.id);
+  await sb.from('binance_sync_settings').upsert({user_id:currentUser.id,default_portfolio_id:alpha.id},{onConflict:'user_id'});
+  binanceDefaultPortfolioId=alpha.id;
+  await loadAllData();
+  renderAll();
+  renderBinanceSettingsCard();
+  showToast('Moved to Alpha ✅ — Lead Trading is now empty and the default portfolio is set to Alpha, ready for your real Lead Trading sync once its API key is working.');
+}
 // Finds/creates the coin for an asset inside a given portfolio, querying the
 // DB directly (not the globally-loaded, current-portfolio-only tiers/coins) —
 // same approach as the Transfer feature's ensureCoinInPortfolio, reused here
@@ -3754,8 +3897,13 @@ async function applySyncedFill(portfolioId,portfolioKind,fill){
   const newQuoteUnits=isBuy
     ?(quoteCoin.units_held||0)-quoteQty-commissionInQuote
     :(quoteCoin.units_held||0)+quoteQty-commissionInQuote;
-  await sb.from('coins').update({units_held:newQuoteUnits}).eq('id',quoteCoin.id);
-  quoteCoin.units_held=newQuoteUnits;
+  // A stablecoin's "cost" is always $1 — it was never meant to carry a
+  // weighted-average basis, and nothing above ever sets one. Pinning it
+  // here self-heals any stray value (however it got there) on every sync,
+  // rather than needing a one-off manual correction.
+  const quoteAvgCost=BINANCE_QUOTE_ASSET_SET.has(quoteAsset.toUpperCase())?1:quoteCoin.avg_cost_usd;
+  await sb.from('coins').update({units_held:newQuoteUnits,avg_cost_usd:quoteAvgCost}).eq('id',quoteCoin.id);
+  quoteCoin.units_held=newQuoteUnits;quoteCoin.avg_cost_usd=quoteAvgCost;
   await logTrade({
     user_id:currentUser.id,portfolio_id:portfolioId,coin_id:baseCoin.id,coin_name:baseCoin.name,coin_ticker:baseCoin.ticker,
     action:isBuy?'buy':'sell',units:qty,price_per_unit:price,total_usd:quoteQty,realized_pnl:realizedPnl,
@@ -3901,6 +4049,7 @@ async function syncBinanceNow(){
   for(const pid of affectedPortfolioIds){
     await recordPortfolioEquitySnapshot(pid);
   }
+  await sb.from('binance_sync_settings').upsert({user_id:currentUser.id,last_synced_at:new Date().toISOString()},{onConflict:'user_id'});
   await loadAllData();
   await fetchLivePrices();
   renderAll();
@@ -3953,6 +4102,8 @@ function equityCurveSVG(points){
 }
 async function renderTradingPerformanceDashboard(cp){
   await recordPortfolioEquitySnapshot(cp.id); // keeps today's point current whenever this is opened, not just at sync
+  const isLead=cp.name==='Lead Trading';
+  if(isLead)await loadBinanceDefaultPortfolio(); // also loads binanceLastSyncedAt
   const{data:snaps}=await sb.from('portfolio_equity_snapshots').select('*').eq('user_id',currentUser.id).eq('portfolio_id',cp.id).order('snapshot_date',{ascending:true});
   const capital=settings.total_capital||0;
   const total=totalActualValue();
@@ -3963,15 +4114,17 @@ async function renderTradingPerformanceDashboard(cp){
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const col=totalReturnPct>=0?'#7FE0D4':'#F4A6A6';
-  const label=isStockKind(cp.kind)?'US-Stocks':'Lead Trading';
   const noDataYet=!coins.length&&!trades.length;
-  return`
+  const lastSyncedLine=isLead?`<div style="font-size:0.66rem;color:#6B7280;margin-top:10px">${binanceLastSyncedAt?'Last synced '+timeAgo(binanceLastSyncedAt):'Not synced yet'}</div>`:'';
+  const positions=noDataYet?{html:'',allocStats:[]}:positionsBlockHtml();
+  return{html:`
     <div class="hero-card" style="text-align:center;padding:26px 18px">
       <div style="font-size:0.68rem;color:#8B93A1;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px">Total return${sinceDate?' since '+sinceDate:''}</div>
       ${capital>0
         ?`<div class="hero-val hide-figure" style="font-size:2.6rem;color:${col}">${totalReturnPct>=0?'+':''}${totalReturnPct.toFixed(1)}%</div>`
         :`<div style="font-size:0.9rem;color:#8B93A1;padding:8px 0">Set Total capital in Settings to see return % here.</div>`}
       <div style="font-size:0.72rem;color:#8B93A1;margin-top:6px" class="hide-figure">Portfolio value ${fmtDisplay(total)} · Capital in ${fmtDisplay(capital)}</div>
+      ${lastSyncedLine}
     </div>
     <div style="display:flex;gap:10px;margin-bottom:12px">
       <div class="card" style="flex:1;text-align:center;margin-bottom:0"><div style="font-size:0.66rem;color:var(--ink3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Win rate</div><div style="font-size:1.2rem;font-weight:600">${winRate!=null?winRate.toFixed(1)+'%':'—'}</div></div>
@@ -3981,8 +4134,42 @@ async function renderTradingPerformanceDashboard(cp){
       <div class="card-title">Return over time</div>
       ${equityCurveSVG(curvePoints)}
     </div>
-    ${noDataYet?`<div class="empty-state"><div class="ic">💼</div><div>${isStockKind(cp.kind)?'No stocks in this portfolio yet.':'No trade history yet — map a symbol and Sync Binance in Settings.'}</div></div>`:''}
-  `;
+    ${noDataYet?`<div class="empty-state"><div class="ic">💼</div><div>${isStockKind(cp.kind)?'No stocks in this portfolio yet.':'No trade history yet — map a symbol and Sync Binance in Settings.'}</div></div>`:positions.html}
+  `,allocStats:positions.allocStats};
+}
+// The bottom half of the trading-performance dashboard: current open
+// positions (with an allocation-by-coin donut), dust (<$1) tucked behind a
+// collapsed toggle so a wallet full of leftover fee-dust and tiny fills
+// doesn't bury the positions that actually matter. column-span:all keeps
+// it one full-width block below the hero/tiles/chart above, instead of
+// getting split into the page's masonry columns alongside them.
+function positionsBlockHtml(){
+  const openCoinsAll=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+  if(!openCoinsAll.length)return{html:'',allocStats:[]};
+  const{shown,dust}=splitDust(openCoinsAll);
+  const valueOf=c=>{const v=livePrices[c.coingecko_id];return v!=null?(c.units_held||0)*v:0;};
+  shown.sort((a,b)=>valueOf(b)-valueOf(a));
+  const totalShownValue=shown.reduce((s,c)=>s+valueOf(c),0);
+  const allocStats=totalShownValue>0?shown.map(c=>({name:c.ticker,actualPct:valueOf(c)/totalShownValue})):[];
+  const donutHtml=allocStats.length?`<div class="card">
+    <div class="card-title">Allocation by coin</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="position:relative;width:100px;height:100px;flex-shrink:0"><canvas id="tp-alloc-donut"></canvas></div>
+      <div style="font-size:0.72rem;flex:1;max-height:150px;overflow-y:auto">
+        ${allocStats.slice(0,10).map((s,i)=>`<div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${['#E8A93E','#17B6A7','#2E6FA3','#7C6FE0','#8B93A1','#C0392B','#1E9E6E'][i%7]};margin-right:5px"></span>${escapeHtml(s.name)}</span>
+          <span style="font-weight:700">${(s.actualPct*100).toFixed(1)}%</span>
+        </div>`).join('')}
+        ${allocStats.length>10?`<div style="color:var(--ink3)">+${allocStats.length-10} more</div>`:''}
+      </div>
+    </div>
+  </div>`:'';
+  return{html:`<div style="column-span:all">
+    <div class="dash-section"><h3>Positions</h3></div>
+    <div class="card">${shown.length?shown.map(spotCoinRowHtml).join(''):'<div class="empty-state" style="padding:16px 0"><div>Only dust positions right now.</div></div>'}</div>
+    ${dustDetailsHtml(dust)}
+    ${donutHtml}
+  </div>`,allocStats};
 }
 function renderPublicSettingsCard(){
   const cp=currentPortfolio();
