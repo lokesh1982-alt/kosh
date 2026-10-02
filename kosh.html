@@ -388,6 +388,14 @@ select option{color:#14181D;background:#fff;}
 <div class="modal-overlay" id="coin-modal">
   <div class="modal">
     <div class="modal-title" id="coin-modal-title">New Coin</div>
+    <div class="form-group">
+      <label class="form-label">Search &amp; select <span style="font-size:0.68rem;color:var(--ink3)">(fills in the fields below correctly — recommended)</span></label>
+      <div class="wiz-coin-search-wrap">
+        <input class="form-input" id="cm-search-input" placeholder="Search coin name or ticker…" oninput="coinModalSearch(this.value)" autocomplete="off"/>
+        <div id="cm-search-dropdown"></div>
+      </div>
+      <div id="cm-selected-coin" style="font-size:0.78rem;color:var(--green);margin-top:4px"></div>
+    </div>
     <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="coin-name" placeholder="e.g. Bitcoin"/></div>
     <div class="form-group"><label class="form-label">Ticker</label><input class="form-input" id="coin-ticker" placeholder="e.g. BTC"/></div>
     <div class="form-group"><label class="form-label">CoinGecko ID <span style="font-size:0.68rem;color:var(--ink3)">(for live price — see coingecko.com/en/coins/...)</span></label><input class="form-input" id="coin-geckoid" placeholder="e.g. bitcoin"/></div>
@@ -2500,7 +2508,37 @@ function openCoinModal(tierId,coinId){
   document.getElementById('coin-weight').value=c?(c.weight_in_tier*100):'';
   document.getElementById('coin-exchanges').value=c?(c.exchanges||''):'';
   document.getElementById('coin-rationale').value=c?(c.rationale||''):'';
+  document.getElementById('cm-search-input').value='';
+  document.getElementById('cm-search-dropdown').innerHTML='';
+  document.getElementById('cm-selected-coin').textContent=c?`Currently: ${c.name} (${c.ticker})${c.coingecko_id?' · '+c.coingecko_id:''}`:'';
   openModal('coin-modal');
+}
+// Searches CoinGecko (or Finnhub for a US-Stocks portfolio) so Name/Ticker/
+// CoinGecko-ID get filled in from a verified match instead of typed by hand
+// — a typo in the CoinGecko ID is the #1 reason a coin's live price silently
+// never loads. The three fields stay editable below if you need to override.
+let _cmSearchTimer=null,_cmSearchResults=[];
+function coinModalSearch(query){
+  document.getElementById('cm-selected-coin').textContent='';
+  clearTimeout(_cmSearchTimer);
+  const dropdown=document.getElementById('cm-search-dropdown');
+  if(query.trim().length<2){dropdown.innerHTML='';return;}
+  _cmSearchTimer=setTimeout(async()=>{
+    const results=await searchAssetsForCurrentPortfolio(query);
+    _cmSearchResults=results;
+    if(!results.length){dropdown.innerHTML='<div class="wiz-search-dropdown"><div class="wiz-search-item" style="color:var(--ink3);cursor:default">No matches — you can still fill in the fields below by hand.</div></div>';return;}
+    dropdown.innerHTML=`<div class="wiz-search-dropdown">${results.map((r,ri)=>`<div class="wiz-search-item" onclick="coinModalSelectCoin(${ri})">${escapeHtml(r.name)} <span style="color:var(--ink3)">${escapeHtml(r.symbol.toUpperCase())}</span>${r.rank?` · rank #${r.rank}`:''}</div>`).join('')}</div>`;
+  },350);
+}
+function coinModalSelectCoin(ri){
+  const r=_cmSearchResults[ri];
+  if(!r)return;
+  document.getElementById('coin-name').value=r.name;
+  document.getElementById('coin-ticker').value=r.symbol.toUpperCase();
+  document.getElementById('coin-geckoid').value=r.id;
+  document.getElementById('cm-search-dropdown').innerHTML='';
+  document.getElementById('cm-search-input').value=r.name;
+  document.getElementById('cm-selected-coin').textContent=`✓ Matched: ${r.name} (${r.symbol.toUpperCase()}) — fields filled in below`;
 }
 async function saveCoin(){
   const tierId=document.getElementById('coin-modal').dataset.tierId;
