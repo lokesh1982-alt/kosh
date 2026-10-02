@@ -3785,7 +3785,7 @@ async function addSymbolMapping(){
   }catch(e){showToast('Could not find that symbol on Binance. Check the spelling (e.g. BTCUSDT).');return;}
   const{error}=await sb.from('binance_symbol_map').upsert(
     {user_id:currentUser.id,symbol,base_asset:baseAsset,quote_asset:quoteAsset,portfolio_id:portfolioId},
-    {onConflict:'user_id,symbol'}
+    {onConflict:'user_id,symbol,portfolio_id'}
   );
   if(error){showToast('Error: '+error.message);return;}
   document.getElementById('bsm-symbol').value='';
@@ -3913,7 +3913,11 @@ async function applySyncedFill(portfolioId,portfolioKind,fill){
   return true;
 }
 async function syncSymbolMapping(mapping){
-  const{data:cursorRow}=await sb.from('binance_sync_cursor').select('*').eq('user_id',currentUser.id).eq('symbol',mapping.symbol).maybeSingle();
+  // Scoped by symbol AND portfolio — the same symbol (e.g. BTCUSDT) can now
+  // be mapped to both Lead Trading and Alpha at once (they're separate
+  // Binance wallets with independent fill histories and independent trade-id
+  // spaces), so each portfolio needs its own fetch cursor, not a shared one.
+  const{data:cursorRow}=await sb.from('binance_sync_cursor').select('*').eq('user_id',currentUser.id).eq('symbol',mapping.symbol).eq('portfolio_id',mapping.portfolio_id).maybeSingle();
   let lastId=cursorRow?cursorRow.last_trade_id:0;
   const portfolio=portfolios.find(p=>p.id===mapping.portfolio_id);
   if(!portfolio)return 0;
@@ -3941,8 +3945,8 @@ async function syncSymbolMapping(mapping){
       if(ok){totalSynced++;lastId=Math.max(lastId,f.id);}
     }
     await sb.from('binance_sync_cursor').upsert(
-      {user_id:currentUser.id,symbol:mapping.symbol,last_trade_id:lastId,last_synced_at:new Date().toISOString()},
-      {onConflict:'user_id,symbol'}
+      {user_id:currentUser.id,symbol:mapping.symbol,portfolio_id:mapping.portfolio_id,last_trade_id:lastId,last_synced_at:new Date().toISOString()},
+      {onConflict:'user_id,symbol,portfolio_id'}
     );
     if(fills.length<1000)break; // fewer than a full page = caught up
     await new Promise(r=>setTimeout(r,300)); // be polite to Binance's rate limits between pages
@@ -3974,7 +3978,14 @@ async function discoverNewBinanceSymbolsForKeyset(keyset,targetPortfolioId){
   let data;
   try{data=await res.json();}catch(e){return 0;}
   const balances=(data&&data.balances)||[];
-  const mappedSymbols=new Set(binanceSymbolMap.map(m=>m.symbol));
+  // Scoped to THIS target portfolio only — not every mapping for this user.
+  // The same symbol legitimately maps to two different portfolios at once
+  // when the same coin is held in both the Lead Trading wallet and the
+  // regular/Alpha wallet, so a symbol already routed to Alpha must NOT block
+  // it from also being discovered and mapped to Lead Trading (and vice
+  // versa) — that was the bug keeping Lead Trading's real holdings from ever
+  // being picked up once the symbol existed in the map at all.
+  const mappedSymbols=new Set(binanceSymbolMap.filter(m=>m.portfolio_id===targetPortfolioId).map(m=>m.symbol));
   let discovered=0;
   for(const bal of balances){
     const asset=(bal.asset||'').toUpperCase();
@@ -3996,7 +4007,7 @@ async function discoverNewBinanceSymbolsForKeyset(keyset,targetPortfolioId){
         if(!info)continue;
         const{error}=await sb.from('binance_symbol_map').upsert(
           {user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:targetPortfolioId},
-          {onConflict:'user_id,symbol'}
+          {onConflict:'user_id,symbol,portfolio_id'}
         );
         if(!error){
           mappedSymbols.add(candidate);
