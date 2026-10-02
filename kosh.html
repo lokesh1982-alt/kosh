@@ -4115,8 +4115,18 @@ async function moveAllLeadTradingDataToAlpha(){
 // (ensureCoinInPortfolio is defined above, in the Transfer section.)
 async function applySyncedFill(portfolioId,portfolioKind,fill){
   const{baseAsset,quoteAsset,isBuy,qty,price,quoteQty,commission,commissionAsset,tradeTime,binanceSymbol,binanceTradeId}=fill;
-  const baseCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:baseAsset,ticker:baseAsset,coingecko_id:await resolveCoingeckoId(baseAsset)});
+  const resolvedBaseId=await resolveCoingeckoId(baseAsset);
+  const baseCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:baseAsset,ticker:baseAsset,coingecko_id:resolvedBaseId});
   if(!baseCoin)return false;
+  // Heals a coin that already exists with a stale/wrong coingecko_id from
+  // before this lookup existed (ensureCoinInPortfolio only sets it when
+  // CREATING a coin — it leaves an already-found one untouched), so a coin
+  // created under the old naive lowercase-ticker guess gets corrected the
+  // next time sync touches it, without needing a manual Edit.
+  if(resolvedBaseId&&baseCoin.coingecko_id!==resolvedBaseId){
+    await sb.from('coins').update({coingecko_id:resolvedBaseId}).eq('id',baseCoin.id);
+    baseCoin.coingecko_id=resolvedBaseId;
+  }
   const quoteCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:quoteAsset,ticker:quoteAsset,coingecko_id:quoteAsset.toLowerCase()==='usdt'?'tether':quoteAsset.toLowerCase()});
   let realizedPnl=null,newBaseUnits,newAvgCost;
   if(isBuy){
@@ -4359,10 +4369,15 @@ async function syncFundingWallet(){
     if(!asset)continue;
     const total=parseFloat(bal.free||0)+parseFloat(bal.locked||0)+parseFloat(bal.freeze||0)+parseFloat(bal.withdrawing||0);
     if(!(total>0))continue;
+    const resolvedId=await resolveCoingeckoId(asset);
     const coin=await ensureCoinInPortfolio(fundingPortfolio.id,fundingPortfolio.kind,{
-      name:asset,ticker:asset,coingecko_id:await resolveCoingeckoId(asset)
+      name:asset,ticker:asset,coingecko_id:resolvedId
     });
     if(!coin)continue;
+    if(resolvedId&&coin.coingecko_id!==resolvedId){
+      await sb.from('coins').update({coingecko_id:resolvedId}).eq('id',coin.id);
+      coin.coingecko_id=resolvedId;
+    }
     const avgCost=BINANCE_QUOTE_ASSET_SET.has(asset)?1:coin.avg_cost_usd;
     await sb.from('coins').update({units_held:total,avg_cost_usd:avgCost}).eq('id',coin.id);
     count++;
