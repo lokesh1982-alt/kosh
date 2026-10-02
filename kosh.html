@@ -2435,7 +2435,9 @@ function renderTiersSection(){
               <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
               <div class="coin-sub">${fmtPct(c.weight_in_tier||0)} of tier · ${escapeHtml(c.exchanges||'')}</div>
             </div>
-            <div style="display:flex;gap:6px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">Buy</button>
+              <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">Sell</button>
               <button class="link-btn" onclick="openCoinModal('${t.id}','${c.id}')">Edit</button>
               <button class="link-btn" style="color:var(--red)" onclick="deleteCoin('${c.id}')">Delete</button>
             </div>
