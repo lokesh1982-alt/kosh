@@ -151,6 +151,10 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .form-label{font-size:0.76rem;color:var(--ink2);margin-bottom:5px;display:block;font-weight:500;}
 .form-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:var(--card2);}
 .form-select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:var(--card2);}
+/* The dropdown POPUP list for any <select> is drawn by the OS/browser with
+   its own (usually light) background, independent of the closed select's
+   own styling — so option text needs its own dark, readable color here. */
+select option{color:#14181D;background:#fff;}
 
 .modal-overlay{position:fixed;inset:0;background:rgba(20,24,29,0.5);z-index:300;display:none;align-items:flex-end;justify-content:center;}
 .modal-overlay.open{display:flex;}
@@ -210,7 +214,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div class="logo-box serif">क</div>
         <div style="color:#F1F3F5;font-size:0.92rem;font-weight:600" class="serif">कोष</div>
       </div>
-      <select id="sidebar-portfolio-select" onchange="selectPortfolioView(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:7px 8px;font-size:0.72rem;color:#F1F3F5;margin-right:14px;max-width:170px"></select>
       <button class="menu-tile" data-tab="dashboard" onclick="switchTab('dashboard')"><div class="ic">📊</div><div class="lbl">Dashboard</div></button>
       <button class="menu-tile" data-tab="tiers" onclick="switchTab('tiers')"><div class="ic">📈</div><div class="lbl">Tiers &amp; Coins</div></button>
       <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
@@ -268,9 +271,12 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 
     <!-- TIERS & COINS -->
     <div class="section" id="sec-tiers">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <div class="card-title" style="margin:0">Tiers &amp; coins</div>
-        <button class="link-btn" onclick="openTierModal()">+ New tier</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <select id="tiers-portfolio-select" class="portfolio-view-select form-select" style="width:auto;padding:6px 8px;font-size:0.76rem" onchange="selectWorkingPortfolio(this.value)"></select>
+          <button class="link-btn" onclick="openTierModal()">+ New tier</button>
+        </div>
       </div>
       <div id="tiers-content"></div>
     </div>
@@ -287,16 +293,15 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <!-- SETTINGS -->
     <div class="section" id="sec-settings">
       <div class="card">
-        <div class="card-title">Total capital</div>
-        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px">Funding with USDT below increases this automatically. Only edit this directly if you want to set it without an actual USDT deposit.</div>
-        <div class="form-group">
-          <label class="form-label">Total capital to invest (USD)</label>
-          <input class="form-input" type="number" id="settings-capital" step="0.01"/>
-        </div>
-        <button class="btn-primary" onclick="saveCapital()">Save</button>
+        <div class="card-title">Portfolio</div>
+        <select id="settings-portfolio-select" class="portfolio-view-select form-select" onchange="selectWorkingPortfolio(this.value)"></select>
       </div>
       <div class="card" id="settings-spot-fund-card" style="display:none">
-        <div class="card-title">Fund this portfolio</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+          <div class="card-title" style="margin:0">Fund this portfolio</div>
+          <div style="font-size:0.8rem;font-weight:700" id="settings-total-capital-display"></div>
+        </div>
+        <div style="font-size:0.7rem;color:var(--ink3);margin-bottom:10px">Total capital, above, updates automatically from Fund and Withdraw — no manual entry needed.</div>
         <div style="display:flex;gap:10px">
           <button class="btn-primary" id="settings-fund-button" style="flex:1" onclick="openFundSpotModal()">💵 Fund with USDT</button>
           <button class="btn-outline" id="settings-withdraw-button" style="flex:1" onclick="openWithdrawSpotModal()">🏧 Withdraw</button>
@@ -874,18 +879,23 @@ function switchTab(name){
   if(name==='journal')renderJournal();
   if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
-  if(name==='settings'){
-    document.getElementById('settings-capital').value=settings.total_capital||'';
-    const cp=currentPortfolio();
-    const isSpotSettings=cp&&cp.kind==='spot';
-    const isStockSettings=cp&&isStockKind(cp.kind);
-    document.getElementById('settings-spot-fund-card').style.display='';
-    document.getElementById('settings-fund-button').textContent=isStockSettings?'💵 Fund with USD':'💵 Fund with USDT';
-    document.getElementById('settings-data-card').style.display=(isSpotSettings||isStockSettings)?'none':'';
-    document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
-    renderBinanceSettingsCard();
-    renderPublicSettingsCard();
-  }
+  if(name==='settings')refreshSettingsPanel();
+}
+// Populates the Settings section for whichever portfolio is currently
+// selected (currentPortfolioId) — split out of switchTab so the Settings
+// portfolio-picker can call it too, without re-running the rest of switchTab.
+function refreshSettingsPanel(){
+  const tcDisplay=document.getElementById('settings-total-capital-display');
+  if(tcDisplay)tcDisplay.textContent=fmtUsd(settings.total_capital||0);
+  const cp=currentPortfolio();
+  const isSpotSettings=cp&&cp.kind==='spot';
+  const isStockSettings=cp&&isStockKind(cp.kind);
+  document.getElementById('settings-spot-fund-card').style.display='';
+  document.getElementById('settings-fund-button').textContent=isStockSettings?'💵 Fund with USD':'💵 Fund with USDT';
+  document.getElementById('settings-data-card').style.display=(isSpotSettings||isStockSettings)?'none':'';
+  document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
+  renderBinanceSettingsCard();
+  renderPublicSettingsCard();
 }
 function goToDashboard(){switchTab('dashboard');}
 function toggleFigures(){
@@ -904,12 +914,16 @@ function renderBackRowPortfolioSelect(){
     +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
     +`<option value="__new__">+ New Portfolio</option>`;
 }
+// Portfolio selectors for the sections that are inherently about ONE
+// portfolio — Tiers & Coins and Settings. These pick by currentPortfolioId
+// (not dashViewMode) since neither section has a "combined" view.
 function renderSidebarPortfolioSelect(){
-  const sel=document.getElementById('sidebar-portfolio-select');
-  if(!sel)return;
-  sel.innerHTML=`<option value="both" ${dashViewMode==='both'?'selected':''}>🌐 Combined Portfolios</option>`
-    +portfolios.map(p=>`<option value="${p.id}" ${dashViewMode===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
+  const opts=portfolios.map(p=>`<option value="${p.id}" ${p.id===currentPortfolioId?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')
     +`<option value="__new__">+ New Portfolio</option>`;
+  ['tiers-portfolio-select','settings-portfolio-select'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(sel)sel.innerHTML=opts;
+  });
 }
 // The ONE place portfolio switching happens now (sidebar on desktop, the
 // frozen back-row on mobile) — keeps dashViewMode (what the Dashboard shows)
@@ -924,6 +938,21 @@ async function selectPortfolioView(value){
     return;
   }
   await setDashViewMode(value);
+}
+// Used by the Tiers & Coins / Settings portfolio pickers only — these just
+// change which portfolio you're editing (currentPortfolioId), and deliberately
+// leave dashViewMode (what the Dashboard shows) untouched, since picking a
+// portfolio here shouldn't silently switch the Dashboard out of combined view.
+async function selectWorkingPortfolio(value){
+  if(value==='__new__'){
+    openNewPortfolioModal();
+    renderSidebarPortfolioSelect();
+    return;
+  }
+  if(value!==currentPortfolioId)await switchPortfolio(value);
+  renderSidebarPortfolioSelect();
+  if(document.getElementById('sec-tiers').classList.contains('active'))renderTiersSection();
+  if(document.getElementById('sec-settings').classList.contains('active'))refreshSettingsPanel();
 }
 
 // ═══════════════════════════════
@@ -1989,10 +2018,11 @@ async function renderDashboard(){
       const col=vsCap==null?'var(--ink3)':vsCap>=0?'var(--green)':'var(--red)';
       const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>=1);
       const donut=donutFromValues(items,pp.value,pfPalette);
-      html+=`<div class="card" style="flex:1 1 220px;min-width:220px;border-top:3px solid ${color};margin-bottom:0">
+      html+=`<div class="card" style="flex:1 1 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${color} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${color} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${color}"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:6px;min-width:0">
-            <span style="width:8px;height:8px;border-radius:50%;background:${color};flex:none"></span>
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="width:26px;height:26px;border-radius:8px;background:color-mix(in srgb, ${color} 30%, var(--card2));color:${color};display:flex;align-items:center;justify-content:center;font-size:0.76rem;font-weight:800;flex:none">${escapeHtml((p.name||'?').charAt(0).toUpperCase())}</span>
             <span style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</span>
           </div>
           ${buildMiniSparklineSVG(snapByPortfolio[p.id]||[],56,20)}
@@ -2000,6 +2030,10 @@ async function renderDashboard(){
         <div class="hide-figure" style="font-size:1.15rem;font-weight:700">${fmtDisplay(pp.value)}</div>
         <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${col};margin-top:2px">${vsCap==null?'No capital set':signedDisplay(gainPf)+' ('+(vsCap>=0?'+':'')+vsCap.toFixed(1)+'%)'}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid var(--border)">
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
+          <span class="hide-figure" style="font-size:0.74rem;font-weight:600">${fmtDisplay(pp.capital||0)}</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:2px">
           <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
           <span style="font-size:0.78rem;font-weight:700;color:${col}">${vsCap==null?'—':(vsCap>=0?'+':'')+vsCap.toFixed(1)+'%'}</span>
         </div>
@@ -2058,8 +2092,10 @@ async function renderDashboard(){
       const rows=openCoins.map(c=>{
         const v=coinValue(c)||0,alloc=pp.value>0?(v/pp.value*100):0;
         const price=livePrices[c.coingecko_id];
-        const pct=(c.avg_cost_usd>0&&price!=null)?((price-c.avg_cost_usd)/c.avg_cost_usd*100):null;
-        return{c,v,alloc,pct};
+        const avgCost=c.avg_cost_usd;
+        const pct=(avgCost>0&&price!=null)?((price-avgCost)/avgCost*100):null;
+        const unrealized=(avgCost!=null&&price!=null)?(price-avgCost)*(c.units_held||0):null;
+        return{c,v,alloc,pct,price,avgCost,unrealized};
       }).sort((a,b)=>b.v-a.v);
       html+=`<div style="column-span:all">
         <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
@@ -2068,16 +2104,32 @@ async function renderDashboard(){
           <span class="hide-figure" style="font-size:0.7rem;color:var(--ink3)">${fmtDisplay(pp.value)}</span>
         </div>
         <div class="card" style="padding:0">
-          ${rows.length?rows.map(r=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border)">
-            <div style="flex:1 1 160px;min-width:0">
+          ${rows.length?rows.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <div style="flex:1 1 140px;min-width:110px">
               <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
               <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
             </div>
-            <div style="flex:0 0 120px;text-align:right">
+            <div style="flex:0 0 86px;text-align:right">
+              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Avg buy</div>
+              <div class="hide-figure" style="font-size:0.74rem">${r.avgCost!=null?fmtUsd(r.avgCost):'—'}</div>
+            </div>
+            <div style="flex:0 0 86px;text-align:right">
+              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Price</div>
+              <div style="font-size:0.74rem">${r.price!=null?fmtUsd(r.price):'—'}</div>
+            </div>
+            <div style="flex:0 0 100px;text-align:right">
+              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Unrealized</div>
+              <div class="hide-figure" style="font-size:0.74rem;font-weight:700;color:${r.unrealized==null?'var(--ink3)':r.unrealized>=0?'var(--green)':'var(--red)'}">${r.unrealized==null?'—':signedDisplay(r.unrealized)}</div>
+            </div>
+            <div style="flex:0 0 110px;text-align:right">
               <div class="hide-figure" style="font-size:0.78rem">${fmtUsd(r.v)}</div>
               <div style="font-size:0.66rem;color:var(--ink3)">${r.alloc.toFixed(1)}% of portfolio</div>
             </div>
             ${perfBarHtml(r.pct)}
+            <div style="flex:0 0 96px;display:flex;gap:4px;justify-content:flex-end">
+              <button class="link-btn" style="color:var(--green);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','buy')">Buy</button>
+              <button class="link-btn" style="color:var(--red);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','sell')">Sell</button>
+            </div>
           </div>`).join(''):`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`}
         </div>
       </div>`;
@@ -2637,6 +2689,7 @@ async function confirmFundSpot(){
   await loadAllData();
   await fetchLivePrices();
   renderAll();
+  {const tcd=document.getElementById('settings-total-capital-display');if(tcd)tcd.textContent=fmtUsd(settings.total_capital||0);}
   showToast(`Funded with ${amount} USDT ✅`);
 }
 function openWithdrawSpotModal(){
@@ -2674,6 +2727,7 @@ async function confirmWithdrawSpot(){
   await loadAllData();
   await fetchLivePrices();
   renderAll();
+  {const tcd=document.getElementById('settings-total-capital-display');if(tcd)tcd.textContent=fmtUsd(settings.total_capital||0);}
   showToast(`Withdrew ${actualAmount} ${ticker} ✅`);
 }
 async function confirmAddPosition(){
@@ -3567,6 +3621,15 @@ function startNewsAutoRefresh(){
   },5*60*1000); // every 5 minutes, only while News is the visible screen
 }
 
+// Buy/Sell straight from a Dashboard holdings row, which can belong to ANY
+// portfolio (not just the one currently loaded) — switches the working
+// portfolio first if needed, same as selectWorkingPortfolio, then opens the
+// trade modal preselected on that coin. dashViewMode is left alone so the
+// Dashboard stays on combined view when you come back to it.
+async function quickTrade(portfolioId,coinId,action){
+  if(portfolioId!==currentPortfolioId)await switchPortfolio(portfolioId);
+  openManualTradeModal(coinId,action);
+}
 function openManualTradeModal(preselectCoinId,preselectAction){
   if(!coins.length){showToast('Add some coins first under Tiers & Coins.');return;}
   const sel=document.getElementById('trade-coin-select');
