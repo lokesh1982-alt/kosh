@@ -1973,6 +1973,10 @@ async function renderDashboard(){
     // Single-portfolio mode — the portfolio selected in the dropdown IS
     // currentPortfolioId at this point (setDashViewMode already switched it).
     const cp=currentPortfolio();
+    if(cp&&(cp.name==='Lead Trading'||isStockKind(cp.kind))){
+      el.innerHTML=await renderTradingPerformanceDashboard(cp);
+      return;
+    }
     const isSpotEmpty=cp&&cp.kind==='spot';
     const isStockEmpty=cp&&isStockKind(cp.kind);
     if(!coins.length){
@@ -3880,13 +3884,75 @@ async function recordPortfolioEquitySnapshot(portfolioId){
   if(!portfolio)return;
   const portfolioCoins=portfolioId===currentPortfolioId?coins:await getPortfolioCoins(portfolioId);
   if(!portfolioCoins.length)return;
-  await fetchCryptoPricesForCoins(portfolioCoins);
+  if(isStockKind(portfolio.kind))await fetchFinnhubPricesForCoins(portfolioCoins);
+  else await fetchCryptoPricesForCoins(portfolioCoins);
   const value=portfolioCoins.reduce((a,c)=>{const v=livePrices[c.coingecko_id];return a+(v!=null?(c.units_held||0)*v:0);},0);
   const today=new Date().toISOString().slice(0,10);
   await sb.from('portfolio_equity_snapshots').upsert(
     {user_id:currentUser.id,portfolio_id:portfolioId,snapshot_date:today,equity_usd:value},
     {onConflict:'user_id,portfolio_id,snapshot_date'}
   );
+}
+// ── Trading-performance dashboard ──────────────────────────────────────
+// A dedicated Dashboard layout for portfolios where "how did I do" (return
+// %, win rate, trades) matters more than allocation/rebalance — Lead
+// Trading and US-Stocks. Mirrors the look of the public Lead Trading page
+// (leadtrack-public.html), reusing Kosh's own dark .hero-card styling
+// rather than duplicating a second color system.
+function equityCurveSVG(points){
+  if(!points||points.length<2)return'<div style="color:var(--ink3);font-size:0.76rem;padding:30px 0;text-align:center">Not enough history yet for a chart — check back after a day or two.</div>';
+  const vals=points.map(p=>p.return_pct);
+  const w=1000,h=220,pad=10;
+  let min=Math.min(0,...vals),max=Math.max(0,...vals);
+  if(min===max){min-=1;max+=1;}
+  const range=max-min,stepX=(w-2*pad)/(vals.length-1);
+  const y=v=>pad+(h-2*pad)-((v-min)/range)*(h-2*pad);
+  const pts=vals.map((v,i)=>[pad+i*stepX,y(v)]);
+  const line='M'+pts.map(c=>c.join(',')).join('L');
+  const y0=y(0);
+  const last=vals[vals.length-1],col=last>=0?'#17B6A7':'#DC4C4C';
+  return`<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:220px;display:block" preserveAspectRatio="none">
+    <defs><linearGradient id="eqfill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${col}" stop-opacity="0.32"></stop>
+      <stop offset="100%" stop-color="${col}" stop-opacity="0"></stop>
+    </linearGradient></defs>
+    <line x1="0" y1="${y0}" x2="${w}" y2="${y0}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="4,4"></line>
+    <path d="${line}L${w-pad},${h}L${pad},${h}Z" fill="url(#eqfill)"></path>
+    <path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>
+  </svg>`;
+}
+async function renderTradingPerformanceDashboard(cp){
+  await recordPortfolioEquitySnapshot(cp.id); // keeps today's point current whenever this is opened, not just at sync
+  const{data:snaps}=await sb.from('portfolio_equity_snapshots').select('*').eq('user_id',currentUser.id).eq('portfolio_id',cp.id).order('snapshot_date',{ascending:true});
+  const capital=settings.total_capital||0;
+  const total=totalActualValue();
+  const totalReturnPct=capital>0?((total-capital)/capital)*100:0;
+  const curvePoints=(snaps||[]).map(s=>({date:s.snapshot_date,return_pct:capital>0?((s.equity_usd-capital)/capital)*100:0}));
+  const sinceDate=snaps&&snaps.length?new Date(snaps[0].snapshot_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
+  const closed=trades.filter(t=>t.realized_pnl!=null);
+  const wins=closed.filter(t=>t.realized_pnl>0);
+  const winRate=closed.length?(wins.length/closed.length)*100:null;
+  const col=totalReturnPct>=0?'#7FE0D4':'#F4A6A6';
+  const label=isStockKind(cp.kind)?'US-Stocks':'Lead Trading';
+  const noDataYet=!coins.length&&!trades.length;
+  return`
+    <div class="hero-card" style="text-align:center;padding:26px 18px">
+      <div style="font-size:0.68rem;color:#8B93A1;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px">Total return${sinceDate?' since '+sinceDate:''}</div>
+      ${capital>0
+        ?`<div class="hero-val hide-figure" style="font-size:2.6rem;color:${col}">${totalReturnPct>=0?'+':''}${totalReturnPct.toFixed(1)}%</div>`
+        :`<div style="font-size:0.9rem;color:#8B93A1;padding:8px 0">Set Total capital in Settings to see return % here.</div>`}
+      <div style="font-size:0.72rem;color:#8B93A1;margin-top:6px" class="hide-figure">Portfolio value ${fmtDisplay(total)} · Capital in ${fmtDisplay(capital)}</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:12px">
+      <div class="card" style="flex:1;text-align:center;margin-bottom:0"><div style="font-size:0.66rem;color:var(--ink3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Win rate</div><div style="font-size:1.2rem;font-weight:600">${winRate!=null?winRate.toFixed(1)+'%':'—'}</div></div>
+      <div class="card" style="flex:1;text-align:center;margin-bottom:0"><div style="font-size:0.66rem;color:var(--ink3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Closed trades</div><div style="font-size:1.2rem;font-weight:600">${closed.length}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Return over time</div>
+      ${equityCurveSVG(curvePoints)}
+    </div>
+    ${noDataYet?`<div class="empty-state"><div class="ic">💼</div><div>${isStockKind(cp.kind)?'No stocks in this portfolio yet.':'No trade history yet — map a symbol and Sync Binance in Settings.'}</div></div>`:''}
+  `;
 }
 function renderPublicSettingsCard(){
   const cp=currentPortfolio();
