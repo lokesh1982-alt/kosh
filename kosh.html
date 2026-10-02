@@ -1347,6 +1347,35 @@ async function searchCoinGecko(query){
     return(data.coins||[]).slice(0,8).map(c=>({id:c.id,name:c.name,symbol:c.symbol,rank:c.market_cap_rank}));
   }catch(e){return[];}
 }
+// Binance's ticker is NOT reliably CoinGecko's id (LINK's real id is
+// "chainlink", PENGU's is "pudgy-penguins", SLP's is "smooth-love-potion" —
+// naively lowercasing the ticker silently mismatches onto whatever unrelated
+// coin happens to own that id on CoinGecko, which then pulls a wrong price
+// for it). Binance sync uses this instead of a raw lowercase guess: search
+// CoinGecko for the ticker and take the highest-market-cap exact symbol
+// match, which is overwhelmingly the coin actually meant. Cached per ticker
+// since sync re-processes the same assets on every run.
+let _cgIdResolveCache={};
+async function resolveCoingeckoId(ticker){
+  const t=(ticker||'').toUpperCase();
+  if(!t)return'';
+  if(t==='USDT')return'tether';
+  if(_cgIdResolveCache[t])return _cgIdResolveCache[t];
+  let id=t.toLowerCase();
+  try{
+    const results=await searchCoinGecko(t);
+    const exact=results.filter(r=>(r.symbol||'').toUpperCase()===t);
+    if(exact.length){
+      const best=exact.reduce((a,b)=>{
+        const ar=a.rank==null?Infinity:a.rank,br=b.rank==null?Infinity:b.rank;
+        return br<ar?b:a;
+      });
+      id=best.id;
+    }
+  }catch(e){/* fall back to the lowercase guess below */}
+  _cgIdResolveCache[t]=id;
+  return id;
+}
 const STABLECOIN_TICKERS=new Set(['USDT','USDC','DAI','BUSD','TUSD','USDP','GUSD','FRAX','USDD','FDUSD']);
 // Classifies a coin by market-cap rank (a live, objective signal) into the kind
 // of tier it would typically sit in — this is what "suggest the relevant tier"
@@ -4086,7 +4115,7 @@ async function moveAllLeadTradingDataToAlpha(){
 // (ensureCoinInPortfolio is defined above, in the Transfer section.)
 async function applySyncedFill(portfolioId,portfolioKind,fill){
   const{baseAsset,quoteAsset,isBuy,qty,price,quoteQty,commission,commissionAsset,tradeTime,binanceSymbol,binanceTradeId}=fill;
-  const baseCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:baseAsset,ticker:baseAsset,coingecko_id:baseAsset.toLowerCase()});
+  const baseCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:baseAsset,ticker:baseAsset,coingecko_id:await resolveCoingeckoId(baseAsset)});
   if(!baseCoin)return false;
   const quoteCoin=await ensureCoinInPortfolio(portfolioId,portfolioKind,{name:quoteAsset,ticker:quoteAsset,coingecko_id:quoteAsset.toLowerCase()==='usdt'?'tether':quoteAsset.toLowerCase()});
   let realizedPnl=null,newBaseUnits,newAvgCost;
@@ -4331,7 +4360,7 @@ async function syncFundingWallet(){
     const total=parseFloat(bal.free||0)+parseFloat(bal.locked||0)+parseFloat(bal.freeze||0)+parseFloat(bal.withdrawing||0);
     if(!(total>0))continue;
     const coin=await ensureCoinInPortfolio(fundingPortfolio.id,fundingPortfolio.kind,{
-      name:asset,ticker:asset,coingecko_id:asset==='USDT'?'tether':asset.toLowerCase()
+      name:asset,ticker:asset,coingecko_id:await resolveCoingeckoId(asset)
     });
     if(!coin)continue;
     const avgCost=BINANCE_QUOTE_ASSET_SET.has(asset)?1:coin.avg_cost_usd;
