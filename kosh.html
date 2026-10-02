@@ -303,13 +303,14 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       </div>
       <div class="card" id="settings-binance-card">
         <div class="card-title">Binance sync</div>
-        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Alpha are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to.</div>
-        <div style="font-size:0.68rem;color:var(--amber-dark);background:var(--amber-bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.45">⚠️ Lead Trading lives in a <b>separate Binance wallet</b> from your regular account (that's why "Copy Trading API" is a different button on Binance) — your regular API key can't see it. Create a second key in the Binance app: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b>, then add it in Supabase as <code>BINANCE_LEAD_API_KEY</code> / <code>BINANCE_LEAD_API_SECRET</code>, alongside your existing <code>BINANCE_API_KEY</code> / <code>BINANCE_API_SECRET</code> (which stays as-is, used for Alpha).</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Spot are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to. "Spot" is Kosh's name for your regular Binance Spot wallet — not to be confused with Binance's own "Alpha" zone for pre-listed tokens, which has no API and is tracked as a separate manual portfolio instead.</div>
+        <div style="font-size:0.68rem;color:var(--amber-dark);background:var(--amber-bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.45">⚠️ Lead Trading lives in a <b>separate Binance wallet</b> from your regular account (that's why "Copy Trading API" is a different button on Binance) — your regular API key can't see it. Create a second key in the Binance app: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b>, then add it in Supabase as <code>BINANCE_LEAD_API_KEY</code> / <code>BINANCE_LEAD_API_SECRET</code>, alongside your existing <code>BINANCE_API_KEY</code> / <code>BINANCE_API_SECRET</code> (which stays as-is, used for Spot and Funding).</div>
+        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px;line-height:1.4">💡 Want your Funding wallet tracked too? Create a portfolio named exactly <b>"Funding Wallet"</b> (+ New in the portfolio switcher) — every sync will then reconcile its balances automatically, the same way Spot's holdings stay current.</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
         <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
         <button class="btn-outline" style="width:100%;margin-bottom:14px;border-color:var(--amber-dark);color:var(--amber-dark)" onclick="moveAllLeadTradingDataToAlpha()">🧹 Move misrouted Lead Trading data to Alpha (one-time fix)</button>
         <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Default portfolio for new coins</div>
-        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:8px;line-height:1.4">Every time you sync, any coin you've traded that isn't mapped yet is auto-added here — you don't have to type each symbol. Reassign a coin to Alpha below if it belongs there instead.</div>
+        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:8px;line-height:1.4">Every time you sync, any coin you've traded that isn't mapped yet is auto-added here — you don't have to type each symbol. Reassign it below if it belongs in a different portfolio instead.</div>
         <div style="display:flex;gap:6px;margin-bottom:14px">
           <select class="form-select" id="bsm-default-portfolio" style="flex:1"></select>
           <button class="btn-outline" onclick="saveBinanceDefaultPortfolio()">Save</button>
@@ -4078,6 +4079,39 @@ async function reconcileQuoteAssetBalances(){
     }
   }
 }
+// The Funding wallet (Binance app → Wallet → Funding) is a separate pool of
+// balances from Spot — money moves in and out of it by internal transfer,
+// not by trading, so there's no fill history to replay like Lead
+// Trading/Spot. Instead this is pure balance reconciliation: every sync,
+// pull the real Funding balances and set each asset's units_held to match.
+// A coin's avg_cost_usd is left untouched if it already has one (so a
+// manually-entered cost basis via "Correct" survives future syncs) —
+// stablecoins are still forced to $1, same reasoning as the Spot quote-asset
+// reconciliation above.
+async function syncFundingWallet(){
+  const fundingPortfolio=portfolios.find(p=>p.name==='Funding Wallet');
+  if(!fundingPortfolio)return 0;
+  const res=await binanceFetch('funding',{},'main');
+  if(!res||!res.ok)return 0;
+  let data;
+  try{data=await res.json();}catch(e){return 0;}
+  if(!Array.isArray(data))return 0;
+  let count=0;
+  for(const bal of data){
+    const asset=(bal.asset||'').toUpperCase();
+    if(!asset)continue;
+    const total=parseFloat(bal.free||0)+parseFloat(bal.locked||0)+parseFloat(bal.freeze||0)+parseFloat(bal.withdrawing||0);
+    if(!(total>0))continue;
+    const coin=await ensureCoinInPortfolio(fundingPortfolio.id,fundingPortfolio.kind,{
+      name:asset,ticker:asset,coingecko_id:asset==='USDT'?'tether':asset.toLowerCase()
+    });
+    if(!coin)continue;
+    const avgCost=BINANCE_QUOTE_ASSET_SET.has(asset)?1:coin.avg_cost_usd;
+    await sb.from('coins').update({units_held:total,avg_cost_usd:avgCost}).eq('id',coin.id);
+    count++;
+  }
+  return count;
+}
 async function syncBinanceNow(){
   await loadBinanceSymbolMap();
   await loadBinanceDefaultPortfolio();
@@ -4096,9 +4130,13 @@ async function syncBinanceNow(){
   }
   if(statusEl)statusEl.textContent='Reconciling cash balances…';
   await reconcileQuoteAssetBalances();
+  if(statusEl)statusEl.textContent='Syncing Funding wallet…';
+  await syncFundingWallet();
   // One equity snapshot per affected portfolio, for the equity-curve chart
   // (private dashboard and, for Lead Trading, the public page).
   const affectedPortfolioIds=[...new Set(binanceSymbolMap.map(m=>m.portfolio_id))];
+  const fundingPortfolio=portfolios.find(p=>p.name==='Funding Wallet');
+  if(fundingPortfolio&&!affectedPortfolioIds.includes(fundingPortfolio.id))affectedPortfolioIds.push(fundingPortfolio.id);
   for(const pid of affectedPortfolioIds){
     await recordPortfolioEquitySnapshot(pid);
   }
