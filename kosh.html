@@ -12,13 +12,13 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@500;600;700&display=swap');
 :root{
-  --bg:#F1F3F5;--card:#FFFFFF;--card2:#EDEFF1;
-  --border:#E1E4E8;
-  --ink:#14181D;--ink2:#5A6270;--ink3:#8B93A1;
-  --teal:#17B6A7;--teal-dark:#0F6E56;
-  --amber:#E8A93E;--amber-dark:#8A5A0F;--amber-bg:#FEF0E0;
-  --red:#DC4C4C;--red-dark:#8B2020;--red-bg:#FBEAEA;
-  --green:#1E9E6E;--green-bg:#E5F1EA;
+  --bg:#0A0E13;--card:#121923;--card2:#1A222E;
+  --border:#232C38;
+  --ink:#F1F3F5;--ink2:#C3CAD3;--ink3:#8B93A1;--ink-accent:#05080B;
+  --teal:#2DD4BF;--teal-dark:#5EEAD4;
+  --amber:#E8A93E;--amber-dark:#F0B94F;--amber-bg:#3A2E14;
+  --red:#F0665F;--red-dark:#F89B96;--red-bg:#3A1A18;
+  --green:#34D399;--green-bg:#123324;
   --radius:14px;--radius-sm:9px;
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -30,7 +30,7 @@ button{cursor:pointer;}
 .frozen-header{position:sticky;top:0;z-index:100;background:var(--bg);}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;padding-top:calc(14px + env(safe-area-inset-top, 0px));}
 .topbar-left{display:flex;align-items:center;gap:10px;}
-.logo-box{width:44px;height:44px;border-radius:12px;background:var(--ink);display:flex;align-items:center;justify-content:center;font-size:19px;color:var(--teal);font-weight:700;}
+.logo-box{width:44px;height:44px;border-radius:12px;background:var(--ink-accent);display:flex;align-items:center;justify-content:center;font-size:19px;color:var(--teal);font-weight:700;}
 .topbar-title{font-size:1.2rem;}
 .topbar-sub{font-size:0.62rem;color:var(--ink3);letter-spacing:0.05em;text-transform:uppercase;}
 .back-row-frozen{padding:6px 16px 10px;font-size:0.82rem;font-weight:600;color:var(--ink);border-bottom:1px solid var(--border);background:var(--bg);}
@@ -39,22 +39,29 @@ button{cursor:pointer;}
 .main{max-width:520px;margin:0 auto;padding:0 16px 108px;}
 
 .app-layout{display:block;}
-.desktop-sidebar{display:none;}
-.sidebar-nav-item{display:flex;align-items:center;gap:8px;color:#9BA3AF;padding:8px 10px;border-radius:8px;font-size:0.8rem;cursor:pointer;}
-.sidebar-nav-item:hover{background:rgba(255,255,255,0.05);}
-.sidebar-nav-item.active{background:rgba(23,182,167,0.15);color:var(--teal);font-weight:600;}
+.desktop-topnav{display:none;}
 @media(min-width:900px){
-  .app-layout{display:flex;align-items:flex-start;}
-  .desktop-sidebar{display:flex;flex-direction:column;width:210px;flex-shrink:0;background:var(--ink);padding:18px 12px;position:sticky;top:0;height:100vh;box-sizing:border-box;}
-  .app-main-col{flex:1;min-width:0;}
+  .app-layout{display:block;}
+  .desktop-topnav{
+    display:flex;align-items:center;gap:4px;
+    position:fixed;top:0;left:0;right:0;z-index:200;
+    background:var(--ink-accent);padding:10px 24px;box-sizing:border-box;
+  }
+  .desktop-topnav .logo-box{width:32px;height:32px;font-size:14px;}
+  .desktop-topnav .menu-tile{flex-direction:row;gap:6px;padding:8px 14px;border-radius:10px;}
+  .desktop-topnav .menu-tile .ic{font-size:15px;}
+  .desktop-topnav .menu-tile .lbl{font-size:0.78rem;}
+  .desktop-topnav .menu-tile.active{background:rgba(45,212,191,0.15);}
+  .desktop-topnav .menu-tile.active .lbl{color:var(--teal-dark);}
+  .app-main-col{padding-top:62px;}
   .frozen-header{display:none;}
   .tile-grid{display:none!important;}
-  .main{max-width:1180px;margin:0;padding:24px 32px 60px;}
-  #dash-content,#tiers-content{column-count:2;column-gap:16px;}
-  #dash-content>*,#tiers-content>*{break-inside:avoid;}
+  .main{max-width:1440px;margin:0;padding:24px 32px 60px;}
+  #tiers-content{column-count:2;column-gap:16px;}
+  #tiers-content>*{break-inside:avoid;}
 }
 @media(min-width:1360px){
-  #dash-content,#tiers-content{column-count:3;}
+  #tiers-content{column-count:3;}
 }
 .dash-section{column-span:all;display:flex;align-items:baseline;gap:10px;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
 .dash-section:first-child{margin-top:0;}
@@ -86,7 +93,7 @@ button{cursor:pointer;}
 .menu-tile .lbl{font-size:0.56rem;color:var(--ink2);font-weight:500;text-align:center;line-height:1.15;}
 .menu-tile.active .lbl{color:var(--teal-dark);font-weight:700;}
 
-.ticker-wrap{overflow:hidden;background:var(--ink);border-radius:10px;padding:7px 0;margin-bottom:12px;white-space:nowrap;}
+.ticker-wrap{overflow:hidden;background:var(--ink-accent);border-radius:10px;padding:7px 0;margin-bottom:12px;white-space:nowrap;}
 .ticker-track{display:inline-flex;animation:ticker-scroll 32s linear infinite;}
 .ticker-item{display:inline-flex;align-items:center;gap:5px;color:#F1F3F5;font-size:0.72rem;font-weight:600;padding:0 16px;flex-shrink:0;}
 .ticker-item .tk-sym{color:var(--teal);font-weight:700;}
@@ -94,13 +101,18 @@ button{cursor:pointer;}
 
 .tabs-row{display:flex;gap:4px;background:var(--card2);border-radius:12px;padding:4px;margin-bottom:16px;overflow-x:auto;}
 .tab-btn{flex-shrink:0;background:none;border:none;padding:8px 14px;border-radius:9px;font-size:0.78rem;color:var(--ink2);font-weight:500;white-space:nowrap;}
-.tab-btn.active{background:var(--ink);color:#fff;font-weight:600;}
+.tab-btn.active{background:var(--ink-accent);color:#fff;font-weight:600;}
 
 .section{display:none;}
 .section.active{display:block;}
 
 .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
-.hero-card{background:var(--ink);border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;}
+.hero-card{background:var(--ink-accent);border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;}
+@media(min-width:900px){
+  .hero-flex{display:flex;align-items:center;gap:40px;}
+  .hero-flex-left{flex:0 0 320px;}
+  .hero-flex-right{flex:1;min-width:0;}
+}
 .hero-label{font-size:11px;letter-spacing:0.04em;opacity:0.65;text-transform:uppercase;}
 .hero-val{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:600;margin:6px 0 4px;color:var(--teal);}
 body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
@@ -131,18 +143,18 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .tier-chip{font-size:0.64rem;padding:2px 8px;border-radius:6px;font-weight:600;}
 
 .btn-primary{background:var(--teal);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
-.btn-outline{background:#fff;color:var(--ink);border:1px solid var(--border);border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
-.btn-dark{background:var(--ink);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
+.btn-outline{background:var(--card2);color:var(--ink);border:1px solid var(--border);border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
+.btn-dark{background:var(--ink-accent);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
 .link-btn{background:none;border:none;font-size:0.76rem;font-weight:600;color:var(--teal-dark);padding:4px;}
 
 .form-group{margin-bottom:12px;}
 .form-label{font-size:0.76rem;color:var(--ink2);margin-bottom:5px;display:block;font-weight:500;}
-.form-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:#fff;}
-.form-select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:#fff;}
+.form-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:var(--card2);}
+.form-select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:0.88rem;color:var(--ink);background:var(--card2);}
 
 .modal-overlay{position:fixed;inset:0;background:rgba(20,24,29,0.5);z-index:300;display:none;align-items:flex-end;justify-content:center;}
 .modal-overlay.open{display:flex;}
-.modal{background:#fff;border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;}
+.modal{background:var(--card);border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;}
 .modal-title{font-size:1.05rem;font-weight:700;margin-bottom:14px;}
 
 .tier-header{display:flex;justify-content:space-between;align-items:center;padding:10px 0;cursor:pointer;}
@@ -150,7 +162,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .tier-header .pct{font-size:0.78rem;color:var(--ink2);}
 .tier-coins{padding-left:4px;}
 
-.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:20px;font-size:0.8rem;z-index:400;opacity:0;transition:opacity 0.3s;pointer-events:none;}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink-accent);color:#fff;padding:10px 18px;border-radius:20px;font-size:0.8rem;z-index:400;opacity:0;transition:opacity 0.3s;pointer-events:none;}
 .toast.show{opacity:1;}
 
 .auth-wrap{max-width:360px;margin:60px auto;padding:0 20px;text-align:center;}
@@ -164,7 +176,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .wiz-tier-row .form-input{margin-bottom:0;}
 .wiz-sum-note{font-size:0.74rem;margin-top:6px;margin-bottom:14px;}
 .wiz-coin-search-wrap{position:relative;margin-bottom:10px;}
-.wiz-search-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:10;max-height:200px;overflow-y:auto;}
+.wiz-search-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 14px rgba(0,0,0,0.4);z-index:10;max-height:200px;overflow-y:auto;}
 .wiz-search-item{padding:9px 12px;font-size:0.82rem;border-bottom:1px solid var(--border);cursor:pointer;}
 .wiz-search-item:last-child{border-bottom:none;}
 .wiz-search-item:hover{background:var(--card2);}
@@ -193,21 +205,19 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 
 <div id="app-root" class="hidden">
   <div class="app-layout">
-    <nav class="desktop-sidebar" id="desktop-sidebar">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;padding:0 4px">
-        <div class="logo-box serif" style="width:32px;height:32px;font-size:14px">क</div>
+    <nav class="desktop-topnav" id="desktop-topnav">
+      <div style="display:flex;align-items:center;gap:8px;margin-right:14px">
+        <div class="logo-box serif">क</div>
         <div style="color:#F1F3F5;font-size:0.92rem;font-weight:600" class="serif">कोष</div>
       </div>
-      <select id="sidebar-portfolio-select" onchange="selectPortfolioView(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.7rem;color:#F1F3F5;margin-bottom:16px;width:100%"></select>
-      <div class="sidebar-nav" id="sidebar-nav">
-        <div class="sidebar-nav-item" data-tab="dashboard" onclick="switchTab('dashboard')"><span>📊</span> Dashboard</div>
-        <div class="sidebar-nav-item" data-tab="tiers" onclick="switchTab('tiers')"><span>📈</span> Tiers &amp; Coins</div>
-        <div class="sidebar-nav-item" data-tab="journal" onclick="switchTab('journal')"><span>📒</span> Journal</div>
-        <div class="sidebar-nav-item" data-tab="watchlist" onclick="switchTab('watchlist')"><span>⭐</span> Watchlist</div>
-        <div class="sidebar-nav-item" data-tab="news" onclick="switchTab('news')"><span>📰</span> News</div>
-        <div class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')"><span>⚙️</span> Settings</div>
-      </div>
-      <div style="margin-top:auto;padding:8px 10px;display:flex;align-items:center;gap:10px">
+      <select id="sidebar-portfolio-select" onchange="selectPortfolioView(this.value)" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:7px 8px;font-size:0.72rem;color:#F1F3F5;margin-right:14px;max-width:170px"></select>
+      <button class="menu-tile" data-tab="dashboard" onclick="switchTab('dashboard')"><div class="ic">📊</div><div class="lbl">Dashboard</div></button>
+      <button class="menu-tile" data-tab="tiers" onclick="switchTab('tiers')"><div class="ic">📈</div><div class="lbl">Tiers &amp; Coins</div></button>
+      <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
+      <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
+      <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
+      <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
         <button class="eye-toggle" id="eye-toggle-btn-desktop" onclick="toggleFigures()" title="Show/hide figures" style="color:#9BA3AF">👁️</button>
         <span style="color:#6B7280;font-size:0.72rem;cursor:pointer" onclick="handleSignOut()">Sign out</span>
       </div>
@@ -230,7 +240,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     </div>
     <div class="back-row-frozen" id="back-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <span id="back-row-dashboard-link" class="hidden" onclick="goToDashboard()">‹ Dashboard</span>
-      <select id="back-row-portfolio-select" onchange="selectPortfolioView(this.value)" style="font-size:0.72rem;padding:4px 6px;border:1px solid var(--border);border-radius:7px;color:var(--ink2);background:#fff;max-width:150px"></select>
+      <select id="back-row-portfolio-select" onchange="selectPortfolioView(this.value)" style="font-size:0.72rem;padding:4px 6px;border:1px solid var(--border);border-radius:7px;color:var(--ink2);background:var(--card2);max-width:150px"></select>
     </div>
   </div>
 
@@ -287,7 +297,10 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       </div>
       <div class="card" id="settings-spot-fund-card" style="display:none">
         <div class="card-title">Fund this portfolio</div>
-        <button class="btn-primary" id="settings-fund-button" style="width:100%" onclick="openFundSpotModal()">💵 Fund with USDT</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn-primary" id="settings-fund-button" style="flex:1" onclick="openFundSpotModal()">💵 Fund with USDT</button>
+          <button class="btn-outline" id="settings-withdraw-button" style="flex:1" onclick="openWithdrawSpotModal()">🏧 Withdraw</button>
+        </div>
       </div>
       <div class="card" id="settings-transfer-card">
         <div class="card-title">Move funds between portfolios</div>
@@ -450,6 +463,19 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('fund-spot-modal')">Skip for now</button>
       <button class="btn-primary" style="flex:1" onclick="confirmFundSpot()">Fund</button>
+    </div>
+  </div>
+</div>
+
+<!-- WITHDRAW MODAL -->
+<div class="modal-overlay" id="withdraw-spot-modal">
+  <div class="modal">
+    <div class="modal-title" id="withdraw-spot-modal-title">🏧 Withdraw USDT</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px" id="withdraw-spot-modal-desc">Removes cash from this portfolio's reserve balance and reduces its total capital to match. Capped at whatever's currently available.</div>
+    <div class="form-group"><label class="form-label" id="withdraw-spot-amount-label">USDT amount</label><input class="form-input" type="number" step="0.01" id="withdraw-spot-amount" placeholder="e.g. 500"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('withdraw-spot-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmWithdrawSpot()">Withdraw</button>
     </div>
   </div>
 </div>
@@ -1026,7 +1052,7 @@ function bandCardHtml(p,coinList,combined){
   const status=s.level>=1
     ?`<div style="margin-top:12px;padding:10px;border-radius:9px;background:rgba(255,255,255,0.07);font-size:0.7rem;line-height:1.45"><b>Level ${s.level} reached.</b> ${combined?'Open this portfolio to see the proposed trades.':'Propose Rebalance restores your tier targets on the current value. When you finish, the base becomes the new total.'}${combined?`<div style="margin-top:8px"><button class="btn-primary" style="width:100%" onclick="setDashViewMode('${p.id}')">Open to rebalance</button></div>`:''}</div>`
     :`<div style="margin-top:12px;font-size:0.7rem;opacity:.75;line-height:1.45">Inside your first levels (+${b.up[0]}% and −${b.down[0]}%), so no rebalance is proposed.</div>`;
-  return `<div style="background:var(--ink);border-radius:14px;padding:16px;color:#F1F3F5;margin-bottom:10px">
+  return `<div style="background:var(--ink-accent);border-radius:14px;padding:16px;color:#F1F3F5;margin-bottom:10px">
     <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:0.78rem;font-weight:600">${escapeHtml(p.name)}: rebalance trigger</div><button class="link-btn" style="color:#8ED9D2" onclick="openBandModal('${p.id}')">Edit levels</button></div>
     <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:0.72rem"><span>Base <b class="hide-figure">${fmtUsd(s.base)}</b></span><span>Now <b class="hide-figure">${fmtUsd(s.value)}</b></span><span>Variation <b style="color:${s.level>=1?(s.variation>=0?'#9BE3B0':'#F4A6A6'):'#F1F3F5'}">${sign}${Math.abs(s.variation).toFixed(1)}%</b></span></div>
     <div style="font-size:0.64rem;opacity:.55;margin-top:2px">Base = ${baseNote}</div>
@@ -1832,7 +1858,7 @@ function fearGreedCardHtml(){
     <div class="card-title">Crypto Fear &amp; Greed Index</div>
     <div style="display:flex;align-items:center;gap:14px">
       <div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(${color} ${value*3.6}deg, var(--card2) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-        <div style="width:46px;height:46px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:${color}">${value}</div>
+        <div style="width:46px;height:46px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.95rem;color:${color}">${value}</div>
       </div>
       <div>
         <div style="font-weight:700;font-size:0.88rem;color:${color}">${escapeHtml(label)}</div>
@@ -1934,18 +1960,20 @@ async function renderDashboard(){
 
     // ── Overview ──
     html+=head('Overview','all portfolios together, in USD');
-    html+=`<div class="hero-card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
-        <div class="hero-label">Combined portfolio value</div>
-        <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
+    html+=`<div class="hero-card hero-flex">
+      <div class="hero-flex-left">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
+          <div class="hero-label">Combined portfolio value</div>
+          <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
+        </div>
+        <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
+        <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
+        <div style="display:flex;gap:16px;margin:10px 0 4px">
+          <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?signedDisplay(combined.combinedUnrealized):'—'}</div></div>
+          <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(combined.combinedRealized)}</div></div>
+        </div>
       </div>
-      <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
-      <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
-      <div style="display:flex;gap:16px;margin:10px 0 4px">
-        <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?signedDisplay(combined.combinedUnrealized):'—'}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(combined.combinedRealized)}</div></div>
-      </div>
-      <div id="trend-slot">${trendBlockHtml()}</div>
+      <div class="hero-flex-right" id="trend-slot">${trendBlockHtml()}</div>
     </div>`;
 
     // ── Portfolio cards, one line — value, 30d-style trend and ROI, with
@@ -1959,7 +1987,7 @@ async function renderDashboard(){
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
       const gainPf=pp.value-pp.capital;
       const col=vsCap==null?'var(--ink3)':vsCap>=0?'var(--green)':'var(--red)';
-      const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>0);
+      const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>=1);
       const donut=donutFromValues(items,pp.value,pfPalette);
       html+=`<div class="card" style="flex:1 1 220px;min-width:220px;border-top:3px solid ${color};margin-bottom:0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
@@ -2026,7 +2054,7 @@ async function renderDashboard(){
     html+=head('Holdings','every position, by portfolio');
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
-      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8&&(coinValue(c)||0)>=1);
       const rows=openCoins.map(c=>{
         const v=coinValue(c)||0,alloc=pp.value>0?(v/pp.value*100):0;
         const price=livePrices[c.coingecko_id];
@@ -2083,7 +2111,7 @@ async function renderDashboard(){
         if(tpCanvas&&tpResult.allocStats.length){
           window._dashAllocCharts['tp-alloc-donut']=new Chart(tpCanvas,{
             type:'doughnut',
-            data:{labels:tpResult.allocStats.map(s=>s.name),datasets:[{data:tpResult.allocStats.map(s=>s.actualPct),backgroundColor:tpResult.allocStats.map((s,i)=>tierPalette[i%tierPalette.length]),borderWidth:2,borderColor:'#fff'}]},
+            data:{labels:tpResult.allocStats.map(s=>s.name),datasets:[{data:tpResult.allocStats.map(s=>s.actualPct),backgroundColor:tpResult.allocStats.map((s,i)=>tierPalette[i%tierPalette.length]),borderWidth:2,borderColor:'#121923'}]},
             options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false}}}
           });
         }
@@ -2305,7 +2333,7 @@ async function renderDashboard(){
           datasets:[{
             data:tierStats.map(t=>t.actualPct),
             backgroundColor:tierStats.map((t,i)=>Math.abs(t.driftPP)>=5?'#E8A93E':tierPalette[i%tierPalette.length]),
-            borderWidth:2,borderColor:'#fff'
+            borderWidth:2,borderColor:'#121923'
           }]
         },
         options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false}}}
@@ -2610,6 +2638,43 @@ async function confirmFundSpot(){
   await fetchLivePrices();
   renderAll();
   showToast(`Funded with ${amount} USDT ✅`);
+}
+function openWithdrawSpotModal(){
+  document.getElementById('withdraw-spot-amount').value='';
+  const cp=currentPortfolio();
+  const isStocks=cp&&isStockKind(cp.kind);
+  const ticker=reserveTickerFor(cp?.kind);
+  document.getElementById('withdraw-spot-modal-title').textContent=isStocks?'🏧 Withdraw USD':'🏧 Withdraw USDT';
+  document.getElementById('withdraw-spot-amount-label').textContent=ticker+' amount';
+  openModal('withdraw-spot-modal');
+}
+async function confirmWithdrawSpot(){
+  const amount=parseFloat(document.getElementById('withdraw-spot-amount').value);
+  const ticker=reserveTickerFor(currentPortfolio()?.kind);
+  if(!amount||amount<=0){showToast(`Enter a valid ${ticker} amount.`);return;}
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+  const usdtCoin=await ensureUsdtCoinForFunding();
+  if(!usdtCoin)return;
+  const available=usdtCoin.units_held||0;
+  if(available<=0){showToast(`No ${ticker} available to withdraw.`);return;}
+  const actualAmount=Math.min(amount,available);
+  // Selling the reserve coin itself (ticker === reserveTicker) is a no-op on
+  // the reserve-leg adjustment inside executeTrade, so this just debits the
+  // USDT/USD balance directly and logs it as a sell — same mechanics as the
+  // portfolio-to-portfolio transfer's source side.
+  await executeTrade(usdtCoin.id,'sell',actualAmount,1,'Withdrawal');
+  const newCapital=Math.max(0,(settings.total_capital||0)-actualAmount);
+  await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:currentPortfolioId,total_capital:newCapital,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
+  settings.total_capital=newCapital;
+  {const cp=currentPortfolio(),bd=cp&&getBand(cp);if(bd&&bd.base)await persistBand(cp.id,{up:bd.up,down:bd.down,base:Math.max(0,bd.base-actualAmount)});}
+  closeModal('withdraw-spot-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  showToast(`Withdrew ${actualAmount} ${ticker} ✅`);
 }
 async function confirmAddPosition(){
   if(!_apSelectedCoin){showToast('Search and select a coin first.');return;}
@@ -3064,7 +3129,7 @@ async function renderJournal(){
   </div>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
-      <thead><tr style="background:var(--ink);color:#F1F3F5">
+      <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
         <th style="padding:8px 10px;text-align:left">Date</th>
         <th style="padding:8px 10px;text-align:left">${journalViewMode==='stocks'?'Stock':'Coin'}</th>
         <th style="padding:8px 10px;text-align:right">Qty</th>
@@ -3357,7 +3422,7 @@ async function renderWatchlist(){
 
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.72rem;white-space:nowrap">
-      <thead><tr style="background:var(--ink);color:#F1F3F5">
+      <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
         <th style="padding:7px 9px;text-align:left">${watchlistViewMode==='stocks'?'Stock':'Coin'}</th>
         <th style="padding:7px 9px;text-align:right">Price</th>
         <th style="padding:7px 9px;text-align:right">1h</th>
