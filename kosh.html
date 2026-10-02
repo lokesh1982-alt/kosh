@@ -3987,10 +3987,25 @@ async function discoverNewBinanceSymbolsForKeyset(keyset,targetPortfolioId){
   // versa) — that was the bug keeping Lead Trading's real holdings from ever
   // being picked up once the symbol existed in the map at all.
   const mappedSymbols=new Set(binanceSymbolMap.filter(m=>m.portfolio_id===targetPortfolioId).map(m=>m.symbol));
+  // Lead Trading is Spot-type trading drawn from the same underlying wallet
+  // as your regular Spot balance — Binance reports the SAME real units under
+  // both keys, it isn't two independent holdings. So a coin already tracked
+  // under Lead Trading should never also be discovered/tracked under Spot
+  // (the "main" keyset) — that would just double-count it. This only
+  // excludes from the "main"/Spot side; Lead Trading discovery itself is
+  // never filtered.
+  let leadAssets=new Set();
+  if(keyset==='main'){
+    const leadPortfolio=portfolios.find(p=>p.name==='Lead Trading');
+    if(leadPortfolio){
+      leadAssets=new Set(binanceSymbolMap.filter(m=>m.portfolio_id===leadPortfolio.id).map(m=>(m.base_asset||'').toUpperCase()));
+    }
+  }
   let discovered=0;
   for(const bal of balances){
     const asset=(bal.asset||'').toUpperCase();
     if(!asset||BINANCE_QUOTE_ASSET_SET.has(asset))continue;
+    if(leadAssets.has(asset))continue; // already tracked under Lead Trading — skip for Spot
     const held=parseFloat(bal.free||0)+parseFloat(bal.locked||0);
     if(!(held>0))continue;
     let already=false;
@@ -4031,9 +4046,12 @@ async function discoverNewBinanceSymbols(){
   const statusEl=document.getElementById('binance-sync-status');
   if(statusEl)statusEl.textContent='Checking your Binance balances for new coins…';
   let discovered=0;
-  discovered+=await discoverNewBinanceSymbolsForKeyset('main',binanceDefaultPortfolioId);
+  // Lead Trading first: its map must be up to date BEFORE the "main"/Spot
+  // pass runs, since Spot discovery skips any asset already mapped to Lead
+  // Trading (same underlying wallet — see discoverNewBinanceSymbolsForKeyset).
   const leadPortfolio=portfolios.find(p=>p.name==='Lead Trading');
   if(leadPortfolio)discovered+=await discoverNewBinanceSymbolsForKeyset('lead',leadPortfolio.id);
+  discovered+=await discoverNewBinanceSymbolsForKeyset('main',binanceDefaultPortfolioId);
   if(discovered){
     await loadBinanceSymbolMap(); // pick up real ids for the rows just inserted
   }
