@@ -4384,8 +4384,39 @@ async function syncFundingWallet(){
   }
   return count;
 }
+// One-off repair pass for coins that already exist with a stale/wrong
+// coingecko_id from before resolveCoingeckoId existed (the old sync code
+// just lowercased the Binance ticker — wrong for coins like LINK, whose real
+// id is "chainlink", not "link"). The per-fill self-heal inside
+// applySyncedFill only runs for NEW trades past the sync cursor, so an
+// already-fully-synced coin (no new fills) never passes through it — this
+// walks every Binance-mapped coin directly, independent of the cursor, so
+// re-running Sync actually fixes coins that were corrupted before this fix
+// existed.
+async function repairStaleCoinGeckoIds(){
+  if(!binanceSymbolMap.length)return;
+  const assetsByPortfolio={};
+  binanceSymbolMap.forEach(m=>{
+    const asset=(m.base_asset||'').toUpperCase();
+    if(!asset||!m.portfolio_id)return;
+    (assetsByPortfolio[m.portfolio_id]=assetsByPortfolio[m.portfolio_id]||new Set()).add(asset);
+  });
+  for(const pid of Object.keys(assetsByPortfolio)){
+    const portfolioCoins=pid===currentPortfolioId?coins:await getPortfolioCoins(pid);
+    for(const asset of assetsByPortfolio[pid]){
+      const coin=portfolioCoins.find(c=>(c.ticker||'').toUpperCase()===asset);
+      if(!coin)continue;
+      const resolvedId=await resolveCoingeckoId(asset);
+      if(resolvedId&&coin.coingecko_id!==resolvedId){
+        await sb.from('coins').update({coingecko_id:resolvedId}).eq('id',coin.id);
+        coin.coingecko_id=resolvedId;
+      }
+    }
+  }
+}
 async function syncBinanceNow(){
   await loadBinanceSymbolMap();
+  await repairStaleCoinGeckoIds();
   await loadBinanceDefaultPortfolio();
   const newlyDiscovered=await discoverNewBinanceSymbols();
   if(!binanceSymbolMap.length){
