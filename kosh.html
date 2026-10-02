@@ -140,6 +140,28 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .coin-val{font-size:0.82rem;font-weight:600;text-align:right;}
 .coin-drift{font-size:0.68rem;text-align:right;margin-top:2px;}
 
+/* Dashboard "Holdings" row — a single horizontal strip on desktop (plenty of
+   width), but on a phone that same strip either overflows or squeezes every
+   field unreadably small, so it reflows into a compact 2-row card instead:
+   name+value on top, the three stats + perf bar + buy/sell below. */
+.holding-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.holding-row:last-child{border-bottom:none;}
+.holding-row .hr-name{flex:1 1 140px;min-width:110px;}
+.holding-row .hr-value{flex:0 0 110px;text-align:right;}
+.holding-row .hr-stats{display:flex;gap:10px;flex:0 0 auto;}
+.holding-row .hr-stats>div{flex:0 0 86px;text-align:right;}
+.holding-row .hr-actions{flex:0 0 96px;display:flex;gap:4px;justify-content:flex-end;}
+@media(max-width:899px){
+  .holding-row{display:grid;grid-template-columns:1fr auto;align-items:start;gap:8px 10px;padding:12px 14px;}
+  .holding-row .hr-name{grid-column:1;grid-row:1;min-width:0;}
+  .holding-row .hr-value{grid-column:2;grid-row:1;}
+  .holding-row .hr-stats{grid-column:1/-1;grid-row:2;justify-content:space-between;}
+  .holding-row .hr-stats>div{flex:1;text-align:left;}
+  .holding-row .hr-bar{grid-column:1/-1;grid-row:3;}
+  .holding-row .hr-bar>div{flex:1 1 auto!important;}
+  .holding-row .hr-actions{grid-column:1/-1;grid-row:4;justify-content:flex-start;gap:14px;}
+}
+
 .tier-chip{font-size:0.64rem;padding:2px 8px;border-radius:6px;font-weight:600;}
 
 .btn-primary{background:var(--teal);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-size:0.82rem;font-weight:600;}
@@ -2141,29 +2163,31 @@ async function renderDashboard(){
           <span class="hide-figure" style="font-size:0.7rem;color:var(--ink3)">${fmtDisplay(pp.value)}</span>
         </div>
         <div class="card" style="padding:0">
-          ${rows.length?rows.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap">
-            <div style="flex:1 1 140px;min-width:110px">
+          ${rows.length?rows.map(r=>`<div class="holding-row">
+            <div class="hr-name">
               <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
               <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
             </div>
-            <div style="flex:0 0 86px;text-align:right">
-              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Avg buy</div>
-              <div class="hide-figure" style="font-size:0.74rem">${r.avgCost!=null?fmtUsd(r.avgCost):'—'}</div>
-            </div>
-            <div style="flex:0 0 86px;text-align:right">
-              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Price</div>
-              <div style="font-size:0.74rem">${r.price!=null?fmtUsd(r.price):'—'}</div>
-            </div>
-            <div style="flex:0 0 100px;text-align:right">
-              <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Unrealized</div>
-              <div class="hide-figure" style="font-size:0.74rem;font-weight:700;color:${r.unrealized==null?'var(--ink3)':r.unrealized>=0?'var(--green)':'var(--red)'}">${r.unrealized==null?'—':signedDisplay(r.unrealized)}</div>
-            </div>
-            <div style="flex:0 0 110px;text-align:right">
+            <div class="hr-value">
               <div class="hide-figure" style="font-size:0.78rem">${fmtUsd(r.v)}</div>
               <div style="font-size:0.66rem;color:var(--ink3)">${r.alloc.toFixed(1)}% of portfolio</div>
             </div>
-            ${perfBarHtml(r.pct)}
-            <div style="flex:0 0 96px;display:flex;gap:4px;justify-content:flex-end">
+            <div class="hr-stats">
+              <div>
+                <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Avg buy</div>
+                <div class="hide-figure" style="font-size:0.74rem">${r.avgCost!=null?fmtUsd(r.avgCost):'—'}</div>
+              </div>
+              <div>
+                <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Price</div>
+                <div style="font-size:0.74rem">${r.price!=null?fmtUsd(r.price):'—'}</div>
+              </div>
+              <div>
+                <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Unrealized</div>
+                <div class="hide-figure" style="font-size:0.74rem;font-weight:700;color:${r.unrealized==null?'var(--ink3)':r.unrealized>=0?'var(--green)':'var(--red)'}">${r.unrealized==null?'—':signedDisplay(r.unrealized)}</div>
+              </div>
+            </div>
+            <div class="hr-bar">${perfBarHtml(r.pct)}</div>
+            <div class="hr-actions">
               <button class="link-btn" style="color:var(--green);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','buy')">Buy</button>
               <button class="link-btn" style="color:var(--red);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','sell')">Sell</button>
             </div>
