@@ -304,6 +304,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       <div class="card" id="settings-binance-card">
         <div class="card-title">Binance sync</div>
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Alpha are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to.</div>
+        <div style="font-size:0.68rem;color:var(--amber-dark);background:var(--amber-bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.45">⚠️ Lead Trading lives in a <b>separate Binance wallet</b> from your regular account (that's why "Copy Trading API" is a different button on Binance) — your regular API key can't see it. Create a second key in the Binance app: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b>, then add it in Supabase as <code>BINANCE_LEAD_API_KEY</code> / <code>BINANCE_LEAD_API_SECRET</code>, alongside your existing <code>BINANCE_API_KEY</code> / <code>BINANCE_API_SECRET</code> (which stays as-is, used for Alpha).</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
         <button class="btn-outline" style="width:100%;margin-bottom:14px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
         <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Default portfolio for new coins</div>
@@ -3602,11 +3603,20 @@ let binanceDefaultPortfolioId=null;
 // "USDTUSDT" isn't a real symbol.
 const BINANCE_QUOTE_FALLBACKS=['USDT','FDUSD','USDC','BUSD','TUSD'];
 const BINANCE_QUOTE_ASSET_SET=new Set(['USDT','FDUSD','USDC','BUSD','TUSD','DAI']);
-async function binanceFetch(action,params){
+// Binance keeps Spot Lead Trading in a wallet completely separate from your
+// regular Spot wallet — a normal account API key can't see it at all. So
+// the Lead Trading portfolio needs its OWN API key (Binance app → Trade →
+// Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API),
+// set as BINANCE_LEAD_API_KEY/BINANCE_LEAD_API_SECRET in the Edge Function's
+// secrets alongside the regular BINANCE_API_KEY/BINANCE_API_SECRET. This
+// picks which one the proxy signs a given request with.
+function keysetForPortfolio(portfolio){return portfolio&&portfolio.name==='Lead Trading'?'lead':'main';}
+async function binanceFetch(action,params,keyset){
   const{data:{session}}=await sb.auth.getSession();
   if(!session){showToast('Your session expired — please sign in again.');return null;}
   const qs=new URLSearchParams(params||{});
   qs.set('action',action);
+  qs.set('keyset',keyset||'main');
   return fetch(`${BINANCE_PROXY_URL}?${qs.toString()}`,{
     headers:{'Authorization':'Bearer '+session.access_token,'apikey':SUPABASE_ANON_KEY}
   });
@@ -3759,11 +3769,12 @@ async function syncSymbolMapping(mapping){
   let lastId=cursorRow?cursorRow.last_trade_id:0;
   const portfolio=portfolios.find(p=>p.id===mapping.portfolio_id);
   if(!portfolio)return 0;
+  const keyset=keysetForPortfolio(portfolio);
   let totalSynced=0;
   for(let page=0;page<50;page++){ // 50×1000 = up to 50,000 fills per symbol per run — generous ceiling against a runaway loop
     const params={symbol:mapping.symbol};
     if(lastId>0)params.fromId=String(lastId+1);
-    const res=await binanceFetch('myTrades',params);
+    const res=await binanceFetch('myTrades',params,keyset);
     if(!res){return totalSynced;}
     if(!res.ok){
       const errBody=await res.text();
@@ -3800,13 +3811,18 @@ async function syncSymbolMapping(mapping){
 // Limitation: a coin fully bought and fully sold again before this ever
 // ran (balance back to zero) won't be picked up this way — map it by
 // hand once, same as before, and it's remembered from then on.
-async function discoverNewBinanceSymbols(){
-  if(!binanceDefaultPortfolioId)return 0;
-  const statusEl=document.getElementById('binance-sync-status');
-  if(statusEl)statusEl.textContent='Checking your Binance balances for new coins…';
+async function discoverNewBinanceSymbolsForKeyset(keyset,targetPortfolioId){
+  if(!targetPortfolioId)return 0;
   let res;
-  try{res=await binanceFetch('account',{});}catch(e){return 0;}
-  if(!res||!res.ok)return 0;
+  try{res=await binanceFetch('account',{},keyset);}catch(e){return 0;}
+  if(!res)return 0;
+  if(!res.ok){
+    if(keyset==='lead'){
+      const body=await res.text().catch(()=>'');
+      showToast(`Lead Trading's own Binance key isn't working yet (${body.slice(0,120)||'check BINANCE_LEAD_API_KEY/SECRET'}) — Lead Trading's wallet is separate from your regular account, so it needs its own Copy Trading API key. See the note in Settings.`);
+    }
+    return 0;
+  }
   let data;
   try{data=await res.json();}catch(e){return 0;}
   const balances=(data&&data.balances)||[];
@@ -3831,12 +3847,12 @@ async function discoverNewBinanceSymbols(){
         const info=(infoData.symbols||[])[0];
         if(!info)continue;
         const{error}=await sb.from('binance_symbol_map').upsert(
-          {user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:binanceDefaultPortfolioId},
+          {user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:targetPortfolioId},
           {onConflict:'user_id,symbol'}
         );
         if(!error){
           mappedSymbols.add(candidate);
-          binanceSymbolMap.push({id:null,user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:binanceDefaultPortfolioId});
+          binanceSymbolMap.push({id:null,user_id:currentUser.id,symbol:candidate,base_asset:info.baseAsset,quote_asset:info.quoteAsset,portfolio_id:targetPortfolioId});
           discovered++;
           mapped=true;
         }
@@ -3844,6 +3860,20 @@ async function discoverNewBinanceSymbols(){
       if(mapped)break; // found the real market for this asset — stop trying other quotes
     }
   }
+  return discovered;
+}
+// Runs discovery twice — once against the regular account wallet (mapping
+// finds to whichever portfolio you picked as default, typically Alpha),
+// and once against the Lead Trading portfolio's own separate wallet
+// (mapping finds straight to Lead Trading, since that wallet IS Lead
+// Trading's — no default-portfolio choice needed there).
+async function discoverNewBinanceSymbols(){
+  const statusEl=document.getElementById('binance-sync-status');
+  if(statusEl)statusEl.textContent='Checking your Binance balances for new coins…';
+  let discovered=0;
+  discovered+=await discoverNewBinanceSymbolsForKeyset('main',binanceDefaultPortfolioId);
+  const leadPortfolio=portfolios.find(p=>p.name==='Lead Trading');
+  if(leadPortfolio)discovered+=await discoverNewBinanceSymbolsForKeyset('lead',leadPortfolio.id);
   if(discovered){
     await loadBinanceSymbolMap(); // pick up real ids for the rows just inserted
   }
