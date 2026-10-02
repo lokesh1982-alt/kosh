@@ -50,11 +50,11 @@ button{cursor:pointer;}
   .frozen-header{display:none;}
   .tile-grid{display:none!important;}
   .main{max-width:1180px;margin:0;padding:24px 32px 60px;}
-  #dash-content,#holdings-content,#tiers-content{column-count:2;column-gap:16px;}
-  #dash-content>*,#holdings-content>*,#tiers-content>*{break-inside:avoid;}
+  #dash-content,#tiers-content{column-count:2;column-gap:16px;}
+  #dash-content>*,#tiers-content>*{break-inside:avoid;}
 }
 @media(min-width:1360px){
-  #dash-content,#holdings-content,#tiers-content{column-count:3;}
+  #dash-content,#tiers-content{column-count:3;}
 }
 .dash-section{column-span:all;display:flex;align-items:baseline;gap:10px;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
 .dash-section:first-child{margin-top:0;}
@@ -202,7 +202,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       <div class="sidebar-nav" id="sidebar-nav">
         <div class="sidebar-nav-item" data-tab="dashboard" onclick="switchTab('dashboard')"><span>📊</span> Dashboard</div>
         <div class="sidebar-nav-item" data-tab="tiers" onclick="switchTab('tiers')"><span>📈</span> Tiers &amp; Coins</div>
-        <div class="sidebar-nav-item" data-tab="holdings" onclick="switchTab('holdings')"><span>🪙</span> Holdings</div>
         <div class="sidebar-nav-item" data-tab="journal" onclick="switchTab('journal')"><span>📒</span> Journal</div>
         <div class="sidebar-nav-item" data-tab="watchlist" onclick="switchTab('watchlist')"><span>⭐</span> Watchlist</div>
         <div class="sidebar-nav-item" data-tab="news" onclick="switchTab('news')"><span>📰</span> News</div>
@@ -266,12 +265,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
       <div id="tiers-content"></div>
     </div>
 
-    <!-- HOLDINGS -->
-    <div class="section" id="sec-holdings">
-      <div id="holdings-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"></div>
-      <div id="holdings-content"></div>
-    </div>
-
     <!-- JOURNAL -->
     <div class="section" id="sec-journal">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -306,9 +299,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Lead Trading and Spot are kept in sync automatically from your Binance account's real trade history — no manual entry. Binance has no "lead trading vs personal" concept of its own, so a symbol map below decides which portfolio each traded pair routes to. "Spot" is Kosh's name for your regular Binance Spot wallet — not to be confused with Binance's own "Alpha" zone for pre-listed tokens, which has no API and is tracked as a separate manual portfolio instead.</div>
         <div style="font-size:0.68rem;color:var(--amber-dark);background:var(--amber-bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.45">⚠️ Lead Trading lives in a <b>separate Binance wallet</b> from your regular account (that's why "Copy Trading API" is a different button on Binance) — your regular API key can't see it. Create a second key in the Binance app: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b>, then add it in Supabase as <code>BINANCE_LEAD_API_KEY</code> / <code>BINANCE_LEAD_API_SECRET</code>, alongside your existing <code>BINANCE_API_KEY</code> / <code>BINANCE_API_SECRET</code> (which stays as-is, used for Spot and Funding).</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px;line-height:1.4">💡 Want your Funding wallet tracked too? Create a portfolio named exactly <b>"Funding Wallet"</b> (+ New in the portfolio switcher) — every sync will then reconcile its balances automatically, the same way Spot's holdings stay current.</div>
-        <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px" id="binance-step1-note">Step 1 — do this once: replaces your current crypto portfolios (not US-Stocks) with fresh, empty "Lead Trading" and "Alpha" portfolios.</div>
-        <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="runBinanceSetup()">⚙️ Replace with Lead Trading + Alpha</button>
-        <button class="btn-outline" style="width:100%;margin-bottom:14px;border-color:var(--amber-dark);color:var(--amber-dark)" onclick="moveAllLeadTradingDataToAlpha()">🧹 Move misrouted Lead Trading data to Alpha (one-time fix)</button>
         <div style="font-size:0.72rem;font-weight:600;color:var(--ink2);margin-bottom:6px">Default portfolio for new coins</div>
         <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:8px;line-height:1.4">Every time you sync, any coin you've traded that isn't mapped yet is auto-added here — you don't have to type each symbol. Reassign it below if it belongs in a different portfolio instead.</div>
         <div style="display:flex;gap:6px;margin-bottom:14px">
@@ -326,8 +316,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
           <select class="form-select" id="bsm-portfolio" style="flex:1"></select>
           <button class="btn-outline" onclick="addSymbolMapping()">+ Add</button>
         </div>
-        <button class="btn-primary" style="width:100%" onclick="syncBinanceNow()">🔄 Sync Binance now</button>
-        <div id="binance-sync-status" style="font-size:0.68rem;color:var(--ink3);margin-top:8px"></div>
+        <div style="font-size:0.68rem;color:var(--ink3)">The "Sync Binance now" button has moved to the Dashboard.</div>
       </div>
       <div class="card" id="settings-public-card">
         <div class="card-title">Public page</div>
@@ -355,7 +344,6 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
   <div class="tile-grid" id="mobile-tile-nav">
     <button class="menu-tile" data-tab="dashboard" onclick="switchTab('dashboard')"><div class="ic">🏠</div><div class="lbl">Home</div></button>
     <button class="menu-tile" data-tab="tiers" onclick="switchTab('tiers')"><div class="ic">📊</div><div class="lbl">Tiers</div></button>
-    <button class="menu-tile" data-tab="holdings" onclick="switchTab('holdings')"><div class="ic">🪙</div><div class="lbl">Holdings</div></button>
     <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
     <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watch</div></button>
     <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
@@ -757,7 +745,6 @@ async function setDisplayCurrency(cur){
     if(!result.ok)showToast('Could not fetch exchange rates: '+(result.error||'unknown error')+' — showing USD until that works.');
   }
   renderDashboard();
-  if(document.getElementById('sec-holdings').classList.contains('active'))renderHoldings();
 }
 // Converts a USD amount into whatever displayCurrency is currently selected —
 // used only for summary totals, per the intentional scope of this feature.
@@ -858,7 +845,6 @@ function switchTab(name){
   window.scrollTo(0,0);
   if(name==='dashboard')renderDashboard();
   if(name==='tiers')renderTiersSection();
-  if(name==='holdings')renderHoldings();
   if(name==='journal')renderJournal();
   if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
@@ -1528,7 +1514,6 @@ async function wizardCreatePortfolio(){
 function renderAll(){
   renderDashboard();
   renderTiersSection();
-  renderHoldings();
   renderJournal();
 }
 
@@ -1906,6 +1891,14 @@ async function renderDashboard(){
   let html='';
   let allocDonutQueue=[]; // [{canvasId, tierStats}] rendered into Chart.js after innerHTML is set
 
+  // Binance sync lives here (not Settings) since it affects Lead Trading,
+  // Spot and Funding Wallet at once, regardless of which portfolio view
+  // you're looking at.
+  html+=`<div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:10px">
+    <span id="binance-sync-status" style="font-size:0.68rem;color:var(--ink3)"></span>
+    <button class="btn-outline" style="padding:6px 12px;font-size:0.76rem" onclick="syncBinanceNow()">🔄 Sync Binance now</button>
+  </div>`;
+
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
     const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
@@ -2058,6 +2051,10 @@ async function renderDashboard(){
       </div>
     </div>`;
 
+    if(isSpotEmpty){
+      html+=`<button class="btn-outline" style="width:100%;margin-bottom:14px" onclick="openAddPositionModal()">+ Add Position</button>`;
+    }
+
     // Fear & Greed is crypto-specific (no reliable free US-market equivalent
     // exists — VIX access is blocked on Finnhub's free tier) — shown only for
     // crypto portfolios, not US-Stocks, rather than mislabeling it.
@@ -2115,6 +2112,63 @@ async function renderDashboard(){
           </div>
         </div>`;
         allocDonutQueue.push({canvasId:'dash-spot-coin-donut',tierStats:coinStats});
+      }
+    }
+
+    // ── Holdings (moved here from the old separate Holdings tab) ──
+    if(isRebalanceKind){
+      tiers.forEach(t=>{
+        const tierCoins=coins.filter(c=>c.tier_id===t.id);
+        if(!tierCoins.length)return;
+        html+=`<div class="card">
+          <div class="card-title">${escapeHtml(t.name)}</div>`;
+        tierCoins.forEach(c=>{
+          const stats=calcCoinStats(c);
+          const driftPP=stats.actualPctOfPortfolio!=null?(stats.actualPctOfPortfolio-stats.targetPctOfPortfolio)*100:null;
+          const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
+          const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
+          html+=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div class="coin-row" style="border:none;padding:0 0 8px">
+              <div>
+                <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
+                <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg cost ${fmtUsd(c.avg_cost_usd)}`:''}</div>
+              </div>
+              <div style="text-align:right">
+                <div class="coin-val hide-figure">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
+                <div class="coin-drift" style="color:${driftPP!=null&&Math.abs(driftPP)>=5?'var(--amber-dark)':'var(--ink3)'}">${stats.actualPctOfPortfolio!=null?fmtPct(stats.actualPctOfPortfolio):'0%'} / ${fmtPct(stats.targetPctOfPortfolio)}</div>
+                ${gain!=null?`<div style="font-size:0.68rem;color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
+              <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
+              <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
+            </div>
+          </div>`;
+        });
+        html+='</div>';
+      });
+    } else if(coins.length){
+      // Spot/stock kind — flat P&L-focused list. A coin sold down to
+      // (effectively) zero is a closed position, kept but tucked away;
+      // dust (under $1) gets the same collapsed-away treatment.
+      const openCoinsAll=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+      const closedCoins=coins.filter(c=>Math.abs(c.units_held||0)<=1e-8);
+      const{shown:openCoins,dust}=splitDust(openCoinsAll);
+      openCoins.sort((a,b)=>{const va=livePrices[a.coingecko_id],vb=livePrices[b.coingecko_id];return((vb!=null?(b.units_held||0)*vb:0))-((va!=null?(a.units_held||0)*va:0));});
+      html+='<div class="card"><div class="card-title">Positions</div>';
+      if(openCoins.length){
+        html+=openCoins.map(spotCoinRowHtml).join('');
+      } else {
+        html+=`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`;
+      }
+      html+='</div>';
+      html+=dustDetailsHtml(dust);
+      if(closedCoins.length){
+        html+=`<details class="card" style="padding:0">
+          <summary style="padding:16px;cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--ink3)">Closed positions (${closedCoins.length})</summary>
+          <div style="padding:0 16px 8px">${closedCoins.map(spotCoinRowHtml).join('')}</div>
+        </details>`;
       }
     }
 
@@ -2353,108 +2407,6 @@ function dustDetailsHtml(dustCoins){
     <div style="padding:0 16px 8px">${dustCoins.map(spotCoinRowHtml).join('')}</div>
   </details>`;
 }
-function renderHoldings(){
-  const headerEl=document.getElementById('holdings-header');
-  const activePortfolio=currentPortfolio();
-  const isSpot=activePortfolio&&activePortfolio.kind==='spot';
-  if(headerEl){
-    headerEl.innerHTML=isSpot?`<div class="card-title" style="margin:0">Positions</div><button class="btn-dark" style="padding:8px 14px;font-size:0.78rem" onclick="openAddPositionModal()">+ Add Position</button>`:'';
-  }
-  const el=document.getElementById('holdings-content');
-  if(!coins.length){
-    el.innerHTML=isSpot
-      ?`<div class="empty-state"><div class="ic">🪙</div><div>No positions yet — tap "+ Add Position" to log your first buy.</div></div>`
-      :`<div class="empty-state"><div class="ic">🪙</div><div>No coins yet — add some under Tiers &amp; Coins first.</div></div>`;
-    return;
-  }
-  let html='';
-
-  // Total unrealized P&L across every coin that has both a live price and a
-  // recorded average cost — coins missing either are simply left out of the
-  // total rather than silently treated as zero.
-  let totalInvested=0,totalCurrentValue=0,pricedCoinCount=0;
-  coins.forEach(c=>{
-    if(c.avg_cost_usd==null)return;
-    const price=livePrices[c.coingecko_id];
-    if(price==null)return;
-    pricedCoinCount++;
-    totalInvested+=c.avg_cost_usd*(c.units_held||0);
-    totalCurrentValue+=price*(c.units_held||0);
-  });
-  if(pricedCoinCount){
-    const totalGain=totalCurrentValue-totalInvested;
-    const totalGainPct=totalInvested>0?(totalGain/totalInvested)*100:0;
-    const missingCount=coins.length-pricedCoinCount;
-    html+=`<div class="card" style="text-align:center">
-      <div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:2px">
-        <div class="card-title" style="margin:0">Total unrealized P&amp;L</div>
-        ${currencySelectorHtml('light')}
-      </div>
-      <div class="serif hide-figure" style="font-size:1.3rem;font-weight:600;color:${totalGain>=0?'var(--green)':'var(--red)'}">${totalGain>=0?'+':''}${fmtDisplay(totalGain)} (${totalGainPct>=0?'+':''}${totalGainPct.toFixed(1)}%)</div>
-      <div class="hide-figure" style="font-size:0.68rem;color:var(--ink3);margin-top:4px">${fmtDisplay(totalCurrentValue)} current vs ${fmtDisplay(totalInvested)} invested${missingCount?` · ${missingCount} coin${missingCount===1?'':'s'} excluded (no price or avg cost set)`:''}</div>
-    </div>`;
-  }
-
-  if(isSpot){
-    // Flat list, P&L-focused — target %/drift aren't meaningful for spot trading.
-    // A coin sold down to (effectively) zero is a closed position — still
-    // kept in the database for its cost history, but tucked away instead of
-    // cluttering the list of what you actually hold right now. Dust (under
-    // $1) gets the same collapsed-away treatment, separately.
-    const openCoinsAll=coins.filter(c=>Math.abs(c.units_held||0)>1e-8);
-    const closedCoins=coins.filter(c=>Math.abs(c.units_held||0)<=1e-8);
-    const{shown:openCoins,dust}=splitDust(openCoinsAll);
-    openCoins.sort((a,b)=>{const va=livePrices[a.coingecko_id],vb=livePrices[b.coingecko_id];return((vb!=null?(b.units_held||0)*vb:0))-((va!=null?(a.units_held||0)*va:0));});
-    html+='<div class="card">';
-    if(openCoins.length){
-      html+=openCoins.map(spotCoinRowHtml).join('');
-    } else {
-      html+=`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`;
-    }
-    html+='</div>';
-    html+=dustDetailsHtml(dust);
-    if(closedCoins.length){
-      html+=`<details class="card" style="padding:0">
-        <summary style="padding:16px;cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--ink3)">Closed positions (${closedCoins.length})</summary>
-        <div style="padding:0 16px 8px">${closedCoins.map(spotCoinRowHtml).join('')}</div>
-      </details>`;
-    }
-    el.innerHTML=html;
-    return;
-  }
-  tiers.forEach(t=>{
-    const tierCoins=coins.filter(c=>c.tier_id===t.id);
-    if(!tierCoins.length)return;
-    html+=`<div class="card">
-      <div class="card-title">${escapeHtml(t.name)}</div>`;
-    tierCoins.forEach(c=>{
-      const stats=calcCoinStats(c);
-      const driftPP=stats.actualPctOfPortfolio!=null?(stats.actualPctOfPortfolio-stats.targetPctOfPortfolio)*100:null;
-      const gain=(stats.value!=null&&c.avg_cost_usd!=null)?(stats.price-c.avg_cost_usd)*(c.units_held||0):null;
-      const gainPct=(gain!=null&&c.avg_cost_usd>0)?((stats.price-c.avg_cost_usd)/c.avg_cost_usd)*100:null;
-      html+=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
-        <div class="coin-row" style="border:none;padding:0 0 8px">
-          <div>
-            <div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span></div>
-            <div class="coin-sub">${(c.units_held||0)} units${stats.price!=null?` · ${fmtUsd(stats.price)}`:' · price unavailable'}${c.avg_cost_usd?` · avg cost ${fmtUsd(c.avg_cost_usd)}`:''}</div>
-          </div>
-          <div style="text-align:right">
-            <div class="coin-val hide-figure">${stats.value!=null?fmtUsd(stats.value):'—'}</div>
-            <div class="coin-drift" style="color:${driftPP!=null&&Math.abs(driftPP)>=5?'var(--amber-dark)':'var(--ink3)'}">${stats.actualPctOfPortfolio!=null?fmtPct(stats.actualPctOfPortfolio):'0%'} / ${fmtPct(stats.targetPctOfPortfolio)}</div>
-            ${gain!=null?`<div style="font-size:0.68rem;color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'+':''}${fmtUsd(gain)} (${gainPct>=0?'+':''}${gainPct.toFixed(1)}%)</div>`:''}
-          </div>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button class="link-btn" style="color:var(--green)" onclick="openManualTradeModal('${c.id}','buy')">+ Buy more</button>
-          <button class="link-btn" style="color:var(--red)" onclick="openManualTradeModal('${c.id}','sell')">− Sell</button>
-          <button class="link-btn" onclick="openHoldingModal('${c.id}')">Correct</button>
-        </div>
-      </div>`;
-    });
-    html+='</div>';
-  });
-  el.innerHTML=html;
-}
 // ═══════════════════════════════
 //  ADD POSITION (Spot Trading — search a coin and buy it in one step,
 //  without needing to think about tiers/weights the way rebalancing does)
@@ -2671,7 +2623,7 @@ async function confirmAllocationProposal(idx){
   window._allocationProposals=window._allocationProposals.filter((_,i)=>i!==idx);
   renderAllocationContent();
   await loadAllData();
-  renderDashboard();renderHoldings();renderJournal();
+  renderDashboard();renderJournal();
   showToast(`${p.action==='buy'?'Bought':'Sold'} ${units} ${p.coin.ticker} ✅`);
 }
 
@@ -2758,7 +2710,7 @@ async function confirmProposal(idx){
   await loadAllData();
   if(!window._rebalanceProposals.length)window._rebalanceNewBase=await setBandBaseToNow();
   renderRebalanceContent();
-  renderDashboard();renderHoldings();renderJournal();
+  renderDashboard();renderJournal();
   showToast(`${p.action==='buy'?'Bought':'Sold'} ${units} ${p.coin.ticker} ✅`);
 }
 
