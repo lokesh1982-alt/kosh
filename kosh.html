@@ -4433,12 +4433,20 @@ async function syncFundingWallet(){
 // walks every Binance-mapped coin directly, independent of the cursor, so
 // re-running Sync actually fixes coins that were corrupted before this fix
 // existed.
+// Checked against COINGECKO_ID_OVERRIDES only — a plain object lookup, no
+// network call — so this stays instant even with many coins. The first
+// version of this repair pass called the full resolveCoingeckoId (a live
+// CoinGecko search) for every single coin on every sync, one at a time,
+// which is what was making "Sync Binance now" slow to even start. A coin
+// NOT in the override list is still self-healed, just lazily — the next
+// time a new trade for it syncs through applySyncedFill, which does the
+// full search-based resolve for whatever it's touching anyway.
 async function repairStaleCoinGeckoIds(){
   if(!binanceSymbolMap.length)return;
   const assetsByPortfolio={};
   binanceSymbolMap.forEach(m=>{
     const asset=(m.base_asset||'').toUpperCase();
-    if(!asset||!m.portfolio_id)return;
+    if(!asset||!m.portfolio_id||!COINGECKO_ID_OVERRIDES[asset])return;
     (assetsByPortfolio[m.portfolio_id]=assetsByPortfolio[m.portfolio_id]||new Set()).add(asset);
   });
   for(const pid of Object.keys(assetsByPortfolio)){
@@ -4446,7 +4454,7 @@ async function repairStaleCoinGeckoIds(){
     for(const asset of assetsByPortfolio[pid]){
       const coin=portfolioCoins.find(c=>(c.ticker||'').toUpperCase()===asset);
       if(!coin)continue;
-      const resolvedId=await resolveCoingeckoId(asset);
+      const resolvedId=COINGECKO_ID_OVERRIDES[asset];
       if(resolvedId&&coin.coingecko_id!==resolvedId){
         await sb.from('coins').update({coingecko_id:resolvedId}).eq('id',coin.id);
         coin.coingecko_id=resolvedId;
