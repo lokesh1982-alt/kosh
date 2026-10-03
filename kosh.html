@@ -3379,13 +3379,105 @@ function journalFilterSort(list){
   else if(journalSortMode==='symbol_desc')out.sort((a,b)=>(b.coin_ticker||'').localeCompare(a.coin_ticker||''));
   return out;
 }
-// Re-renders only the table body from the already-loaded trades — filtering
-// or re-sorting as you type shouldn't re-fetch from the database.
+// A single market/Lead-Trading order on Binance is very often filled in
+// several small pieces (separate trade IDs, often at the same price tier)
+// rather than one lump execution — Kosh logs each fill faithfully from
+// Binance's own trade history, which is correct for the underlying data,
+// but reads as a wall of near-identical rows in the Journal. This groups
+// same-day + same-coin + same-side rows into a single summary row for
+// DISPLAY only — the underlying trades (and the Excel export) stay at full
+// fidelity, one row per real fill; a group can be expanded to see them.
+let journalGroupRows=true;
+function groupJournalTrades(list){
+  const groups={};
+  const order=[];
+  list.forEach(t=>{
+    const day=new Date(t.trade_date).toISOString().slice(0,10);
+    const key=[day,t.coin_ticker||t.coin_name||'',t.action,t.portfolio_id].join('|');
+    if(!groups[key]){groups[key]={key,trades:[],units:0,totalUsd:0,totalInr:0,hasInr:true,realizedPnl:null,hasPnl:false};order.push(key);}
+    const g=groups[key];
+    g.trades.push(t);
+    g.units+=(t.units||0);
+    g.totalUsd+=(t.total_usd||0);
+    if(t.inr_rate!=null)g.totalInr+=(t.total_usd||0)*t.inr_rate;else g.hasInr=false;
+    if(t.realized_pnl!=null){g.realizedPnl=(g.realizedPnl||0)+t.realized_pnl;g.hasPnl=true;}
+  });
+  return order.map(key=>{
+    const g=groups[key],first=g.trades[0];
+    return{
+      id:'grp-'+key.replace(/[^a-zA-Z0-9]/g,'_'),
+      trade_date:first.trade_date,coin_ticker:first.coin_ticker,coin_name:first.coin_name,action:first.action,
+      units:g.units,price_per_unit:g.units>0?g.totalUsd/g.units:0,total_usd:g.totalUsd,
+      inr_rate:g.hasInr&&g.units>0?(g.totalInr/g.totalUsd)||first.inr_rate:null,
+      realized_pnl:g.hasPnl?g.realizedPnl:null,
+      fillCount:g.trades.length,fills:g.trades
+    };
+  });
+}
+// Shared by the initial render and renderJournalTableBody (re-renders on
+// filter/sort/group-toggle without re-fetching from the database).
+function journalTableBodyHtml(filtered){
+  if(!filtered.length)return`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match "${escapeHtml(journalFilterText)}".</td></tr>`;
+  if(!journalGroupRows)return filtered.map((t,i)=>journalRowHtml(t,i)).join('');
+  const groups=groupJournalTrades(filtered);
+  return groups.map((g,i)=>journalGroupRowHtml(g,i)).join('');
+}
 function renderJournalTableBody(){
   const tbody=document.getElementById('journal-table-body');
   if(!tbody)return;
-  const filtered=journalFilterSort(allJournalTrades);
-  tbody.innerHTML=filtered.length?filtered.map((t,i)=>journalRowHtml(t,i)).join(''):`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match "${escapeHtml(journalFilterText)}".</td></tr>`;
+  tbody.innerHTML=journalTableBodyHtml(journalFilterSort(allJournalTrades));
+}
+function toggleJournalGroupRows(){
+  journalGroupRows=!journalGroupRows;
+  const btn=document.getElementById('journal-group-toggle');
+  if(btn)btn.textContent=journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades';
+  renderJournalTableBody();
+}
+function toggleJournalGroupExpand(id){
+  const rows=document.querySelectorAll('[data-journal-group="'+id+'"]');
+  if(!rows.length)return;
+  const caret=document.getElementById('journal-caret-'+id);
+  const show=rows[0].style.display==='none';
+  rows.forEach(r=>{r.style.display=show?'':'none';});
+  if(caret)caret.textContent=show?'▾':'▸';
+}
+function journalGroupRowHtml(g,i){
+  const date=new Date(g.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+  const priceInr=g.inr_rate!=null?g.price_per_unit*g.inr_rate:null;
+  const totalInr=g.inr_rate!=null?g.total_usd*g.inr_rate:null;
+  const pnlInr=(g.realized_pnl!=null&&g.inr_rate!=null)?g.realized_pnl*g.inr_rate:null;
+  const rowBg=i%2===1?'background:var(--card2)':'';
+  const multi=g.fillCount>1;
+  const head=`<tr style="border-bottom:${multi?'none':'1px solid var(--border)'};${rowBg};${multi?'cursor:pointer':''}" ${multi?`onclick="toggleJournalGroupExpand('${g.id}')"`:''}>
+    <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
+    <td style="padding:7px 10px;font-weight:600">${multi?`<span id="journal-caret-${g.id}" style="color:var(--ink3);margin-right:4px">▸</span>`:''}${escapeHtml(g.coin_ticker||g.coin_name||'')}${multi?`<span style="margin-left:6px;font-size:0.62rem;color:var(--ink3);font-weight:500">(${g.fillCount} fills)</span>`:''}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${g.units}</td>
+    <td style="padding:7px 10px;text-align:center">${transferBadgeHtml(g.action)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(g.price_per_unit)}${multi?'<span style="color:var(--ink3)"> avg</span>':''}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${priceInr!=null?'₹'+priceInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(g.total_usd)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${totalInr!=null?'₹'+totalInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${g.realized_pnl==null?'var(--ink3)':(g.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${g.realized_pnl!=null?(g.realized_pnl>=0?'+':'')+fmtUsd(g.realized_pnl):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${g.inr_rate!=null?g.inr_rate.toFixed(2):'—'}</td>
+  </tr>`;
+  if(!multi)return head;
+  // Individual fills as plain sibling <tr>s (NOT a nested <tbody> — the
+  // table body is already one <tbody>, and tbody-in-tbody gets silently
+  // renormalized by the browser's HTML parser, which breaks reliable
+  // show/hide). Tagged with data-journal-group so the toggle can find and
+  // show/hide exactly this group's rows together.
+  const subrows=g.fills.map((t,j)=>{
+    const row=journalRowHtml(t,j).replace('<td style="padding:7px 10px;color:var(--ink2)">','<td style="padding:5px 10px 5px 26px;color:var(--ink3);font-size:0.9em">');
+    // Add the group tag and fold "display:none" into the row's EXISTING
+    // style attribute (not a second style= — duplicate attributes are
+    // invalid HTML and only the first one is honored by the parser, which
+    // would silently drop whichever style lost that race).
+    return row
+      .replace(' id="journal-row-', ' id="journal-subrow-') // avoid duplicate element ids with the ungrouped view
+      .replace(' style="', ' data-journal-group="'+g.id+'" style="display:none;');
+  }).join('');
+  return head+subrows;
 }
 function setJournalFilterText(v){journalFilterText=v;renderJournalTableBody();}
 function setJournalSortMode(v){journalSortMode=v;renderJournalTableBody();}
@@ -3430,6 +3522,7 @@ async function renderJournal(){
       <option value="symbol_desc" ${journalSortMode==='symbol_desc'?'selected':''}>Symbol Z→A</option>
     </select>
   </div>`;
+  html+=`<button class="link-btn" id="journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleJournalGroupRows()">${journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades'}</button>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
@@ -3445,7 +3538,7 @@ async function renderJournal(){
         <th style="padding:8px 10px;text-align:right">P&amp;L (INR)</th>
         <th style="padding:8px 10px;text-align:right">FX Rate</th>
       </tr></thead>
-      <tbody id="journal-table-body">${journalFilterSort(allJournalTrades).map((t,i)=>journalRowHtml(t,i)).join('')}</tbody>
+      <tbody id="journal-table-body">${journalTableBodyHtml(journalFilterSort(allJournalTrades))}</tbody>
     </table>
   </div>
   <div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">FX Rate is the USD→INR rate on the trading day (ECB reference rate). Older trades without a stored rate are backfilled automatically as you view this screen.</div>`;
