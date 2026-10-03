@@ -9,6 +9,7 @@
 <meta name="theme-color" content="#14181D"/>
 <link rel="apple-touch-icon" href="kosh-icon-192.png"/>
 <link rel="manifest" href="kosh-manifest.json"/>
+<script>(function(){try{var t=localStorage.getItem('kosh-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@500;600;700&display=swap');
 :root{
@@ -21,6 +22,21 @@
   --green:#34D399;--green-bg:#123324;
   --radius:14px;--radius-sm:9px;
 }
+html[data-theme="light"]{
+  --bg:#F4F6F8;--card:#FFFFFF;--card2:#ECEFF2;
+  --border:#DCE1E7;
+  --ink:#151A21;--ink2:#3F4854;--ink3:#6B7585;--ink-accent:#121923;
+  --teal:#0E9488;--teal-dark:#0C7B71;
+  --amber:#B9770E;--amber-dark:#9C6508;--amber-bg:#FBEFD9;
+  --red:#C0392B;--red-dark:#A32E22;--red-bg:#FBE4E2;
+  --green:#16A672;--green-bg:#DFF5EA;
+}
+html[data-theme="light"] .hero-card .hero-label{color:#F1F3F5;}
+html[data-theme="light"] .desktop-topnav{background:#121923;}
+html[data-theme="light"] .desktop-topnav .lbl{color:#C3CAD3;}
+html[data-theme="light"] .desktop-topnav .ic{filter:none;}
+html[data-theme="light"] select option{color:#14181D;background:#fff;}
+.theme-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;}
 button,input,select{font-family:inherit;}
@@ -107,13 +123,14 @@ button{cursor:pointer;}
 .section.active{display:block;}
 
 .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
-.hero-card{background:var(--ink-accent);border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;}
+.hero-card{background:linear-gradient(135deg,#0E7C6F 0%,var(--ink-accent) 55%);border:1px solid #17B6A7;border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;position:relative;overflow:hidden;}
+.hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#17B6A7;}
 @media(min-width:900px){
   .hero-flex{display:flex;align-items:center;gap:40px;}
   .hero-flex-left{flex:0 0 320px;}
   .hero-flex-right{flex:1;min-width:0;}
 }
-.hero-label{font-size:11px;letter-spacing:0.04em;opacity:0.65;text-transform:uppercase;}
+.hero-label{font-size:11px;letter-spacing:0.04em;color:#FFFFFF;opacity:0.92;font-weight:600;text-transform:uppercase;}
 .hero-val{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:600;margin:6px 0 4px;color:var(--teal);}
 body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .eye-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
@@ -243,6 +260,7 @@ select option{color:#14181D;background:#fff;}
       <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
       <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+        <button class="theme-toggle" id="theme-toggle-btn-desktop" onclick="toggleTheme()" title="Switch light/dark mode" style="color:#9BA3AF">🌙</button>
         <button class="eye-toggle" id="eye-toggle-btn-desktop" onclick="toggleFigures()" title="Show/hide figures" style="color:#9BA3AF">👁️</button>
         <span style="color:#6B7280;font-size:0.72rem;cursor:pointer" onclick="handleSignOut()">Sign out</span>
       </div>
@@ -259,6 +277,7 @@ select option{color:#14181D;background:#fff;}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:4px">
+        <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch light/dark mode">🌙</button>
         <button class="eye-toggle" id="eye-toggle-btn" onclick="toggleFigures()" title="Show/hide figures">👁️</button>
         <button class="link-btn" onclick="handleSignOut()">Sign out</button>
       </div>
@@ -848,6 +867,7 @@ async function onAuthed(user){
     const btn2=document.getElementById('eye-toggle-btn-desktop');
     if(btn2)btn2.textContent='🙈';
   }
+  updateThemeToggleIcons();
   await loadAllData();
   await fetchLivePrices();
   if(displayCurrency!=='USD'){
@@ -935,6 +955,25 @@ function toggleFigures(){
   if(btn)btn.textContent=hidden?'🙈':'👁️';
   const btn2=document.getElementById('eye-toggle-btn-desktop');
   if(btn2)btn2.textContent=hidden?'🙈':'👁️';
+}
+function toggleTheme(){
+  const isLight=document.documentElement.getAttribute('data-theme')==='light';
+  if(isLight){
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('kosh-theme','dark');
+  }else{
+    document.documentElement.setAttribute('data-theme','light');
+    localStorage.setItem('kosh-theme','light');
+  }
+  updateThemeToggleIcons();
+}
+function updateThemeToggleIcons(){
+  const isLight=document.documentElement.getAttribute('data-theme')==='light';
+  const icon=isLight?'☀️':'🌙';
+  const btn=document.getElementById('theme-toggle-btn');
+  if(btn)btn.textContent=icon;
+  const btn2=document.getElementById('theme-toggle-btn-desktop');
+  if(btn2)btn2.textContent=icon;
 }
 function renderBackRowPortfolioSelect(){
   const sel=document.getElementById('back-row-portfolio-select');
@@ -2034,6 +2073,7 @@ async function renderDashboard(){
 
   fetchTopCoinsTicker().then(renderTickerBar);
   if(!fearGreedData)fetchFearGreed().then(()=>{const fgEl=document.getElementById('fear-greed-slot');if(fgEl)fgEl.innerHTML=fearGreedCardHtml();});
+  if(!newsData.market.length)fetchNews().then(()=>{const nEl=document.getElementById('dash-news-slot');if(nEl)nEl.innerHTML=dashTopNewsHtml();});
 
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
 
@@ -2060,6 +2100,21 @@ async function renderDashboard(){
     const pfPalette=['#17B6A7','#E8A93E','#2E6FA3','#7C6FE0','#C0392B','#1E9E6E'];
     const head=(t,sub)=>`<div class="dash-section"><h3>${t}</h3>${sub?`<span>${sub}</span>`:''}</div>`;
 
+    // ── Market — sentiment + movers, in one row, with top headlines just
+    // below. Moved up top so it's the first thing seen, above the portfolio
+    // cards, instead of buried at the bottom of the page. ──
+    html+=head('Market','crypto sentiment and today\'s biggest movers');
+    const stockPidsSet=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+    const stockTierIdsSet=new Set(combined.allTiers.filter(t=>stockPidsSet.has(t.portfolio_id)).map(t=>t.id));
+    const cryptoMovers=combined.allCoins.filter(c=>!stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
+    const stockMovers=combined.allCoins.filter(c=>stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
+    html+=`<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:0">
+      <div style="flex:1 1 260px;min-width:240px" id="fear-greed-slot">${fearGreedCardHtml()}</div>
+      <div style="flex:1 1 260px;min-width:240px">${moversCardHtml('🪙 Crypto movers (24h)',cryptoMovers)}</div>
+      ${stockPidsSet.size?`<div style="flex:1 1 260px;min-width:240px">${moversCardHtml('🇺🇸 US-Stocks movers (24h)',stockMovers)}</div>`:''}
+    </div>`;
+    html+=`<div id="dash-news-slot">${dashTopNewsHtml()}</div>`;
+
     // ── Overview ──
     html+=head('Overview','all portfolios together, in USD');
     html+=`<div class="hero-card hero-flex">
@@ -2083,7 +2138,7 @@ async function renderDashboard(){
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
-    html+='<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:6px">';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:6px">';
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
@@ -2121,11 +2176,12 @@ async function renderDashboard(){
     });
     html+='</div>';
 
-    // ── One donut of portfolio proportions ──
+    // ── One donut of portfolio proportions, plus top holdings combined ──
     const donutRows=combined.perPortfolio.filter(x=>x.value>0);
+    html+='<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:0">';
     if(donutRows.length){
       const allocDonut=donutFromValues(donutRows.map(x=>({label:x.portfolio.name,value:x.value})),combined.combinedTotal,pfPalette);
-      html+=`<div class="card"><div class="card-title">Allocation between portfolios</div>
+      html+=`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Allocation between portfolios</div>
         <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
           <div style="width:140px;height:140px;flex-shrink:0;border-radius:50%;background:${allocDonut.gradient};position:relative">
             <div style="position:absolute;inset:32px;border-radius:50%;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center">
@@ -2139,6 +2195,38 @@ async function renderDashboard(){
           </div>
         </div></div>`;
     }
+
+    // ── Top holdings across all portfolios combined, by coin ──
+    const holdingTotals={};
+    combined.perPortfolio.forEach(pp=>{
+      pp.coins.forEach(c=>{
+        const v=coinValue(c)||0;
+        if(v<1)return;
+        const key=c.ticker;
+        if(!holdingTotals[key])holdingTotals[key]={ticker:c.ticker,name:c.name,value:0};
+        holdingTotals[key].value+=v;
+      });
+    });
+    const topHoldings=Object.values(holdingTotals).sort((a,b)=>b.value-a.value).slice(0,8);
+    if(topHoldings.length){
+      const thTotal=topHoldings.reduce((s,h)=>s+h.value,0);
+      html+=`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Top holdings (combined)</div>
+        <div style="font-size:0.74rem">
+          ${topHoldings.map((h,i)=>{
+            const pct=combined.combinedTotal>0?(h.value/combined.combinedTotal*100):0;
+            const barPct=thTotal>0?(h.value/topHoldings[0].value*100):0;
+            const color=tierPalette[i%tierPalette.length];
+            return`<div style="margin-bottom:9px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                <span style="font-weight:600">${escapeHtml(h.ticker)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(h.name||'')}</span></span>
+                <span class="hide-figure"><span style="font-weight:700">${fmtUsd(h.value)}</span> <span style="color:var(--ink3)">${pct.toFixed(1)}%</span></span>
+              </div>
+              <div style="height:5px;border-radius:3px;background:var(--card2);overflow:hidden"><div style="height:100%;width:${barPct}%;background:${color};border-radius:3px"></div></div>
+            </div>`;
+          }).join('')}
+        </div></div>`;
+    }
+    html+='</div>';
 
     // ── Needs attention: one list instead of a wall of red boxes ──
     const alerts=[];
@@ -2209,20 +2297,6 @@ async function renderDashboard(){
         </div>
       </div>`;
     });
-
-    // ── Market ──
-    html+=head('Market','crypto sentiment and today\'s biggest movers');
-    html+='<div id="fear-greed-slot">'+fearGreedCardHtml()+'</div>';
-
-    // Top Gainers / Top Losers — crypto and US-Stocks shown as separate
-    // cards, since lumping them together made it unclear which market a
-    // mover belonged to.
-    const stockPidsSet=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
-    const stockTierIdsSet=new Set(combined.allTiers.filter(t=>stockPidsSet.has(t.portfolio_id)).map(t=>t.id));
-    const cryptoMovers=combined.allCoins.filter(c=>!stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
-    const stockMovers=combined.allCoins.filter(c=>stockTierIdsSet.has(c.tier_id)&&priceChange24h[c.coingecko_id]!=null).map(c=>({coin:c,change:priceChange24h[c.coingecko_id]}));
-    html+=moversCardHtml('🪙 Crypto movers (24h)',cryptoMovers);
-    if(stockPidsSet.size)html+=moversCardHtml('🇺🇸 US-Stocks movers (24h)',stockMovers);
 
   } else {
     // Single-portfolio mode — the portfolio selected in the dropdown IS
@@ -3701,6 +3775,25 @@ function newsArticleHtml(article){
     <div style="font-size:0.66rem;color:var(--ink3);margin-bottom:6px">${escapeHtml(article.source||'')} · ${timeAgo(article.pubDate)}</div>
     ${excerpt?`<div style="font-size:0.76rem;color:var(--ink2);margin-bottom:8px;line-height:1.4">${escapeHtml(excerpt)}</div>`:''}
     <a href="${article.link}" target="_blank" rel="noopener noreferrer" style="font-size:0.74rem;font-weight:600;color:var(--teal-dark)">Read full article →</a>
+  </div>`;
+}
+
+// Top 2-3 headlines shown right under the Market row on the Combined
+// Dashboard — a quick taste of the news, full list still lives on the News tab.
+function dashTopNewsHtml(){
+  const top=(newsData.market||[]).slice(0,3);
+  if(!top.length)return'';
+  return`<div class="card"><div class="card-title" style="margin-bottom:8px">📰 Latest News</div>
+    ${top.map(a=>{
+      const desc=a.description||'';
+      const excerpt=desc.length>100?desc.slice(0,100).trim()+'…':desc;
+      return`<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <a href="${a.link}" target="_blank" rel="noopener noreferrer" style="font-size:0.8rem;font-weight:600;color:var(--ink);text-decoration:none">${escapeHtml(a.title||'')}</a>
+        <div style="font-size:0.64rem;color:var(--ink3);margin-top:3px">${escapeHtml(a.source||'')} · ${timeAgo(a.pubDate)}</div>
+        ${excerpt?`<div style="font-size:0.72rem;color:var(--ink2);margin-top:4px;line-height:1.4">${escapeHtml(excerpt)}</div>`:''}
+      </div>`;
+    }).join('')}
+    <button class="link-btn" style="margin-top:8px;font-size:0.72rem" onclick="switchTab('news')">See all news →</button>
   </div>`;
 }
 
