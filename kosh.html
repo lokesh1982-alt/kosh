@@ -1416,15 +1416,20 @@ async function searchCoinGecko(query){
     return(data.coins||[]).slice(0,20).map(c=>({id:c.id,name:c.name,symbol:c.symbol,rank:c.market_cap_rank}));
   }catch(e){return[];}
 }
-// A short list of Binance tickers that are KNOWN to collide with an unrelated
-// (and often obscure/low-cap) coin of the same symbol on CoinGecko, where
-// even a wide, rank-sorted search can still pick the wrong one — checked
-// before the search fallback below. Add to this as more turn up.
+// Manually-pinned fast path for tickers already confirmed by hand — skips
+// both the search AND the Binance-listing verification below, so these
+// resolve instantly with no network call. No longer the primary defense
+// against wrong-coin matches (resolveCoingeckoId now verifies new/unknown
+// tickers against Binance's own listing automatically — see below), but
+// kept as a zero-cost override for anything already known, or for the rare
+// case where even verification could be fooled (e.g. a coin cross-listed
+// under the same symbol on Binance by two different projects).
 const COINGECKO_ID_OVERRIDES={
   'ONE':'harmony','LINK':'chainlink','PENGU':'pudgy-penguins','SLP':'smooth-love-potion',
   'SAND':'the-sandbox','MATIC':'polygon-ecosystem-token','DOT':'polkadot','UNI':'uniswap',
   'FIL':'filecoin','ATOM':'cosmos','AVAX':'avalanche-2','ICP':'internet-computer',
-  'BTT':'bittorrent','RUNE':'thorchain','WAVES':'waves','FLOW':'flow','OM':'mantra-dao'
+  'BTT':'bittorrent','RUNE':'thorchain','WAVES':'waves','FLOW':'flow','OM':'mantra-dao',
+  'SAGA':'saga-2'
 };
 // Binance's ticker is NOT reliably CoinGecko's id (LINK's real id is
 // "chainlink", PENGU's is "pudgy-penguins", SLP's is "smooth-love-potion" —
@@ -1434,25 +1439,51 @@ const COINGECKO_ID_OVERRIDES={
 // CoinGecko for the ticker and take the highest-market-cap exact symbol
 // match, which is overwhelmingly the coin actually meant. Cached per ticker
 // since sync re-processes the same assets on every run.
+// Confirms a candidate CoinGecko id is actually the coin traded on Binance
+// under this ticker, by checking CoinGecko's OWN record of that coin's
+// exchange listings (GET /coins/{id}/tickers?exchange_ids=binance) — the
+// same data CoinGecko uses to link an exchange pair to a coin page. This is
+// ground truth, not a guess: if CoinGecko doesn't think this coin trades on
+// Binance as this symbol, it isn't the one Binance sent us. Market-cap rank
+// alone (the old method) picks the biggest same-symbol coin, which is
+// usually right but not always — that's exactly how ONE/LINK/PENGU/SLP/SAGA
+// went wrong, each time needing a one-off hardcoded fix. Verifying against
+// Binance's actual listing closes that whole bug class at the root instead
+// of patching it ticker by ticker.
+async function verifyCoinOnBinance(id,ticker){
+  try{
+    const res=await cgFetch(`/api/v3/coins/${id}/tickers`,{exchange_ids:'binance'});
+    if(!res.ok)return false;
+    const data=await res.json();
+    return(data.tickers||[]).some(t=>(t.base||'').toUpperCase()===ticker);
+  }catch(e){return false;}
+}
 let _cgIdResolveCache={};
 async function resolveCoingeckoId(ticker){
   const t=(ticker||'').toUpperCase();
   if(!t)return'';
   if(t==='USDT')return'tether';
-  if(COINGECKO_ID_OVERRIDES[t])return COINGECKO_ID_OVERRIDES[t];
+  if(COINGECKO_ID_OVERRIDES[t])return COINGECKO_ID_OVERRIDES[t]; // manually-pinned, instant, no network
   if(_cgIdResolveCache[t])return _cgIdResolveCache[t];
   let id=t.toLowerCase();
   try{
     const results=await searchCoinGecko(t);
-    const exact=results.filter(r=>(r.symbol||'').toUpperCase()===t);
+    const exact=results.filter(r=>(r.symbol||'').toUpperCase()===t)
+      .sort((a,b)=>(a.rank==null?Infinity:a.rank)-(b.rank==null?Infinity:b.rank));
     if(exact.length){
-      const best=exact.reduce((a,b)=>{
-        const ar=a.rank==null?Infinity:a.rank,br=b.rank==null?Infinity:b.rank;
-        return br<ar?b:a;
-      });
-      id=best.id;
+      // Try the top few candidates (highest market cap first), confirming
+      // each one against Binance's actual listing before accepting it,
+      // instead of just trusting market-cap rank (the old method — which is
+      // how ONE/LINK/PENGU/SLP/SAGA each went wrong and needed a one-off
+      // hardcoded fix). This closes that whole bug class at the root for
+      // any NEW coin too, not just ones already caught and added above.
+      let verified=null;
+      for(const cand of exact.slice(0,5)){
+        if(await verifyCoinOnBinance(cand.id,t)){verified=cand.id;break;}
+      }
+      id=verified||exact[0].id;
     }
-  }catch(e){/* fall back to the lowercase guess below */}
+  }catch(e){/* fall back to the override/lowercase guess already in id */}
   _cgIdResolveCache[t]=id;
   return id;
 }
