@@ -260,6 +260,8 @@ select option{color:#14181D;background:#fff;}
       <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
       <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+        <span class="binance-sync-status" style="font-size:0.66rem;color:#8B93A1;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
+        <button class="btn-outline" style="padding:5px 11px;font-size:0.72rem" onclick="syncBinanceNow()">🔄 Sync Binance</button>
         <button class="theme-toggle" id="theme-toggle-btn-desktop" onclick="toggleTheme()" title="Switch light/dark mode" style="color:#9BA3AF">🌙</button>
         <button class="eye-toggle" id="eye-toggle-btn-desktop" onclick="toggleFigures()" title="Show/hide figures" style="color:#9BA3AF">👁️</button>
         <span style="color:#6B7280;font-size:0.72rem;cursor:pointer" onclick="handleSignOut()">Sign out</span>
@@ -277,6 +279,7 @@ select option{color:#14181D;background:#fff;}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:4px">
+        <button class="eye-toggle" id="sync-toggle-btn" onclick="syncBinanceNow()" title="Sync Binance now">🔄</button>
         <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch light/dark mode">🌙</button>
         <button class="eye-toggle" id="eye-toggle-btn" onclick="toggleFigures()" title="Show/hide figures">👁️</button>
         <button class="link-btn" onclick="handleSignOut()">Sign out</button>
@@ -2082,14 +2085,6 @@ async function renderDashboard(){
   let html='';
   let allocDonutQueue=[]; // [{canvasId, tierStats}] rendered into Chart.js after innerHTML is set
 
-  // Binance sync lives here (not Settings) since it affects Lead Trading,
-  // Spot and Funding Wallet at once, regardless of which portfolio view
-  // you're looking at.
-  html+=`<div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:10px">
-    <span id="binance-sync-status" style="font-size:0.68rem;color:var(--ink3)"></span>
-    <button class="btn-outline" style="padding:6px 12px;font-size:0.76rem" onclick="syncBinanceNow()">🔄 Sync Binance now</button>
-  </div>`;
-
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
     const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
@@ -2138,7 +2133,7 @@ async function renderDashboard(){
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
-    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:6px">';
+    html+='<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;margin-bottom:6px;padding-bottom:4px">';
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
@@ -2146,7 +2141,7 @@ async function renderDashboard(){
       const col=vsCap==null?'var(--ink3)':vsCap>=0?'var(--green)':'var(--red)';
       const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>=1);
       const donut=donutFromValues(items,pp.value,pfPalette);
-      html+=`<div class="card" style="flex:1 1 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${color} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${color} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
+      html+=`<div class="card" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${color} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${color} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${color}"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:8px;min-width:0">
@@ -2228,22 +2223,6 @@ async function renderDashboard(){
     }
     html+='</div>';
 
-    // ── Needs attention: one list instead of a wall of red boxes ──
-    const alerts=[];
-    combined.perPortfolio.forEach(pp=>{
-      const p=pp.portfolio,nm=escapeHtml(p.name);
-      if(p.kind!=='spot'){
-        const bs=bandStats(p,pp.coins);
-        if(bs.level>=1)alerts.push({icon:'⚖️',text:`<b>${nm}</b>: rebalance trigger level ${bs.level} reached (${bs.variation>=0?'+':'−'}${Math.abs(bs.variation).toFixed(1)}% vs base)`,open:p.id});
-        calcTierStatsGeneric(pp.tiers,pp.coins,0).filter(t=>Math.abs(t.driftPP)>=5).forEach(t=>alerts.push({icon:'⚠️',text:`<b>${nm}</b>: ${escapeHtml(t.name)} is ${Math.abs(t.driftPP).toFixed(1)}pp ${t.driftPP>0?'above':'below'} target`}));
-      }
-      const cw=findConcentrationWarningsGeneric(pp.coins);
-      if(cw.length)alerts.push({icon:'🚨',text:`<b>${nm}</b>: ${cw.length} holding${cw.length===1?'':'s'} above the ~10% cap (${cw.slice(0,3).map(w=>escapeHtml(w.coin.ticker)+' '+(w.pct*100).toFixed(1)+'%').join(', ')}${cw.length>3?' and '+(cw.length-3)+' more':''})`});
-    });
-    if(alerts.length){
-      html+=`<div class="card"><div class="card-title">Needs attention</div>${alerts.map(a=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);font-size:0.74rem;line-height:1.4"><span>${a.icon}</span><div style="flex:1">${a.text}</div>${a.open?`<button class="link-btn" onclick="setDashViewMode('${a.open}')">Open →</button>`:''}</div>`).join('')}</div>`;
-    }
-
     // ── Holdings, one portfolio at a time — one/two lines per holding,
     // with a center-anchored +/- performance bar ──
     html+=head('Holdings','every position, by portfolio');
@@ -2258,6 +2237,7 @@ async function renderDashboard(){
         const unrealized=(avgCost!=null&&price!=null)?(price-avgCost)*(c.units_held||0):null;
         return{c,v,alloc,pct,price,avgCost,unrealized};
       }).sort((a,b)=>b.v-a.v);
+      const topRows=rows.slice(0,4),moreCount=rows.length-topRows.length;
       html+=`<div style="column-span:all">
         <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
           <span style="width:8px;height:8px;border-radius:50%;background:${color}"></span>
@@ -2265,7 +2245,7 @@ async function renderDashboard(){
           <span class="hide-figure" style="font-size:0.7rem;color:var(--ink3)">${fmtDisplay(pp.value)}</span>
         </div>
         <div class="card" style="padding:0">
-          ${rows.length?rows.map(r=>`<div class="holding-row">
+          ${topRows.length?topRows.map(r=>`<div class="holding-row">
             <div class="hr-name">
               <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
               <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
@@ -2294,6 +2274,7 @@ async function renderDashboard(){
               <button class="link-btn" style="color:var(--red);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','sell')">Sell</button>
             </div>
           </div>`).join(''):`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`}
+          ${moreCount>0?`<div style="padding:10px 14px;text-align:center"><button class="link-btn" style="font-size:0.74rem" onclick="setDashViewMode('${p.id}')">+${moreCount} more holding${moreCount===1?'':'s'} — Open portfolio →</button></div>`:''}
         </div>
       </div>`;
     });
@@ -4427,9 +4408,11 @@ async function discoverNewBinanceSymbolsForKeyset(keyset,targetPortfolioId){
 // and once against the Lead Trading portfolio's own separate wallet
 // (mapping finds straight to Lead Trading, since that wallet IS Lead
 // Trading's — no default-portfolio choice needed there).
+function setSyncStatus(text){
+  document.querySelectorAll('.binance-sync-status').forEach(el=>{el.textContent=text;});
+}
 async function discoverNewBinanceSymbols(){
-  const statusEl=document.getElementById('binance-sync-status');
-  if(statusEl)statusEl.textContent='Checking your Binance balances for new coins…';
+  setSyncStatus('Checking your Binance balances for new coins…');
   let discovered=0;
   // Lead Trading first: its map must be up to date BEFORE the "main"/Spot
   // pass runs, since Spot discovery skips any asset already mapped to Lead
@@ -4559,6 +4542,15 @@ async function repairStaleCoinGeckoIds(){
   }
 }
 async function syncBinanceNow(){
+  const mobileBtn=document.getElementById('sync-toggle-btn');
+  if(mobileBtn){mobileBtn.textContent='⏳';mobileBtn.disabled=true;}
+  try{
+    await syncBinanceNowInner();
+  }finally{
+    if(mobileBtn){mobileBtn.textContent='🔄';mobileBtn.disabled=false;}
+  }
+}
+async function syncBinanceNowInner(){
   await loadBinanceSymbolMap();
   await repairStaleCoinGeckoIds();
   await loadBinanceDefaultPortfolio();
@@ -4568,16 +4560,15 @@ async function syncBinanceNow(){
     return;
   }
   tradeLogErrors=[];
-  const statusEl=document.getElementById('binance-sync-status');
   let totalNew=0;
   if(newlyDiscovered)showToast(`Found ${newlyDiscovered} new coin${newlyDiscovered===1?'':'s'}, mapped automatically ✅`);
   for(const mapping of binanceSymbolMap){
-    if(statusEl)statusEl.textContent=`Syncing ${mapping.symbol}…`;
+    setSyncStatus(`Syncing ${mapping.symbol}…`);
     totalNew+=await syncSymbolMapping(mapping);
   }
-  if(statusEl)statusEl.textContent='Reconciling cash balances…';
+  setSyncStatus('Reconciling cash balances…');
   await reconcileQuoteAssetBalances();
-  if(statusEl)statusEl.textContent='Syncing Funding wallet…';
+  setSyncStatus('Syncing Funding wallet…');
   await syncFundingWallet();
   // One equity snapshot per affected portfolio, for the equity-curve chart
   // (private dashboard and, for Lead Trading, the public page).
@@ -4592,7 +4583,7 @@ async function syncBinanceNow(){
   await fetchLivePrices();
   renderAll();
   renderBinanceSettingsCard();
-  if(statusEl)statusEl.textContent=`Last synced ${new Date().toLocaleTimeString()} — ${totalNew} new trade${totalNew===1?'':'s'}.`;
+  setSyncStatus(`Last synced ${new Date().toLocaleTimeString()} — ${totalNew} new trade${totalNew===1?'':'s'}.`);
   if(tradeLogErrors.length)showToast(`Synced, but ${tradeLogErrors.length} Journal entr${tradeLogErrors.length===1?'y':'ies'} failed to save: ${tradeLogErrors[0]}`);
   else showToast(totalNew?`Synced ${totalNew} new trade${totalNew===1?'':'s'} ✅`:'Already up to date ✅');
 }
