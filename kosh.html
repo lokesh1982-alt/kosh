@@ -784,6 +784,8 @@ async function handleSignIn(){
 async function handleSignOut(){
   await sb.auth.signOut();
   currentUser=null;
+  stopPriceAutoRefresh();
+  if(newsAutoRefreshTimer){clearInterval(newsAutoRefreshTimer);newsAutoRefreshTimer=null;}
   document.getElementById('app-root').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
 }
@@ -891,6 +893,7 @@ async function onAuthed(user){
   document.querySelectorAll('.menu-tile').forEach(el=>el.classList.toggle('active',el.dataset.tab==='dashboard'));
   renderAll();
   startNewsAutoRefresh();
+  startPriceAutoRefresh();
 }
 
 // ═══════════════════════════════
@@ -3855,6 +3858,25 @@ async function renderWatchlist(){
 // out of that filter rather than needing explicit deletion logic.
 let newsData={coins:[],market:[]};
 let newsAutoRefreshTimer=null;
+let priceAutoRefreshTimer=null;
+// Live prices otherwise only refresh on page load or a manual action, so a
+// Dashboard left open goes stale indefinitely. This re-pulls prices every
+// 60s, but only while a price-relevant screen is actually visible and the
+// tab has focus — no point burning API calls against a hidden/background
+// tab or a screen (Journal, Settings) that doesn't show live prices anyway.
+function startPriceAutoRefresh(){
+  if(priceAutoRefreshTimer)clearInterval(priceAutoRefreshTimer);
+  priceAutoRefreshTimer=setInterval(async()=>{
+    if(document.hidden||!currentUser)return;
+    const liveScreens=['sec-dashboard','sec-tiers','sec-watchlist'];
+    if(!liveScreens.some(id=>document.getElementById(id)?.classList.contains('active')))return;
+    await fetchLivePrices();
+    renderAll();
+  },60*1000);
+}
+function stopPriceAutoRefresh(){
+  if(priceAutoRefreshTimer){clearInterval(priceAutoRefreshTimer);priceAutoRefreshTimer=null;}
+}
 
 async function getAllPortfolioTickers(){
   const allTiersRes=await sb.from('tiers').select('id');
