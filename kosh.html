@@ -1232,9 +1232,7 @@ async function saveNewPortfolio(){
   if(error){showToast('Error: '+error.message);return;}
   closeModal('new-portfolio-modal');
   currentPortfolioId=data.id;
-  dashViewMode=data.id;
   localStorage.setItem('kosh-current-portfolio',data.id);
-  localStorage.setItem('kosh-dash-view',data.id);
   await loadAllData();
   renderPortfolioSwitcher();
   renderAll();
@@ -2229,10 +2227,16 @@ async function renderDashboard(){
   } else {
     // Single-portfolio mode — the portfolio selected in the dropdown IS
     // currentPortfolioId at this point (setDashViewMode already switched it).
+    // Reachable only by deliberately drilling in (Propose Rebalance, "Open
+    // →") since the Dashboard otherwise always stays on combined — this bar
+    // is the way back, so landing here never gets "stuck" the way dashViewMode
+    // used to when something else (new-portfolio creation, old setup flows)
+    // silently switched it.
+    const backBar=`<div style="margin-bottom:10px"><button class="link-btn" onclick="setDashViewMode('both')">‹ Back to Combined Dashboard</button></div>`;
     const cp=currentPortfolio();
     if(cp&&(cp.name==='Lead Trading'||isStockKind(cp.kind))){
       const tpResult=await renderTradingPerformanceDashboard(cp);
-      el.innerHTML=tpResult.html;
+      el.innerHTML=backBar+tpResult.html;
       if(typeof Chart!=='undefined'){
         if(window._dashAllocCharts)Object.values(window._dashAllocCharts).forEach(c=>c.destroy());
         window._dashAllocCharts={};
@@ -2261,9 +2265,10 @@ async function renderDashboard(){
         emptyMsg='No tiers or coins in this portfolio yet.';
         emptyButtons=`<button class="btn-outline" onclick="openWizard()">🧙 Setup Wizard</button><button class="btn-primary" onclick="seedDefaultPortfolio()">Load starter portfolio</button>`;
       }
-      el.innerHTML=`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div></div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${emptyMsg}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${emptyButtons}</div></div>`;
+      el.innerHTML=backBar+`<div class="hero-card"><div style="display:flex;justify-content:space-between;align-items:center"><div class="hero-label">Portfolio value</div></div><div class="hero-val hide-figure">$0</div></div><div class="empty-state"><div class="ic">💼</div><div>${emptyMsg}</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${emptyButtons}</div></div>`;
       return;
     }
+    html+=backBar;
     const total=totalActualValue();
     const capital=settings.total_capital||0;
     const gainLoss=total-capital;
@@ -4098,9 +4103,7 @@ async function runBinanceSetup(){
   const{data:alpha,error:e2}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Alpha',kind:'spot',sort_order:1}).select().single();
   if(e2){showToast('Error creating Alpha: '+e2.message);return;}
   currentPortfolioId=lead.id;
-  dashViewMode=lead.id;
   localStorage.setItem('kosh-current-portfolio',lead.id);
-  localStorage.setItem('kosh-dash-view',lead.id);
   await loadAllData();
   renderPortfolioSwitcher();
   renderAll();
