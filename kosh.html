@@ -38,8 +38,8 @@ html[data-theme="light"] select option{color:#14181D;background:#fff;}
 .theme-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
 .pf-row-scroll{scrollbar-width:none;-ms-overflow-style:none;}
 .pf-row-scroll::-webkit-scrollbar{display:none;}
-.pf-row-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:5;width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.25);}
-.pf-row-arrow:hover{background:var(--card2);}
+.pf-row-arrow{flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--card2);color:var(--ink);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.pf-row-arrow:hover{background:var(--ink-accent);color:#fff;border-color:var(--ink-accent);}
 @media(max-width:520px){.pf-row-arrow{width:26px;height:26px;font-size:14px;}}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;}
@@ -2211,9 +2211,9 @@ async function renderDashboard(){
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
-    html+=`<div style="position:relative;margin-bottom:6px">
-      <button class="pf-row-arrow" style="left:-6px" onclick="scrollPfRow(-1)" aria-label="Scroll left">‹</button>
-      <div class="pf-row-scroll" id="pf-cards-row" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;padding-bottom:4px">`;
+    html+=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <button class="pf-row-arrow" onclick="scrollPfRow(-1)" aria-label="Scroll left">‹</button>
+      <div class="pf-row-scroll" id="pf-cards-row" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;padding-bottom:4px;flex:1;min-width:0">`;
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
@@ -2250,7 +2250,7 @@ async function renderDashboard(){
       </div>`;
     });
     html+=`</div>
-      <button class="pf-row-arrow" style="right:-6px" onclick="scrollPfRow(1)" aria-label="Scroll right">›</button>
+      <button class="pf-row-arrow" onclick="scrollPfRow(1)" aria-label="Scroll right">›</button>
     </div>`;
 
     // ── One donut of portfolio proportions, plus top holdings combined ──
