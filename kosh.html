@@ -37,6 +37,8 @@ html[data-theme="light"] .desktop-topnav .lbl{color:#C3CAD3;}
 html[data-theme="light"] .desktop-topnav .ic{filter:none;}
 html[data-theme="light"] select option{color:#14181D;background:#fff;}
 .theme-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
+.pf-row-scroll{scrollbar-width:none;-ms-overflow-style:none;}
+.pf-row-scroll::-webkit-scrollbar{display:none;}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;}
 button,input,select{font-family:inherit;}
@@ -2133,7 +2135,7 @@ async function renderDashboard(){
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
-    html+='<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;margin-bottom:6px;padding-bottom:4px">';
+    html+='<div class="pf-row-scroll" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;margin-bottom:6px;padding-bottom:4px">';
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
@@ -2202,7 +2204,7 @@ async function renderDashboard(){
         holdingTotals[key].value+=v;
       });
     });
-    const topHoldings=Object.values(holdingTotals).sort((a,b)=>b.value-a.value).slice(0,8);
+    const topHoldings=Object.values(holdingTotals).sort((a,b)=>b.value-a.value).slice(0,4);
     if(topHoldings.length){
       const thTotal=topHoldings.reduce((s,h)=>s+h.value,0);
       html+=`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Top holdings (combined)</div>
@@ -2237,7 +2239,6 @@ async function renderDashboard(){
         const unrealized=(avgCost!=null&&price!=null)?(price-avgCost)*(c.units_held||0):null;
         return{c,v,alloc,pct,price,avgCost,unrealized};
       }).sort((a,b)=>b.v-a.v);
-      const topRows=rows.slice(0,4),moreCount=rows.length-topRows.length;
       html+=`<div style="column-span:all">
         <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
           <span style="width:8px;height:8px;border-radius:50%;background:${color}"></span>
@@ -2245,7 +2246,7 @@ async function renderDashboard(){
           <span class="hide-figure" style="font-size:0.7rem;color:var(--ink3)">${fmtDisplay(pp.value)}</span>
         </div>
         <div class="card" style="padding:0">
-          ${topRows.length?topRows.map(r=>`<div class="holding-row">
+          ${rows.length?rows.map(r=>`<div class="holding-row">
             <div class="hr-name">
               <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
               <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
@@ -2274,7 +2275,6 @@ async function renderDashboard(){
               <button class="link-btn" style="color:var(--red);padding:2px 4px" onclick="quickTrade('${p.id}','${r.c.id}','sell')">Sell</button>
             </div>
           </div>`).join(''):`<div class="empty-state" style="padding:16px 0"><div>No open positions.</div></div>`}
-          ${moreCount>0?`<div style="padding:10px 14px;text-align:center"><button class="link-btn" style="font-size:0.74rem" onclick="setDashViewMode('${p.id}')">+${moreCount} more holding${moreCount===1?'':'s'} — Open portfolio →</button></div>`:''}
         </div>
       </div>`;
     });
