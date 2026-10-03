@@ -1366,9 +1366,24 @@ async function searchCoinGecko(query){
     const res=await cgFetch('/api/v3/search',{query});
     if(!res.ok)return[];
     const data=await res.json();
-    return(data.coins||[]).slice(0,8).map(c=>({id:c.id,name:c.name,symbol:c.symbol,rank:c.market_cap_rank}));
+    // CoinGecko's search ranks by its own text relevance, not market cap — for
+    // a short, generic ticker like "ONE" (also a plain English word) the real
+    // coin can land outside a tight top-8 cutoff, behind unrelated "One
+    // <Something>"-named projects. A wider slice gives the rank-based picker
+    // in resolveCoingeckoId a real shot at finding it.
+    return(data.coins||[]).slice(0,20).map(c=>({id:c.id,name:c.name,symbol:c.symbol,rank:c.market_cap_rank}));
   }catch(e){return[];}
 }
+// A short list of Binance tickers that are KNOWN to collide with an unrelated
+// (and often obscure/low-cap) coin of the same symbol on CoinGecko, where
+// even a wide, rank-sorted search can still pick the wrong one — checked
+// before the search fallback below. Add to this as more turn up.
+const COINGECKO_ID_OVERRIDES={
+  'ONE':'harmony','LINK':'chainlink','PENGU':'pudgy-penguins','SLP':'smooth-love-potion',
+  'SAND':'the-sandbox','MATIC':'polygon-ecosystem-token','DOT':'polkadot','UNI':'uniswap',
+  'FIL':'filecoin','ATOM':'cosmos','AVAX':'avalanche-2','ICP':'internet-computer',
+  'BTT':'bittorrent','RUNE':'thorchain','WAVES':'waves','FLOW':'flow','OM':'mantra-dao'
+};
 // Binance's ticker is NOT reliably CoinGecko's id (LINK's real id is
 // "chainlink", PENGU's is "pudgy-penguins", SLP's is "smooth-love-potion" —
 // naively lowercasing the ticker silently mismatches onto whatever unrelated
@@ -1382,6 +1397,7 @@ async function resolveCoingeckoId(ticker){
   const t=(ticker||'').toUpperCase();
   if(!t)return'';
   if(t==='USDT')return'tether';
+  if(COINGECKO_ID_OVERRIDES[t])return COINGECKO_ID_OVERRIDES[t];
   if(_cgIdResolveCache[t])return _cgIdResolveCache[t];
   let id=t.toLowerCase();
   try{
