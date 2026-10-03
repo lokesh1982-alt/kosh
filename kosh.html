@@ -1091,6 +1091,39 @@ async function fetchFinnhubQuote(symbol){
     throw e;
   }
 }
+// Analyst consensus (buy/hold/sell counts, most recent month) + average
+// price target — both on Finnhub's free tier, same key already used for
+// quotes/search above. Cached per symbol for the session since this doesn't
+// change intraday.
+let analystData={};
+async function fetchAnalystRatings(symbols){
+  const todo=[...new Set(symbols)].filter(s=>s&&!analystData[s]);
+  if(!todo.length)return;
+  await Promise.all(todo.map(async sym=>{
+    try{
+      const[recRes,ptRes]=await Promise.all([
+        fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${encodeURIComponent(sym)}&token=${FINNHUB_API_KEY}`),
+        fetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${encodeURIComponent(sym)}&token=${FINNHUB_API_KEY}`)
+      ]);
+      const rec=recRes.ok?await recRes.json():[];
+      const pt=ptRes.ok?await ptRes.json():{};
+      analystData[sym]={rec:(rec&&rec[0])||null,pt:pt&&pt.targetMean?pt:null};
+    }catch(e){
+      console.error('Analyst ratings fetch failed for',sym,e);
+      analystData[sym]={rec:null,pt:null};
+    }
+  }));
+}
+// "Buy"/"Hold"/"Sell" label from Finnhub's raw strongBuy/buy/hold/sell/strongSell counts.
+function analystConsensusLabel(rec){
+  if(!rec)return null;
+  const bullish=(rec.strongBuy||0)+(rec.buy||0),bearish=(rec.sell||0)+(rec.strongSell||0),hold=rec.hold||0;
+  const total=bullish+bearish+hold;
+  if(!total)return null;
+  if(bullish>=total*0.6)return{label:'Buy',color:'var(--green)'};
+  if(bearish>=total*0.6)return{label:'Sell',color:'var(--red)'};
+  return{label:'Hold',color:'var(--amber)'};
+}
 
 let btc90dHigh=null;
 
@@ -2141,7 +2174,13 @@ async function renderDashboard(){
       <div style="flex:1 1 260px;min-width:240px">${moversCardHtml('🪙 Crypto movers (24h)',cryptoMovers)}</div>
       ${stockPidsSet.size?`<div style="flex:1 1 260px;min-width:240px">${moversCardHtml('🇺🇸 US-Stocks movers (24h)',stockMovers)}</div>`:''}
     </div>`;
-    html+=`<div id="dash-news-slot">${dashTopNewsHtml()}</div>`;
+    const stockCoinsForRatings=combined.allCoins.filter(c=>stockTierIdsSet.has(c.tier_id));
+    const heldStockTickers=[...new Set(stockCoinsForRatings.filter(c=>Math.abs(c.units_held||0)>1e-8).map(c=>(c.ticker||'').toUpperCase()))].filter(Boolean);
+    if(heldStockTickers.length)fetchAnalystRatings(heldStockTickers).then(()=>{const aEl=document.getElementById('dash-analyst-slot');if(aEl)aEl.innerHTML=dashAnalystRatingsHtml(stockCoinsForRatings);});
+    html+=`<div style="display:flex;flex-wrap:wrap;gap:14px">
+      <div style="flex:1 1 320px;min-width:280px" id="dash-news-slot">${dashTopNewsHtml()}</div>
+      ${stockPidsSet.size?`<div style="flex:1 1 320px;min-width:280px" id="dash-analyst-slot">${dashAnalystRatingsHtml(stockCoinsForRatings)}</div>`:''}
+    </div>`;
 
     // ── Overview ──
     html+=head('Overview','all portfolios together, in USD');
@@ -3806,6 +3845,39 @@ function dashTopNewsHtml(){
       </div>`;
     }).join('')}
     <button class="link-btn" style="margin-top:8px;font-size:0.72rem" onclick="switchTab('news')">See all news →</button>
+  </div>`;
+}
+
+// Analyst consensus + average price target for your US-Stocks holdings,
+// shown next to the news card on the Combined Dashboard. Data comes from
+// Finnhub (same free key Kosh already uses for stock prices/quotes) —
+// cached per symbol in analystData, fetched by fetchAnalystRatings().
+function dashAnalystRatingsHtml(stockCoins){
+  const held=stockCoins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+  if(!held.length)return'';
+  const tickers=[...new Set(held.map(c=>(c.ticker||'').toUpperCase()))].filter(Boolean);
+  const rows=tickers.map(t=>({ticker:t,data:analystData[t]})).filter(r=>r.data&&(r.data.rec||r.data.pt));
+  if(!rows.length)return'';
+  return`<div class="card"><div class="card-title" style="margin-bottom:8px">🧑‍💼 Analyst Ratings (US-Stocks)</div>
+    ${rows.map(r=>{
+      const cons=analystConsensusLabel(r.data.rec);
+      const pt=r.data.pt;
+      const coin=held.find(c=>(c.ticker||'').toUpperCase()===r.ticker);
+      const price=coin?livePrices[coin.coingecko_id]:null;
+      const upside=(pt&&pt.targetMean&&price)?((pt.targetMean-price)/price*100):null;
+      return`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <span style="font-size:0.78rem;font-weight:700">${escapeHtml(r.ticker)}</span>
+          ${cons?`<span style="margin-left:8px;font-size:0.68rem;font-weight:700;color:${cons.color};border:1px solid ${cons.color};border-radius:6px;padding:1px 6px">${cons.label}</span>`:''}
+          ${r.data.rec?`<div style="font-size:0.62rem;color:var(--ink3);margin-top:2px">${r.data.rec.strongBuy||0} strong buy · ${r.data.rec.buy||0} buy · ${r.data.rec.hold||0} hold · ${r.data.rec.sell||0} sell · ${r.data.rec.strongSell||0} strong sell</div>`:''}
+        </div>
+        <div style="text-align:right">
+          ${pt&&pt.targetMean?`<div class="hide-figure" style="font-size:0.78rem;font-weight:600">PT ${fmtUsd(pt.targetMean)}</div>`:''}
+          ${upside!=null?`<div style="font-size:0.66rem;color:${upside>=0?'var(--green)':'var(--red)'}">${upside>=0?'+':''}${upside.toFixed(1)}% vs now</div>`:''}
+        </div>
+      </div>`;
+    }).join('')}
+    <div style="font-size:0.6rem;color:var(--ink3);margin-top:8px">Consensus and price targets from Wall Street analysts, via Finnhub. Not investment advice.</div>
   </div>`;
 }
 
