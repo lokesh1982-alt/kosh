@@ -31,7 +31,6 @@ html[data-theme="light"]{
   --red:#C0392B;--red-dark:#A32E22;--red-bg:#FBE4E2;
   --green:#16A672;--green-bg:#DFF5EA;
 }
-html[data-theme="light"] .hero-card .hero-label{color:#F1F3F5;}
 html[data-theme="light"] .desktop-topnav{background:#121923;}
 html[data-theme="light"] .desktop-topnav .lbl{color:#C3CAD3;}
 html[data-theme="light"] .desktop-topnav .ic{filter:none;}
@@ -39,6 +38,9 @@ html[data-theme="light"] select option{color:#14181D;background:#fff;}
 .theme-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
 .pf-row-scroll{scrollbar-width:none;-ms-overflow-style:none;}
 .pf-row-scroll::-webkit-scrollbar{display:none;}
+.pf-row-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:5;width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.25);}
+.pf-row-arrow:hover{background:var(--card2);}
+@media(max-width:520px){.pf-row-arrow{width:26px;height:26px;font-size:14px;}}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;}
 button,input,select{font-family:inherit;}
@@ -93,7 +95,7 @@ button{cursor:pointer;}
    content yet) end up stranded alone under a taller neighbor. */
 .pf-grid{column-span:all;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:6px;}
 .pf-grid .pf-panel{margin-bottom:0;}
-.trend-btn{border:1px solid rgba(255,255,255,0.25);background:transparent;color:#F1F3F5;border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
+.trend-btn{border:1px solid var(--border);background:transparent;color:var(--ink2);border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
 .trend-btn.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700;}
 
 .tile-grid{
@@ -125,18 +127,18 @@ button{cursor:pointer;}
 .section.active{display:block;}
 
 .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
-.hero-card{background:linear-gradient(135deg,#0E7C6F 0%,var(--ink-accent) 55%);border:1px solid #17B6A7;border-radius:16px;padding:18px;color:#F1F3F5;margin-bottom:14px;position:relative;overflow:hidden;}
-.hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#17B6A7;}
+.hero-card{background:var(--card);border:1.5px solid #2E6FA3;border-radius:16px;padding:18px;color:var(--ink);margin-bottom:14px;position:relative;overflow:hidden;}
+.hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#2E6FA3;}
 @media(min-width:900px){
   .hero-flex{display:flex;align-items:center;gap:40px;}
   .hero-flex-left{flex:0 0 320px;}
   .hero-flex-right{flex:1;min-width:0;}
 }
-.hero-label{font-size:11px;letter-spacing:0.04em;color:#FFFFFF;opacity:0.92;font-weight:600;text-transform:uppercase;}
-.hero-val{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:600;margin:6px 0 4px;color:var(--teal);}
+.hero-label{font-size:11px;letter-spacing:0.04em;color:var(--ink);opacity:0.85;font-weight:600;text-transform:uppercase;}
+.hero-val{font-family:'Fraunces',serif;font-size:1.9rem;font-weight:700;margin:6px 0 4px;color:var(--ink);}
 body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .eye-toggle{background:none;border:none;font-size:16px;padding:4px;color:var(--ink2);}
-.hero-sub{font-size:0.76rem;color:#7FE0D4;}
+.hero-sub{font-size:0.76rem;color:var(--teal-dark);}
 
 .card-title{font-size:0.82rem;font-weight:600;color:var(--ink);margin-bottom:10px;}
 
@@ -960,6 +962,10 @@ function toggleFigures(){
   if(btn)btn.textContent=hidden?'🙈':'👁️';
   const btn2=document.getElementById('eye-toggle-btn-desktop');
   if(btn2)btn2.textContent=hidden?'🙈':'👁️';
+}
+function scrollPfRow(dir){
+  const row=document.getElementById('pf-cards-row');
+  if(row)row.scrollBy({left:dir*240,behavior:'smooth'});
 }
 function toggleTheme(){
   const isLight=document.documentElement.getAttribute('data-theme')==='light';
@@ -2193,8 +2199,8 @@ async function renderDashboard(){
         <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
         <div class="hero-sub">${gain>=0?'▲':'▼'} ${Math.abs(gainPct).toFixed(1)}% vs total capital (${fmtDisplay(combined.totalCapital)})</div>
         <div style="display:flex;gap:16px;margin:10px 0 4px">
-          <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${combined.pricedCount?signedDisplay(combined.combinedUnrealized):'—'}</div></div>
-          <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(combined.combinedRealized)}</div></div>
+          <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.pricedCount?(combined.combinedUnrealized>=0?'var(--green)':'var(--red)'):'var(--ink3)'}">${combined.pricedCount?signedDisplay(combined.combinedUnrealized):'—'}</div></div>
+          <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'var(--green)':'var(--red)'}">${signedDisplay(combined.combinedRealized)}</div></div>
         </div>
       </div>
       <div class="hero-flex-right" id="trend-slot">${trendBlockHtml()}</div>
@@ -2205,7 +2211,9 @@ async function renderDashboard(){
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
-    html+='<div class="pf-row-scroll" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;margin-bottom:6px;padding-bottom:4px">';
+    html+=`<div style="position:relative;margin-bottom:6px">
+      <button class="pf-row-arrow" style="left:-6px" onclick="scrollPfRow(-1)" aria-label="Scroll left">‹</button>
+      <div class="pf-row-scroll" id="pf-cards-row" style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:14px;padding-bottom:4px">`;
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
       const vsCap=pp.capital>0?(pp.value-pp.capital)/pp.capital*100:null;
@@ -2241,7 +2249,9 @@ async function renderDashboard(){
         <button class="link-btn" style="margin-top:8px;font-size:0.7rem" onclick="setDashViewMode('${p.id}')">Open →</button>
       </div>`;
     });
-    html+='</div>';
+    html+=`</div>
+      <button class="pf-row-arrow" style="right:-6px" onclick="scrollPfRow(1)" aria-label="Scroll right">›</button>
+    </div>`;
 
     // ── One donut of portfolio proportions, plus top holdings combined ──
     const donutRows=combined.perPortfolio.filter(x=>x.value>0);
