@@ -2260,6 +2260,12 @@ async function renderDashboard(){
 
     // ── Portfolio cards, one line — value, 30d-style trend and ROI, with
     // that portfolio's own holdings donut underneath each ──
+    // Futures isn't a `portfolios` row, so it's loaded separately here just
+    // to draw its own card below — kept OUT of combined.combinedTotal/
+    // combined.perPortfolio math, since leveraged P&L isn't the same kind
+    // of number as spot portfolio value and mixing them would misstate the
+    // Combined Portfolio Value figure above.
+    await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
@@ -2301,6 +2307,44 @@ async function renderDashboard(){
         <button class="link-btn" style="margin-top:8px;font-size:0.7rem" onclick="setDashViewMode('${p.id}')">Open →</button>
       </div>`;
     });
+    if(futuresCapitalDeployed>0||futuresPositions.length>0||futuresSymbols.length>0){
+      const futColor=pfPalette[combined.perPortfolio.length%pfPalette.length];
+      const closedF=futuresTrades.filter(t=>t.realized_pnl!=null);
+      const totalRealizedF=closedF.reduce((s,t)=>s+t.realized_pnl,0);
+      const totalUnrealizedF=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+      const futGain=totalRealizedF+totalUnrealizedF;
+      const futValue=futuresCapitalDeployed+futGain;
+      const futVsCap=futuresCapitalDeployed>0?(futGain/futuresCapitalDeployed)*100:null;
+      const futCol=futVsCap==null?'var(--ink3)':futVsCap>=0?'var(--green)':'var(--red)';
+      const futItems=futuresPositions.map(p=>({label:p.symbol,value:Math.abs(parseFloat(p.positionAmt||0))*parseFloat(p.markPrice||0)}));
+      const futDonut=donutFromValues(futItems,futItems.reduce((s,x)=>s+x.value,0),pfPalette);
+      html+=`<div class="card" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${futColor} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${futColor} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${futColor}"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="width:26px;height:26px;border-radius:8px;background:color-mix(in srgb, ${futColor} 30%, var(--card2));color:${futColor};display:flex;align-items:center;justify-content:center;font-size:0.76rem;font-weight:800;flex:none">🧮</span>
+            <span style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Futures</span>
+          </div>
+        </div>
+        <div class="hide-figure" style="font-size:1.15rem;font-weight:700">${fmtDisplay(futValue)}</div>
+        <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${futCol};margin-top:2px">${futVsCap==null?'No capital set':signedDisplay(futGain)+' ('+(futVsCap>=0?'+':'')+futVsCap.toFixed(1)+'%)'}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid var(--border)">
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
+          <span class="hide-figure" style="font-size:0.74rem;font-weight:600">${fmtDisplay(futuresCapitalDeployed||0)}</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:2px">
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
+          <span style="font-size:0.78rem;font-weight:700;color:${futCol}">${futVsCap==null?'—':(futVsCap>=0?'+':'')+futVsCap.toFixed(1)+'%'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <div style="width:48px;height:48px;border-radius:50%;flex:none;background:${futDonut.gradient};position:relative"><div style="position:absolute;inset:9px;border-radius:50%;background:var(--card)"></div></div>
+          <div style="font-size:0.6rem;color:var(--ink3);display:flex;flex-direction:column;gap:2px;min-width:0;flex:1">
+            ${futDonut.legend.length?futDonut.legend.map(s=>`<div style="display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="width:6px;height:6px;border-radius:2px;background:${s.color};flex:none"></span>${escapeHtml(s.label)} ${s.pct}</div>`).join(''):'<div>No open positions</div>'}
+          </div>
+        </div>
+        <button class="link-btn" style="margin-top:8px;font-size:0.7rem" onclick="switchTab('futures')">Open →</button>
+      </div>`;
+    }
     html+=`</div>
       <button class="pf-row-arrow" onclick="scrollPfRow(1)" aria-label="Scroll right">›</button>
     </div>`;
@@ -3565,13 +3609,22 @@ async function renderJournal(){
   const hasAnyStockPortfolio=portfolios.some(p=>isStockKind(p.kind));
   await loadFuturesSymbols();
   const hasFutures=futuresSymbols.length>0;
+  // Futures is still crypto, just a different instrument — so it nests as a
+  // Spot/Futures sub-toggle under the "Crypto" tab rather than sitting next
+  // to Crypto/US-Stocks as its own top-level option.
+  const topGroup=journalViewMode==='stocks'?'stocks':'crypto';
   let toggleHtml='';
   if(hasAnyStockPortfolio||hasFutures){
-    toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
-      <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
-      ${hasAnyStockPortfolio?`<button class="tab-btn ${journalViewMode==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>`:''}
-      ${hasFutures?`<button class="tab-btn ${journalViewMode==='futures'?'active':''}" onclick="setJournalViewMode('futures')">🧮 Futures</button>`:''}
+    toggleHtml=`<div class="tabs-row" style="margin-bottom:${topGroup==='crypto'&&hasFutures?'6px':'12px'}">
+      <button class="tab-btn ${topGroup==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
+      ${hasAnyStockPortfolio?`<button class="tab-btn ${topGroup==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>`:''}
     </div>`;
+    if(topGroup==='crypto'&&hasFutures){
+      toggleHtml+=`<div class="tabs-row" style="margin-bottom:12px">
+        <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" style="font-size:0.7rem;padding:5px 10px" onclick="setJournalViewMode('crypto')">Spot</button>
+        <button class="tab-btn ${journalViewMode==='futures'?'active':''}" style="font-size:0.7rem;padding:5px 10px" onclick="setJournalViewMode('futures')">Futures</button>
+      </div>`;
+    }
   }
   // Futures has its own data shape (no coin_id/avg-cost, Binance-reported
   // PnL per fill, no INR leg) — rendered by its own function entirely,
