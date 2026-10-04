@@ -2410,21 +2410,31 @@ async function renderDashboard(){
     </div>`;
 
     // ── One donut of portfolio proportions, plus top holdings combined ──
-    const donutRows=combined.perPortfolio.filter(x=>x.value>0);
+    // Futures isn't in combined.perPortfolio (kept out of the headline total),
+    // but it IS a place the money sits, so it gets its own slice here, sized by
+    // capital deployed + realized/unrealized P&L — the same figure its card shows.
+    const donutRows=combined.perPortfolio.filter(x=>x.value>0).map(x=>({name:x.portfolio.name,value:x.value}));
+    if(futuresCapitalDeployed>0||futuresPositions.length>0){
+      const fv=futuresCapitalDeployed
+        +futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0)
+        +futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+      if(fv>0)donutRows.push({name:'Futures',value:fv});
+    }
+    const allocTotal=donutRows.reduce((s,x)=>s+x.value,0);
     html+='<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:0">';
     if(donutRows.length){
-      const allocDonut=donutFromValues(donutRows.map(x=>({label:x.portfolio.name,value:x.value})),combined.combinedTotal,pfPalette);
+      const allocDonut=donutFromValues(donutRows.map(x=>({label:x.name,value:x.value})),allocTotal,pfPalette);
       html+=`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Allocation between portfolios</div>
         <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
           <div style="width:140px;height:140px;flex-shrink:0;border-radius:50%;background:${allocDonut.gradient};position:relative">
             <div style="position:absolute;inset:32px;border-radius:50%;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center">
               <span style="font-size:0.6rem;color:var(--ink3)">Total</span>
-              <span class="hide-figure" style="font-size:0.78rem;font-weight:700">${fmtDisplay(combined.combinedTotal)}</span>
+              <span class="hide-figure" style="font-size:0.78rem;font-weight:700">${fmtDisplay(allocTotal)}</span>
             </div>
           </div>
           <div style="font-size:0.74rem;flex:1;min-width:180px">
-            ${donutRows.map((x,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${pfPalette[i%pfPalette.length]};margin-right:6px"></span>${escapeHtml(x.portfolio.name)}</span><span style="font-weight:700" class="hide-figure">${(x.value/combined.combinedTotal*100).toFixed(1)}%</span></div>`).join('')}
-            <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:6px;display:flex;justify-content:space-between;color:var(--ink3)"><span>Total</span><span class="hide-figure">${fmtDisplay(combined.combinedTotal)}</span></div>
+            ${donutRows.map((x,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:7px"><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${pfPalette[i%pfPalette.length]};margin-right:6px"></span>${escapeHtml(x.name)}</span><span style="font-weight:700" class="hide-figure">${(x.value/allocTotal*100).toFixed(1)}%</span></div>`).join('')}
+            <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:6px;display:flex;justify-content:space-between;color:var(--ink3)"><span>Total</span><span class="hide-figure">${fmtDisplay(allocTotal)}</span></div>
           </div>
         </div></div>`;
     }
