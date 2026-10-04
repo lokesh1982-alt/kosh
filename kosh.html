@@ -95,6 +95,8 @@ button{cursor:pointer;}
    content yet) end up stranded alone under a taller neighbor. */
 .pf-grid{column-span:all;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:6px;}
 .pf-grid .pf-panel{margin-bottom:0;}
+.pf-drag-handle{cursor:grab;touch-action:none;user-select:none;color:var(--ink3);font-size:1rem;line-height:1;padding:2px 2px;flex:none;}
+.pf-card.pf-dragging{opacity:0.55;box-shadow:0 8px 24px rgba(0,0,0,0.5);}
 .trend-btn{border:1px solid var(--border);background:transparent;color:var(--ink2);border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
 .trend-btn.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700;}
 
@@ -1014,6 +1016,54 @@ function toggleFigures(){
   if(btn)btn.textContent=hidden?'🙈':'👁️';
   const btn2=document.getElementById('eye-toggle-btn-desktop');
   if(btn2)btn2.textContent=hidden?'🙈':'👁️';
+}
+// ── Dashboard portfolio cards: user-arrangeable order (drag the ⠿ handle).
+// Order is a per-device convenience, kept in localStorage by card key
+// (portfolio id, or "futures"); cards not yet in the saved order (e.g. a
+// newly created portfolio) simply land at the end. ──
+const PF_CARD_ORDER_KEY='kosh-pf-card-order';
+function initPfCardDrag(){
+  const row=document.getElementById('pf-cards-row');
+  if(!row)return;
+  let saved=[];
+  try{saved=JSON.parse(localStorage.getItem(PF_CARD_ORDER_KEY)||'[]');}catch(e){}
+  if(saved.length){
+    const cards=[...row.querySelectorAll('.pf-card')];
+    const rank=k=>{const i=saved.indexOf(k);return i<0?1e6:i;};
+    cards.map((c,i)=>({c,i,r:rank(c.dataset.pfKey)})).sort((a,b)=>a.r-b.r||a.i-b.i).forEach(x=>row.appendChild(x.c));
+  }
+  row.querySelectorAll('.pf-drag-handle').forEach(h=>{
+    h.addEventListener('pointerdown',e=>{
+      const card=h.closest('.pf-card');
+      if(!card)return;
+      e.preventDefault();
+      h.setPointerCapture(e.pointerId);
+      card.classList.add('pf-dragging');
+      const move=ev=>{
+        const others=[...row.querySelectorAll('.pf-card')].filter(c=>c!==card);
+        let target=null;
+        for(const c of others){
+          const r=c.getBoundingClientRect();
+          if(ev.clientX<r.left+r.width/2){target=c;break;}
+        }
+        if(target)row.insertBefore(card,target);else row.appendChild(card);
+        // auto-scroll the row when dragging near its edges
+        const rr=row.getBoundingClientRect();
+        if(ev.clientX<rr.left+40)row.scrollLeft-=14;
+        else if(ev.clientX>rr.right-40)row.scrollLeft+=14;
+      };
+      const up=()=>{
+        h.removeEventListener('pointermove',move);
+        h.removeEventListener('pointerup',up);
+        h.removeEventListener('pointercancel',up);
+        card.classList.remove('pf-dragging');
+        try{localStorage.setItem(PF_CARD_ORDER_KEY,JSON.stringify([...row.querySelectorAll('.pf-card')].map(c=>c.dataset.pfKey)));}catch(e){}
+      };
+      h.addEventListener('pointermove',move);
+      h.addEventListener('pointerup',up);
+      h.addEventListener('pointercancel',up);
+    });
+  });
 }
 function scrollPfRow(dir){
   const row=document.getElementById('pf-cards-row');
@@ -2288,10 +2338,10 @@ async function renderDashboard(){
       const col=vsCap==null?'var(--ink3)':vsCap>=0?'var(--green)':'var(--red)';
       const items=pp.coins.map(c=>({label:c.ticker,value:coinValue(c)||0})).filter(x=>x.value>=1);
       const donut=donutFromValues(items,pp.value,pfPalette);
-      html+=`<div class="card" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${color} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${color} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
+      html+=`<div class="card pf-card" data-pf-key="${p.id}" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${color} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${color} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${color}"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="pf-drag-handle" title="Drag to reorder">⠿</span>
             <span style="width:26px;height:26px;border-radius:8px;background:color-mix(in srgb, ${color} 30%, var(--card2));color:${color};display:flex;align-items:center;justify-content:center;font-size:0.76rem;font-weight:800;flex:none">${escapeHtml((p.name||'?').charAt(0).toUpperCase())}</span>
             <span style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</span>
           </div>
@@ -2327,10 +2377,10 @@ async function renderDashboard(){
       const futCol=futVsCap==null?'var(--ink3)':futVsCap>=0?'var(--green)':'var(--red)';
       const futItems=futuresPositions.map(p=>({label:p.symbol,value:Math.abs(parseFloat(p.positionAmt||0))*parseFloat(p.markPrice||0)}));
       const futDonut=donutFromValues(futItems,futItems.reduce((s,x)=>s+x.value,0),pfPalette);
-      html+=`<div class="card" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${futColor} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${futColor} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
+      html+=`<div class="card pf-card" data-pf-key="futures" style="flex:0 0 220px;min-width:220px;margin-bottom:0;border:1px solid color-mix(in srgb, ${futColor} 35%, var(--border));background:linear-gradient(160deg, color-mix(in srgb, ${futColor} 14%, var(--card)) 0%, var(--card) 65%);position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${futColor}"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="pf-drag-handle" title="Drag to reorder">⠿</span>
             <span style="width:26px;height:26px;border-radius:8px;background:color-mix(in srgb, ${futColor} 30%, var(--card2));color:${futColor};display:flex;align-items:center;justify-content:center;font-size:0.76rem;font-weight:800;flex:none">🧮</span>
             <span style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Futures</span>
           </div>
@@ -2693,6 +2743,7 @@ async function renderDashboard(){
   }
 
   el.innerHTML=html;
+  initPfCardDrag();
 
   if(typeof Chart!=='undefined'){
     if(window._dashAllocCharts)Object.values(window._dashAllocCharts).forEach(c=>c.destroy());
