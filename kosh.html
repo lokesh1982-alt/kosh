@@ -2415,7 +2415,7 @@ async function renderDashboard(){
     html+=head('Holdings','every position, by portfolio');
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
-      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8&&(coinValue(c)||0)>=1);
+      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8&&(coinValue(c)||0)>=DUST_THRESHOLD_USD);
       const rows=openCoins.map(c=>{
         const v=coinValue(c)||0,alloc=pp.value>0?(v/pp.value*100):0;
         const price=livePrices[c.coingecko_id];
