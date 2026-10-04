@@ -2891,7 +2891,7 @@ async function deleteCoin(coinId){
 // conversions, and tiny fills — and clutter a list meant to show what you
 // actually hold. Hidden behind a collapsed toggle rather than dropped
 // entirely, so nothing is silently lost, just decluttered by default.
-const DUST_THRESHOLD_USD=1;
+const DUST_THRESHOLD_USD=5;
 function splitDust(coinList){
   const shown=[],dust=[];
   coinList.forEach(c=>{
@@ -5381,6 +5381,30 @@ async function syncFuturesSymbol(symbol){
   }
   return totalSynced;
 }
+// Auto-discovers which Futures symbols have actually been traded, so a new
+// pair doesn't need to be added by hand in Settings before its history
+// shows up. /fapi/v1/income reports realized PnL/commission/funding records
+// across ALL symbols at once (unlike userTrades, which needs one symbol per
+// call) — every record with a symbol on it is a pair that's been traded.
+// Only looks at the most recent 1000 income records per sync; a symbol
+// traded further back than that should still be added by hand once.
+async function discoverFuturesSymbols(){
+  const res=await binanceFetch('futuresIncome',{limit:'1000'},'futures');
+  if(!res||!res.ok)return[];
+  let rows;
+  try{rows=await res.json();}catch(e){return[];}
+  if(!Array.isArray(rows))return[];
+  const seen=new Set(futuresSymbols.map(s=>s.symbol));
+  const found=[...new Set(rows.map(r=>r.symbol).filter(Boolean))];
+  const newSymbols=found.filter(sym=>!seen.has(sym));
+  if(!newSymbols.length)return[];
+  for(const symbol of newSymbols){
+    const{error}=await sb.from('futures_symbols').insert({user_id:currentUser.id,symbol});
+    if(!error)seen.add(symbol); // a unique-constraint error just means another tab/race already added it
+  }
+  await loadFuturesSymbols();
+  return newSymbols;
+}
 let futuresPositionsError=null;
 // Open positions come straight from Binance's positionRisk endpoint and are
 // account-wide — unlike closed-trade history, they need NO symbol tracked
@@ -5403,6 +5427,7 @@ async function loadFuturesPositions(){
 }
 async function syncFuturesNow(){
   showToast('Syncing Futures...');
+  const newSymbols=await discoverFuturesSymbols();
   let total=0;
   if(futuresSymbols.length){
     for(const s of futuresSymbols)total+=await syncFuturesSymbol(s.symbol);
@@ -5414,7 +5439,8 @@ async function syncFuturesNow(){
   renderFutures();
   if(futuresPositionsError){showToast('Could not load positions: '+futuresPositionsError);return;}
   if(!futuresSymbols.length){showToast('Positions refreshed. Add a symbol in Settings to also sync closed-trade history ✅');return;}
-  showToast(total?`Synced ${total} new futures fill(s) ✅`:'Futures already up to date ✅');
+  const newNote=newSymbols.length?` (auto-added ${newSymbols.join(', ')})`:'';
+  showToast(total?`Synced ${total} new futures fill(s)${newNote} ✅`:`Futures already up to date${newNote} ✅`);
 }
 function futuresPositionRowHtml(p){
   const amt=parseFloat(p.positionAmt||0);
