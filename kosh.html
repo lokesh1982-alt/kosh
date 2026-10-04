@@ -95,13 +95,46 @@ button{cursor:pointer;}
    content yet) end up stranded alone under a taller neighbor. */
 .pf-grid{column-span:all;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:6px;}
 .pf-grid .pf-panel{margin-bottom:0;}
+.an-filters{display:flex;gap:8px;margin-bottom:10px}
+.an-select{flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.86rem;font-weight:600}
+.an-sec{margin:22px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.an-sec h3{font-size:0.92rem}.an-sec span{font-size:0.7rem;color:var(--ink3)}
+.an-card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px}
+.an-ct{font-size:0.8rem;font-weight:600;margin-bottom:8px}
+.an-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.an-tile{background:var(--card);border-radius:14px;padding:12px;text-align:center}
+.an-tile .l{font-size:0.64rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.an-tile .v{font-size:1.2rem;font-weight:700}.an-tile .s{font-size:0.66rem;color:var(--ink3);margin-top:3px}
+.an .g,.an-tile .g,.an-row .g{color:var(--green)}.an-tile .r,.an-row .r,.an-table .r{color:var(--red)}.an-tile .a{color:var(--amber)}.an-table .g{color:var(--green)}
+.an-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:0.76rem}
+.an-n{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+.an-m{width:84px;text-align:right;font-weight:700;flex:none}.an-x{width:118px;color:var(--ink3);font-size:0.66rem;flex:none}
+.an-track{flex:1;height:10px;background:var(--card2);border-radius:5px;position:relative;overflow:hidden;min-width:60px}
+.an-mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--ink3);z-index:1}
+.an-bar{position:absolute;top:0;bottom:0}.an-bar.pos{background:var(--green);left:50%}.an-bar.neg{background:var(--red);right:50%}
+.an-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.an-hm{display:grid;grid-template-columns:34px repeat(6,1fr);gap:3px;font-size:0.62rem;color:var(--ink3)}
+.an-hm div{padding:7px 0;text-align:center;border-radius:5px}
+.an-hint{font-size:0.68rem;color:var(--ink3);margin-top:8px}
+.an-flag{display:flex;gap:10px;padding:10px;border-radius:10px;margin-bottom:8px;font-size:0.76rem;line-height:1.4}
+.an-flag.bad{background:var(--red-bg)}.an-flag.warn{background:var(--amber-bg)}.an-flag.ok{background:var(--green-bg)}
+.an-flag b{display:block;margin-bottom:2px}
+.an-go{margin-left:auto;font-size:0.68rem;color:var(--teal);white-space:nowrap;align-self:center;background:none;border:none;font-weight:600}
+.an-pills{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.an-pill{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:4px 11px;font-size:0.68rem;color:var(--ink2)}
+.an-pill.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700}
+.an-table{width:100%;border-collapse:collapse;font-size:0.72rem;white-space:nowrap}
+.an-table th{background:var(--ink-accent);color:#F1F3F5;padding:8px;text-align:left}
+.an-table td{padding:7px 8px;border-bottom:1px solid var(--border)}
+.an-tagsel,.an-note{padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:var(--card2);color:var(--ink);font-size:0.7rem}
+.an-note{min-width:130px}
 .pf-drag-handle{cursor:grab;touch-action:none;user-select:none;color:var(--ink3);font-size:1rem;line-height:1;padding:2px 2px;flex:none;}
 .pf-card.pf-dragging{opacity:0.55;box-shadow:0 8px 24px rgba(0,0,0,0.5);}
 .trend-btn{border:1px solid var(--border);background:transparent;color:var(--ink2);border-radius:14px;padding:4px 11px;font-size:0.68rem;cursor:pointer;font-family:inherit;}
 .trend-btn.on{background:#17B6A7;border-color:#17B6A7;color:#0E1116;font-weight:700;}
 
 .tile-grid{
-  display:grid;grid-template-columns:repeat(7,1fr);gap:4px;
+  display:grid;grid-template-columns:repeat(8,1fr);gap:4px;
   position:fixed;left:0;right:0;bottom:0;
   background:var(--bg);
   border-top:1px solid var(--border);
@@ -265,6 +298,7 @@ select option{color:#14181D;background:#fff;}
       <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
       <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
       <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
+      <button class="menu-tile" data-tab="analysis" onclick="switchTab('analysis')"><div class="ic">🔍</div><div class="lbl">Analysis</div></button>
       <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
         <span class="binance-sync-status" style="font-size:0.66rem;color:#8B93A1;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
@@ -318,6 +352,12 @@ select option{color:#14181D;background:#fff;}
     <!-- NEWS -->
     <div class="section" id="sec-news">
       <div id="news-content"></div>
+    </div>
+
+    <!-- ANALYSIS (per-portfolio trade diagnostics) -->
+    <div class="section" id="sec-analysis">
+      <div class="card-title" style="margin-bottom:12px">🔍 Trade analysis</div>
+      <div id="analysis-content"></div>
     </div>
 
     <!-- FUTURES (Binance USD-M, account-wide — not tied to a crypto/stock portfolio) -->
@@ -443,6 +483,7 @@ select option{color:#14181D;background:#fff;}
     <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watch</div></button>
     <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
     <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
+      <button class="menu-tile" data-tab="analysis" onclick="switchTab('analysis')"><div class="ic">🔍</div><div class="lbl">Analysis</div></button>
     <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
   </div>
     </div>
@@ -989,6 +1030,7 @@ function switchTab(name){
   if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
   if(name==='futures')renderFutures();
+  if(name==='analysis')renderAnalysis();
   if(name==='settings')refreshSettingsPanel();
 }
 // Populates the Settings section for whichever portfolio is currently
@@ -3559,8 +3601,34 @@ function setJournalViewMode(mode){
 }
 let journalFilterText='';
 let journalSortMode='date_desc';
+// From/To date range (inclusive, local dates, YYYY-MM-DD; '' = open-ended).
+// Shared by the Spot/Stocks and Futures Journals, and by their exports, so
+// "what you see is what you export" for a chosen period.
+let journalDateFrom='';
+let journalDateTo='';
+function journalInDateRange(dateVal){
+  if(!journalDateFrom&&!journalDateTo)return true;
+  const d=new Date(dateVal).toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+  if(journalDateFrom&&d<journalDateFrom)return false;
+  if(journalDateTo&&d>journalDateTo)return false;
+  return true;
+}
+function journalDateFiltered(list){return list.filter(t=>journalInDateRange(t.trade_date));}
+function futuresDateFiltered(list){return list.filter(t=>journalInDateRange(t.trade_time));}
+function setJournalDateRange(from,to){journalDateFrom=from||'';journalDateTo=to||'';renderJournal();}
+function journalDateRangeHtml(handler){
+  handler=handler||'setJournalDateRange';
+  const inp='padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.74rem;min-width:0;flex:1';
+  return`<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+    <span style="font-size:0.72rem;color:var(--ink3)">From</span>
+    <input type="date" id="journal-date-from" value="${journalDateFrom}" max="${journalDateTo||''}" onchange="${handler}(this.value,document.getElementById('journal-date-to').value)" style="${inp}">
+    <span style="font-size:0.72rem;color:var(--ink3)">To</span>
+    <input type="date" id="journal-date-to" value="${journalDateTo}" min="${journalDateFrom||''}" onchange="${handler}(document.getElementById('journal-date-from').value,this.value)" style="${inp}">
+    ${(journalDateFrom||journalDateTo)?`<button class="link-btn" style="font-size:0.72rem" onclick="${handler}('','')">Clear</button>`:''}
+  </div>`;
+}
 function journalFilterSort(list){
-  let out=list;
+  let out=journalDateFiltered(list);
   if(journalFilterText){
     const q=journalFilterText.toLowerCase();
     out=out.filter(t=>(t.coin_ticker||'').toLowerCase().includes(q)||(t.coin_name||'').toLowerCase().includes(q));
@@ -3610,7 +3678,7 @@ function groupJournalTrades(list){
 // Shared by the initial render and renderJournalTableBody (re-renders on
 // filter/sort/group-toggle without re-fetching from the database).
 function journalTableBodyHtml(filtered){
-  if(!filtered.length)return`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match "${escapeHtml(journalFilterText)}".</td></tr>`;
+  if(!filtered.length)return`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match the current filter.</td></tr>`;
   if(!journalGroupRows)return filtered.map((t,i)=>journalRowHtml(t,i)).join('');
   const groups=groupJournalTrades(filtered);
   return groups.map((g,i)=>journalGroupRowHtml(g,i)).join('');
@@ -3716,7 +3784,7 @@ async function renderJournal(){
     el.innerHTML=toggleHtml+addPastBtn+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
   }
-  const totalRealized=allJournalTrades.reduce((s,t)=>s+(t.realized_pnl||0),0);
+  const totalRealized=journalDateFiltered(allJournalTrades).reduce((s,t)=>s+(t.realized_pnl||0),0);
   let html=toggleHtml;
   html+=`<div class="card" style="text-align:center">
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalViewMode==='stocks'?'US-Stocks':'crypto'} portfolios)</div>
@@ -3727,6 +3795,7 @@ async function renderJournal(){
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalPDF()">📄 Export PDF</button>
   </div>`;
+  html+=journalDateRangeHtml();
   html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
     <input id="journal-filter-input" type="text" placeholder="Filter by symbol…" value="${escapeHtml(journalFilterText)}" oninput="setJournalFilterText(this.value)" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.76rem">
     <select id="journal-sort-select" onchange="setJournalSortMode(this.value)" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.76rem">
@@ -3807,7 +3876,7 @@ async function backfillMissingInrRates(){
 }
 const JOURNAL_COLUMNS=['Date','Coin','Qty','Type','Price (USD)','Price (INR)','Total (USD)','Total (INR)','P&L (USD)','P&L (INR)','FX Rate'];
 function journalExportRows(){
-  return allJournalTrades.map(t=>{
+  return journalDateFiltered(allJournalTrades).map(t=>{
     const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
     const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
     const totalInr=t.inr_rate!=null?t.total_usd*t.inr_rate:null;
@@ -3891,7 +3960,7 @@ function futuresJournalTableBodyHtml(list){
 function toggleFuturesJournalGroupRows(){
   futuresJournalGroupRows=!futuresJournalGroupRows;
   const tbody=document.getElementById('futures-journal-table-body');
-  if(tbody)tbody.innerHTML=futuresJournalTableBodyHtml(futuresTrades);
+  if(tbody)tbody.innerHTML=futuresJournalTableBodyHtml(futuresDateFiltered(futuresTrades));
   const btn=document.getElementById('futures-journal-group-toggle');
   if(btn)btn.textContent=futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades';
 }
@@ -3943,7 +4012,8 @@ async function renderFuturesJournal(el,toggleHtml){
     el.innerHTML=toggleHtml+syncBtn+`<div class="empty-state"><div class="ic">📒</div><div>No futures trades synced yet.</div></div>`;
     return;
   }
-  const closed=futuresTrades.filter(t=>t.realized_pnl!=null);
+  const fList=futuresDateFiltered(futuresTrades);
+  const closed=fList.filter(t=>t.realized_pnl!=null);
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
   let html=toggleHtml;
   html+=`<div class="card" style="text-align:center">
@@ -3955,6 +4025,7 @@ async function renderFuturesJournal(el,toggleHtml){
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalPDF()">📄 Export PDF</button>
   </div>`;
+  html+=journalDateRangeHtml();
   html+=`<button class="link-btn" id="futures-journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleFuturesJournalGroupRows()">${futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades'}</button>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
@@ -3967,14 +4038,14 @@ async function renderFuturesJournal(el,toggleHtml){
         <th style="padding:8px 10px;text-align:right">Commission</th>
         <th style="padding:8px 10px;text-align:right">Realized P&amp;L</th>
       </tr></thead>
-      <tbody id="futures-journal-table-body">${futuresJournalTableBodyHtml(futuresTrades)}</tbody>
+      <tbody id="futures-journal-table-body">${fList.length?futuresJournalTableBodyHtml(fList):'<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--ink3)">No trades in this date range.</td></tr>'}</tbody>
     </table>
   </div>`;
   el.innerHTML=html;
 }
 const FUTURES_JOURNAL_COLUMNS=['Date','Symbol','Position Side','Side','Qty','Price','Commission','Commission Asset','Realized P&L'];
 function futuresJournalExportRows(){
-  return futuresTrades.map(t=>{
+  return futuresDateFiltered(futuresTrades).map(t=>{
     const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
     return[date,t.symbol,t.position_side||'',t.side==='buy'?'Buy':'Sell',t.qty,t.price,
       t.commission!=null?t.commission:'',t.commission_asset||'',t.realized_pnl!=null?t.realized_pnl:''];
@@ -5334,6 +5405,318 @@ async function savePublicSettings(){
 }
 
 // ═══════════════════════════════
+//  ANALYSIS — per-portfolio trade diagnostics (where/when/why you lose).
+//  A "trade" here = all closing fills of one coin on one day (same grouping
+//  as the Journal), judged by its realized P&L. Holding time is measured
+//  from when the coin position was last opened from flat. Everything is
+//  computed client-side from the Journal data; flags are heuristics.
+// ═══════════════════════════════
+const ANALYSIS_TAGS=['FOMO entry','Revenge trade','No stop-loss','Sold too early','Held too long','Oversized','Averaged down','Followed plan','Other'];
+let analysisScope='all';
+try{analysisScope=localStorage.getItem('kosh-analysis-scope')||'all';}catch(e){}
+let analysisRaw={spot:[],fut:[]};
+let analysisState={groups:[]};
+let analysisReview='worst'; // 'worst' | 'best' | {title,ids:Set}
+const AN_EPS=1e-6;
+const anDay=ms=>new Date(ms).toLocaleDateString('en-CA');
+const anUsd=v=>(v>=0?'+':'')+fmtUsd(v);
+const anCol=v=>v>0?'g':v<0?'r':'';
+function anFmtHeld(ms){
+  if(ms==null)return'—';
+  const m=ms/60000;
+  if(m<60)return Math.max(1,Math.round(m))+'m';
+  const h=m/60;
+  if(h<48)return Math.round(h)+'h';
+  return Math.round(h/24)+'d';
+}
+function anMedian(a){if(!a.length)return null;const s=[...a].sort((x,y)=>x-y),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+
+function anBuildSpotFills(rows){
+  const byCoin={};
+  rows.forEach(t=>{const k=t.portfolio_id+'|'+(t.coin_id||t.coin_ticker||t.coin_name);(byCoin[k]=byCoin[k]||[]).push(t);});
+  const fills=[],entries=[];
+  Object.entries(byCoin).forEach(([key,list])=>{
+    list.sort((a,b)=>new Date(a.trade_date)-new Date(b.trade_date));
+    let units=0,avg=0,openTime=null,avgDown=0;
+    list.forEach(t=>{
+      const ms=new Date(t.trade_date).getTime(),q=t.units||0,p=t.price_per_unit||0;
+      if(t.action==='buy'||t.action==='transfer_in'){
+        if(units>AN_EPS&&t.action==='buy'&&avg>0&&p<avg*0.98)avgDown++;
+        if(units<=AN_EPS){openTime=ms;avgDown=0;avg=p;units=q;}
+        else{avg=(avg*units+p*q)/(units+q);units+=q;}
+        if(t.action==='buy')entries.push({key,ms});
+      }else if(t.action==='sell'||t.action==='transfer_out'){
+        if(t.action==='sell'&&t.realized_pnl!=null){
+          fills.push({row:t,table:'trades',key,ms,pnl:t.realized_pnl,value:t.total_usd||0,held:openTime!=null?ms-openTime:null,avgDown:avgDown>0,portfolioId:t.portfolio_id,symbol:t.coin_ticker||t.coin_name||'?',dir:'Spot'});
+        }
+        units=Math.max(0,units-q);
+        if(units<=AN_EPS){units=0;openTime=null;avgDown=0;avg=0;}
+      }
+    });
+  });
+  return{fills,entries};
+}
+function anBuildFuturesFills(rows){
+  const bySym={};
+  rows.forEach(t=>{const k=t.symbol+'|'+(t.position_side||'BOTH');(bySym[k]=bySym[k]||[]).push(t);});
+  const fills=[],entries=[];
+  Object.values(bySym).forEach(list=>{
+    list.sort((a,b)=>new Date(a.trade_time)-new Date(b.trade_time)||(a.binance_trade_id-b.binance_trade_id));
+    let run=0,openTime=null;
+    list.forEach(t=>{
+      const ms=new Date(t.trade_time).getTime(),q=t.qty||0,ps=t.position_side||'BOTH';
+      const s=ps==='SHORT'?(t.side==='sell'?q:-q):(t.side==='buy'?q:-q);
+      const before=Math.abs(run);
+      run+=s;
+      if(before<=AN_EPS&&Math.abs(run)>AN_EPS)openTime=ms;
+      const key='F|'+t.symbol;
+      if(t.realized_pnl!=null&&t.realized_pnl!==0){
+        const dir=ps==='SHORT'?'Short':ps==='LONG'?'Long':(t.side==='sell'?'Long':'Short');
+        fills.push({row:t,table:'futures_trades',key,ms,pnl:t.realized_pnl,value:q*(t.price||0),held:openTime!=null?ms-openTime:null,avgDown:false,portfolioId:'futures',symbol:t.symbol,dir});
+      }else entries.push({key,ms});
+      if(Math.abs(run)<=AN_EPS){run=0;openTime=null;}
+    });
+  });
+  return{fills,entries};
+}
+function anGroupFills(fills){
+  const g={};
+  fills.forEach(f=>{
+    const k=f.key+'|'+f.dir+'|'+anDay(f.ms);
+    const o=g[k]||(g[k]={id:'ag-'+k.replace(/[^a-zA-Z0-9]/g,'_'),key:f.key,table:f.table,portfolioId:f.portfolioId,symbol:f.symbol,dir:f.dir,rows:[],pnl:0,value:0,ms:0,held:null,avgDown:false});
+    o.rows.push(f.row);o.pnl+=f.pnl;o.value+=f.value;
+    o.ms=Math.max(o.ms,f.ms);
+    if(f.held!=null)o.held=Math.max(o.held||0,f.held);
+    if(f.avgDown)o.avgDown=true;
+  });
+  return Object.values(g).map(o=>{
+    o.tag=(o.rows.find(r=>r.tag)||{}).tag||null;
+    o.note=(o.rows.find(r=>r.note)||{}).note||'';
+    return o;
+  });
+}
+function anCompute(){
+  let fills=[],entries=[];
+  if(analysisScope!=='futures'){
+    const rows=analysisScope==='all'?analysisRaw.spot:analysisRaw.spot.filter(t=>t.portfolio_id===analysisScope);
+    const r=anBuildSpotFills(rows);fills=fills.concat(r.fills);entries=entries.concat(r.entries);
+  }
+  if(analysisScope==='all'||analysisScope==='futures'){
+    const r=anBuildFuturesFills(analysisRaw.fut);fills=fills.concat(r.fills);entries=entries.concat(r.entries);
+  }
+  const inRange=ms=>{const d=anDay(ms);return(!journalDateFrom||d>=journalDateFrom)&&(!journalDateTo||d<=journalDateTo);};
+  const groups=anGroupFills(fills).filter(g=>inRange(g.ms)).sort((a,b)=>a.ms-b.ms);
+  return{groups,entries:entries.filter(e=>inRange(e.ms)),inRange};
+}
+function anStats(gs){
+  const wins=gs.filter(g=>g.pnl>0),losses=gs.filter(g=>g.pnl<0);
+  const sumW=wins.reduce((s,g)=>s+g.pnl,0),sumL=-losses.reduce((s,g)=>s+g.pnl,0);
+  return{n:gs.length,wins,losses,winRate:gs.length?wins.length/gs.length*100:null,
+    avgWin:wins.length?sumW/wins.length:0,avgLoss:losses.length?sumL/losses.length:0,
+    sumW,sumL,total:sumW-sumL,pf:sumL>0?sumW/sumL:null,exp:gs.length?(sumW-sumL)/gs.length:0,
+    worst:losses.length?losses.reduce((a,b)=>b.pnl<a.pnl?b:a):null};
+}
+function anBars(rows,opts){ // rows:[{label,sub,pnl}] → centered +/- bars
+  const max=Math.max(1e-9,...rows.map(r=>Math.abs(r.pnl)));
+  const lw=(opts&&opts.labelW)||74;
+  return rows.map(r=>`<div class="an-row"><div class="an-n" style="width:${lw}px" title="${escapeHtml(r.label)}">${escapeHtml(r.label)}</div>
+    <div class="an-track"><div class="an-mid"></div><div class="an-bar ${r.pnl>=0?'pos':'neg'}" style="width:${(Math.abs(r.pnl)/max*50).toFixed(1)}%"></div></div>
+    <div class="an-m ${anCol(r.pnl)} hide-figure">${anUsd(r.pnl)}</div><div class="an-x">${escapeHtml(r.sub||'')}</div></div>`).join('');
+}
+function anAggregate(groups,keyFn,labelFn){
+  const m={};
+  groups.forEach(g=>{const k=keyFn(g);const o=m[k]||(m[k]={label:labelFn(g),pnl:0,n:0,w:0});o.pnl+=g.pnl;o.n++;if(g.pnl>0)o.w++;});
+  return Object.values(m).map(o=>({label:o.label,pnl:o.pnl,sub:`${o.n} trade${o.n===1?'':'s'} · ${Math.round(o.w/o.n*100)}% win`})).sort((a,b)=>a.pnl-b.pnl);
+}
+function anTrimRows(rows,head,tail){return rows.length>head+tail?[...rows.slice(0,head),{label:'…',sub:`${rows.length-head-tail} more in between`,pnl:0},...rows.slice(-tail)]:rows;}
+
+function anFlags(groups,entries,st){
+  const flags=[];
+  if(st.n<5){return[{sev:'warn',title:'Not enough trades yet',text:`Only ${st.n} closed trade${st.n===1?'':'s'} in this view — patterns become meaningful at around 30+. Widen the date range or pick another portfolio.`}];}
+  const ids=a=>new Set(a.map(g=>g.id));
+  // cutting winners short
+  if(st.avgWin>0&&st.avgLoss>0&&st.avgWin<st.avgLoss*0.6)
+    flags.push({sev:'warn',title:'Cutting winners short',text:`Your average loss (${fmtUsd(st.avgLoss)}) is ${(st.avgLoss/st.avgWin).toFixed(1)}× your average win (${fmtUsd(st.avgWin)}). You need a much higher win rate to come out ahead — consider holding winners longer or cutting losses sooner.`,ids:ids(st.losses),idsLabel:'losing trades'});
+  // revenge trading
+  const rev=[];
+  groups.filter(g=>g.pnl<0).forEach(g=>{
+    const e=entries.find(e=>e.key===g.key&&e.ms>g.ms&&e.ms-g.ms<=2*3600e3);
+    if(!e)return;
+    const next=groups.find(x=>x.key===g.key&&x.ms>e.ms);
+    if(next)rev.push(next);
+  });
+  if(rev.length>=2){
+    const s=rev.reduce((a,g)=>a+g.pnl,0);
+    flags.push({sev:s<0?'bad':'warn',title:`Re-entering right after a loss — ${rev.length} times`,text:`You bought back the same coin within 2 hours of a losing close. The trades that followed made ${anUsd(s)} combined (avg ${anUsd(s/rev.length)}).`,ids:ids(rev),idsLabel:'follow-up trades'});
+  }
+  // overtrading
+  const act={},dayPnl={};
+  entries.forEach(e=>{const d=anDay(e.ms);(act[d]=act[d]||new Set()).add(e.key+'b');});
+  groups.forEach(g=>{const d=anDay(g.ms);(act[d]=act[d]||new Set()).add(g.key+'s');dayPnl[d]=(dayPnl[d]||0)+g.pnl;});
+  const days=Object.keys(dayPnl).map(d=>({d,n:act[d].size,pnl:dayPnl[d]}));
+  const busy=days.filter(x=>x.n>=6),quiet=days.filter(x=>x.n<=3);
+  if(busy.length>=2&&quiet.length>=2){
+    const ab=busy.reduce((s,x)=>s+x.pnl,0)/busy.length,aq=quiet.reduce((s,x)=>s+x.pnl,0)/quiet.length;
+    if(ab<aq){const bd=new Set(busy.map(x=>x.d));
+      flags.push({sev:ab<0?'bad':'warn',title:'Overtrading on busy days',text:`Days with 6+ actions averaged ${anUsd(ab)}; quieter days (1–3 actions) averaged ${anUsd(aq)}.`,ids:ids(groups.filter(g=>bd.has(anDay(g.ms)))),idsLabel:'trades on busy days'});}
+  }
+  // averaging down
+  const ad=groups.filter(g=>g.avgDown);
+  if(ad.length>=2){
+    const s=ad.reduce((a,g)=>a+g.pnl,0);
+    if(s<0)flags.push({sev:'warn',title:`Averaging down — ${ad.length} trades`,text:`These exits came from positions you added to while already below your average cost. They made ${anUsd(s)} in total, with ${ad.filter(g=>g.pnl<0).length} of ${ad.length} ending in a loss.`,ids:ids(ad),idsLabel:'trades'});
+  }
+  // losers held longer
+  const hl=anMedian(st.losses.map(g=>g.held).filter(x=>x!=null)),hw=anMedian(st.wins.map(g=>g.held).filter(x=>x!=null));
+  if(hl!=null&&hw!=null&&st.losses.filter(g=>g.held!=null).length>=3&&st.wins.filter(g=>g.held!=null).length>=3&&hl>hw*1.5)
+    flags.push({sev:'warn',title:'Losers held longer than winners',text:`Typical losing trade was held ${anFmtHeld(hl)} vs ${anFmtHeld(hw)} for winners — you tend to cut winners fast and let losses run.`,ids:ids(st.losses),idsLabel:'losing trades'});
+  // fees (futures)
+  if(analysisScope==='all'||analysisScope==='futures'){
+    const fut=analysisRaw.fut.filter(t=>(t.commission_asset==='USDT'||t.commission_asset==='BUSD'||t.commission_asset==='USDC')&&(()=>{const d=anDay(new Date(t.trade_time).getTime());return(!journalDateFrom||d>=journalDateFrom)&&(!journalDateTo||d<=journalDateTo);})());
+    const fees=fut.reduce((s,t)=>s+(t.commission||0),0);
+    const gross=groups.filter(g=>g.table==='futures_trades'&&g.pnl>0).reduce((s,g)=>s+g.pnl,0);
+    if(fees>0&&gross>0&&fees>=gross*0.15)
+      flags.push({sev:'warn',title:'Futures fees are eating your profit',text:`Commission paid was ${fmtUsd(fees)} — ${(fees/gross*100).toFixed(0)}% of your gross Futures winnings (${fmtUsd(gross)}). Fewer, larger-conviction trades or maker orders would reduce this.`});
+  }
+  // concentration
+  if(st.losses.length>=6){
+    const top=[...st.losses].sort((a,b)=>a.pnl-b.pnl).slice(0,3),ts=-top.reduce((s,g)=>s+g.pnl,0);
+    if(ts>=st.sumL*0.5)flags.push({sev:'warn',title:'A few big losses do most of the damage',text:`Your 3 worst trades account for ${(ts/st.sumL*100).toFixed(0)}% of all losses (${fmtUsd(ts)} of ${fmtUsd(st.sumL)}). A hard stop-loss rule would target exactly these.`,ids:ids(top),idsLabel:'worst trades'});
+  }
+  // sizing
+  const vals=groups.map(g=>g.value).filter(v=>v>0),med=anMedian(vals);
+  if(med){const big=groups.filter(g=>g.value>med*3);
+    if(big.length)flags.push({sev:'warn',title:`Oversized trades — ${big.length}`,text:`${big.length} trade${big.length===1?' was':'s were'} more than 3× your typical size (${fmtUsd(med)}). Their combined result: ${anUsd(big.reduce((s,g)=>s+g.pnl,0))}.`,ids:ids(big),idsLabel:'trades'});
+    else if(groups.length>=8)flags.push({sev:'ok',title:'Position sizing is consistent',text:`No trade was more than 3× your typical size (${fmtUsd(med)}).`});}
+  if(!flags.some(f=>f.sev!=='ok'))flags.unshift({sev:'ok',title:'No major pattern detected',text:'Nothing in this view crosses the warning thresholds.'});
+  return flags;
+}
+
+function setAnalysisScope(v){analysisScope=v;analysisReview='worst';try{localStorage.setItem('kosh-analysis-scope',v);}catch(e){}renderAnalysisView();}
+function setAnalysisDateRange(from,to){journalDateFrom=from||'';journalDateTo=to||'';renderAnalysisView();}
+function setAnalysisReview(v){analysisReview=v;renderAnalysisView(true);}
+function showAnalysisFlag(i){
+  const f=analysisState.flags[i];if(!f||!f.ids)return;
+  analysisReview={title:`${f.title} — ${f.idsLabel||'trades'}`,ids:f.ids};
+  renderAnalysisView();
+  const t=document.getElementById('an-review');if(t)t.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function setAnalysisTag(gid,tag){
+  const g=analysisState.groups.find(x=>x.id===gid);if(!g)return;
+  const{error}=await sb.from(g.table).update({tag:tag||null}).in('id',g.rows.map(r=>r.id)).eq('user_id',currentUser.id);
+  if(error){showToast(/column|schema/i.test(error.message)?'Run migration-analysis-tags.sql in Supabase first, then reload.':'Error: '+error.message);renderAnalysisView(true);return;}
+  g.rows.forEach(r=>r.tag=tag||null);g.tag=tag||null;
+  renderAnalysisView(true);
+}
+async function setAnalysisNote(gid,text){
+  const g=analysisState.groups.find(x=>x.id===gid);if(!g)return;
+  const{error}=await sb.from(g.table).update({note:text||null}).in('id',g.rows.map(r=>r.id)).eq('user_id',currentUser.id);
+  if(error){showToast(/column|schema/i.test(error.message)?'Run migration-analysis-tags.sql in Supabase first, then reload.':'Error: '+error.message);return;}
+  g.rows.forEach(r=>r.note=text||null);g.note=text||'';
+}
+async function renderAnalysis(){
+  const el=document.getElementById('analysis-content');
+  if(!el)return;
+  el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
+  try{analysisRaw.spot=await loadAllTradesForJournal();}catch(e){analysisRaw.spot=[];}
+  try{await loadFuturesTrades();analysisRaw.fut=futuresTrades;}catch(e){analysisRaw.fut=[];}
+  if(analysisScope!=='all'&&analysisScope!=='futures'&&!portfolios.some(p=>p.id===analysisScope))analysisScope='all';
+  renderAnalysisView();
+}
+function renderAnalysisView(keepScroll){
+  const el=document.getElementById('analysis-content');
+  if(!el)return;
+  const y=window.scrollY;
+  const{groups,entries}=anCompute();
+  const st=anStats(groups);
+  analysisState.groups=groups;
+  const flags=anFlags(groups,entries,st);
+  analysisState.flags=flags;
+  const sel=`<select class="an-select" onchange="setAnalysisScope(this.value)">
+    <option value="all" ${analysisScope==='all'?'selected':''}>🌐 All portfolios</option>
+    ${portfolios.map(p=>`<option value="${p.id}" ${analysisScope===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')}
+    <option value="futures" ${analysisScope==='futures'?'selected':''}>🧮 Futures</option>
+  </select>`;
+  let h=`<div class="an-filters">${sel}</div>`+journalDateRangeHtml('setAnalysisDateRange');
+  if(!st.n){
+    h+=`<div class="empty-state"><div class="ic">🔍</div><div>No closed trades in this view yet.</div><div style="font-size:0.72rem;margin-top:6px">Closed trades are sells (Spot/Stocks) or position-closing fills (Futures). Try another portfolio or a wider date range.</div></div>`;
+    el.innerHTML=h;if(keepScroll)window.scrollTo(0,y);return;
+  }
+  const noteMsg=(st.winRate>=50&&st.total<0)?`<div class="an-flag warn"><div>💡</div><div><b>High win rate, still losing money.</b>You win ${st.winRate.toFixed(0)}% of trades, but the average loss is ${st.avgWin>0?(st.avgLoss/st.avgWin).toFixed(1)+'×':'larger than'} the average win. Fixing loss size matters more than finding more winners.</div></div>`:'';
+  h+=`<div class="an-sec"><h3>Scorecard</h3><span>${st.n} closed trade${st.n===1?'':'s'} · same-day fills of a coin count as one</span></div>
+  <div class="an-grid">
+    <div class="an-tile"><div class="l">Win rate</div><div class="v">${st.winRate.toFixed(0)}%</div><div class="s">${st.wins.length} wins · ${st.losses.length} losses</div></div>
+    <div class="an-tile"><div class="l">Avg win</div><div class="v g hide-figure">${st.wins.length?'+'+fmtUsd(st.avgWin):'—'}</div></div>
+    <div class="an-tile"><div class="l">Avg loss</div><div class="v r hide-figure">${st.losses.length?'−'+fmtUsd(st.avgLoss):'—'}</div><div class="s">${st.avgWin>0&&st.avgLoss>0?(st.avgLoss/st.avgWin).toFixed(1)+'× avg win':'&nbsp;'}</div></div>
+    <div class="an-tile"><div class="l">Profit factor</div><div class="v ${st.pf==null?'g':st.pf>=1?'g':'a'}">${st.pf==null?'∞':st.pf.toFixed(2)}</div><div class="s">&gt;1 = profitable</div></div>
+    <div class="an-tile"><div class="l">Expectancy / trade</div><div class="v ${anCol(st.exp)} hide-figure">${anUsd(st.exp)}</div><div class="s hide-figure">net ${anUsd(st.total)}</div></div>
+    <div class="an-tile"><div class="l">Largest loss</div><div class="v r hide-figure">${st.worst?fmtUsd(st.worst.pnl):'—'}</div><div class="s">${st.worst?escapeHtml(st.worst.symbol)+' · '+new Date(st.worst.ms).toLocaleDateString('en-US',{day:'numeric',month:'short'}):'&nbsp;'}</div></div>
+  </div>${noteMsg}`;
+  // where
+  const byCoin=anTrimRows(anAggregate(groups,g=>g.key,g=>g.symbol),8,4);
+  h+=`<div class="an-sec"><h3>Where you lose</h3><span>P&amp;L by coin · worst first</span></div><div class="an-card">${anBars(byCoin)}</div>`;
+  const cols=[];
+  if(analysisScope==='all'){
+    const nameOf=id=>id==='futures'?'🧮 Futures':((portfolios.find(p=>p.id===id)||{}).name||'Portfolio');
+    cols.push(`<div class="an-card"><div class="an-ct">By portfolio</div>${anBars(anAggregate(groups,g=>g.portfolioId,g=>nameOf(g.portfolioId)),{labelW:96})}</div>`);
+  }
+  const fg=groups.filter(g=>g.table==='futures_trades');
+  if(fg.length)cols.push(`<div class="an-card"><div class="an-ct">Futures: long vs short</div>${anBars(anAggregate(fg,g=>g.dir,g=>g.dir))}</div>`);
+  if(cols.length)h+=`<div class="an-cols">${cols.join('')}</div>`;
+  // when
+  const hm=Array.from({length:7},()=>Array(6).fill(null));
+  const blk=Array(6).fill(0);
+  groups.forEach(g=>{const d=new Date(g.ms),r=(d.getDay()+6)%7,c=Math.floor(d.getHours()/4);hm[r][c]=(hm[r][c]||0)+g.pnl;blk[c]+=g.pnl;});
+  const hmMax=Math.max(1e-9,...hm.flat().map(v=>v==null?0:Math.abs(v)));
+  const dn=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const cell=v=>{if(v==null)return`<div style="color:var(--ink3)">·</div>`;const a=(0.15+0.6*Math.abs(v)/hmMax).toFixed(2);return`<div class="hide-figure" style="background:${v>=0?`rgba(52,211,153,${a})`:`rgba(240,102,95,${a})`};color:var(--ink)">${v>=0?'+':'−'}${Math.abs(v)<10?Math.abs(v).toFixed(1):Math.round(Math.abs(v))}</div>`;};
+  const wb=blk.reduce((bi,v,i)=>v<blk[bi]?i:bi,0);
+  const heat=`<div class="an-card"><div class="an-ct">P&amp;L by weekday × time of day (your local time)</div><div class="an-hm"><div></div>${['00–04','04–08','08–12','12–16','16–20','20–24'].map(x=>`<div>${x}</div>`).join('')}${hm.map((r,i)=>`<div style="text-align:left;padding-left:2px">${dn[i]}</div>${r.map(cell).join('')}`).join('')}</div>
+    <div class="an-hint">${blk[wb]<0?`Your weakest window is ${String(wb*4).padStart(2,'0')}:00–${String(wb*4+4).padStart(2,'0')}:00 (${anUsd(blk[wb])} in total).`:'No time window is losing overall.'}</div></div>`;
+  const bk=[['< 1 hour',0,3600e3],['1–24 hours',3600e3,86400e3],['1–7 days',86400e3,7*86400e3],['> 7 days',7*86400e3,Infinity]];
+  const hrows=bk.map(([l,a,b])=>{const gs=groups.filter(g=>g.held!=null&&g.held>=a&&g.held<b);return gs.length?{label:l,pnl:gs.reduce((s,g)=>s+g.pnl,0),sub:`${gs.length} trade${gs.length===1?'':'s'}`}:null;}).filter(Boolean);
+  const hold=hrows.length?`<div class="an-card"><div class="an-ct">By holding time</div>${anBars(hrows,{labelW:84})}${(()=>{const w=hrows.reduce((a,b)=>b.pnl<a.pnl?b:a);return`<div class="an-hint">${w.pnl<0?`Biggest drain: trades held ${w.label} (${anUsd(w.pnl)}).`:'No holding-time bucket is losing overall.'}</div>`;})()}</div>`:'';
+  h+=`<div class="an-sec"><h3>When you lose</h3><span>find your bad hours and habits</span></div><div class="an-cols">${heat}${hold}</div>`;
+  // flags
+  h+=`<div class="an-sec"><h3>Possible mistakes</h3><span>patterns detected in your trades — tap to see them</span></div>`+flags.map((f,i)=>`<div class="an-flag ${f.sev}"><div>${f.sev==='bad'?'🔴':f.sev==='warn'?'🟠':'🟢'}</div><div><b>${escapeHtml(f.title)}</b>${escapeHtml(f.text)}</div>${f.ids?`<button class="an-go" onclick="showAnalysisFlag(${i})">View ${f.ids.size} →</button>`:''}</div>`).join('');
+  // streaks
+  let ws=0,ls=0,cw=0,cl=0;const afterL=[],afterW=[];
+  groups.forEach((g,i)=>{
+    if(g.pnl>0){cw++;cl=0;ws=Math.max(ws,cw);}else if(g.pnl<0){cl++;cw=0;ls=Math.max(ls,cl);}else{cw=0;cl=0;}
+    if(i>0)(groups[i-1].pnl<0?afterL:groups[i-1].pnl>0?afterW:[]).push(g.pnl);
+  });
+  const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
+  const aL=avg(afterL),aW=avg(afterW);
+  h+=`<div class="an-sec"><h3>Streaks</h3><span></span></div><div class="an-grid">
+    <div class="an-tile"><div class="l">Longest win streak</div><div class="v g">${ws}</div></div>
+    <div class="an-tile"><div class="l">Longest loss streak</div><div class="v r">${ls}</div></div>
+    <div class="an-tile"><div class="l">Trade after a loss</div><div class="v ${aL==null?'':anCol(aL)} hide-figure">${aL==null?'—':anUsd(aL)}</div><div class="s hide-figure">avg${aW!=null?' · vs '+anUsd(aW)+' after a win':''}</div></div></div>`;
+  // review
+  let list,title;
+  if(analysisReview==='best'){list=[...groups].sort((a,b)=>b.pnl-a.pnl).slice(0,10);title='10 best trades';}
+  else if(analysisReview&&analysisReview.ids){list=groups.filter(g=>analysisReview.ids.has(g.id)).sort((a,b)=>a.pnl-b.pnl);title=analysisReview.title;}
+  else{list=[...groups].sort((a,b)=>a.pnl-b.pnl).slice(0,10);title='10 worst trades';}
+  const showPf=analysisScope==='all';
+  h+=`<div class="an-sec" id="an-review"><h3>Trade review</h3><span>${escapeHtml(title)} · tag why it happened</span></div>
+  <div class="an-pills"><button class="an-pill ${analysisReview==='worst'?'on':''}" onclick="setAnalysisReview('worst')">10 worst</button><button class="an-pill ${analysisReview==='best'?'on':''}" onclick="setAnalysisReview('best')">10 best</button>${analysisReview&&analysisReview.ids?`<button class="an-pill on" onclick="setAnalysisReview('worst')">${escapeHtml(analysisReview.title)} ✕</button>`:''}</div>
+  <div class="an-card" style="padding:0;overflow-x:auto"><table class="an-table"><thead><tr><th>Date</th><th>Coin</th>${showPf?'<th>Portfolio</th>':''}<th>Held</th><th style="text-align:right">P&amp;L</th><th>Your tag</th><th>Note</th></tr></thead><tbody>
+  ${list.map(g=>`<tr><td>${new Date(g.ms).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'})}</td>
+    <td><b>${escapeHtml(g.symbol)}</b>${g.table==='futures_trades'?`<span style="color:var(--ink3);font-size:0.62rem"> ${g.dir}</span>`:''}${g.rows.length>1?`<span style="color:var(--ink3);font-size:0.62rem"> (${g.rows.length} fills)</span>`:''}</td>
+    ${showPf?`<td style="color:var(--ink3)">${escapeHtml(g.portfolioId==='futures'?'Futures':((portfolios.find(p=>p.id===g.portfolioId)||{}).name||'—'))}</td>`:''}
+    <td>${anFmtHeld(g.held)}</td><td style="text-align:right" class="${anCol(g.pnl)} hide-figure"><b>${anUsd(g.pnl)}</b></td>
+    <td><select class="an-tagsel" onchange="setAnalysisTag('${g.id}',this.value)"><option value="">— tag —</option>${ANALYSIS_TAGS.map(t=>`<option ${g.tag===t?'selected':''}>${t}</option>`).join('')}</select></td>
+    <td><input class="an-note" type="text" placeholder="note…" value="${escapeHtml(g.note||'')}" onchange="setAnalysisNote('${g.id}',this.value)"></td></tr>`).join('')}
+  </tbody></table></div>`;
+  // tags
+  const tg={};groups.forEach(g=>{if(g.tag){const o=tg[g.tag]||(tg[g.tag]={pnl:0,n:0});o.pnl+=g.pnl;o.n++;}});
+  const trows=Object.entries(tg).map(([t,o])=>({label:t,pnl:o.pnl,sub:`${o.n} trade${o.n===1?'':'s'} · avg ${anUsd(o.pnl/o.n)}`})).sort((a,b)=>a.pnl-b.pnl);
+  const untagged=groups.filter(g=>!g.tag).length;
+  h+=`<div class="an-sec"><h3>P&amp;L by your tags</h3><span>the real cost of each habit</span></div><div class="an-card">${trows.length?anBars(trows,{labelW:110}):'<div class="an-hint" style="margin:0">Tag trades in the table above (FOMO entry, Revenge trade, Followed plan…) and the cost of each habit will show here.</div>'}${trows.length&&untagged?`<div class="an-hint">${untagged} trade${untagged===1?'':'s'} not tagged yet.</div>`:''}</div>`;
+  el.innerHTML=h;
+  if(keepScroll)window.scrollTo(0,y);
+}
+
+// ═══════════════════════════════
 //  FUTURES (Binance USD-M) — account-wide, not tied to a crypto/stock
 //  portfolio. A leveraged position (entry/mark price, leverage, margin,
 //  unrealized PnL) doesn't fit the units-held/avg-cost model the rest of
@@ -5539,7 +5922,7 @@ async function renderFutures(){
   if(!el)return;
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
   await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions()]);
-  const closed=futuresTrades.filter(t=>t.realized_pnl!=null);
+  const closed=futuresTrades.filter(t=>t.realized_pnl!=null&&t.realized_pnl!==0); // opening fills report 0 PnL — not a closed trade
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
