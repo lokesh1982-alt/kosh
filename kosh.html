@@ -406,11 +406,18 @@ select option{color:#14181D;background:#fff;}
       <div class="card" id="settings-futures-card">
         <div class="card-title">Futures symbols</div>
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Pick which Binance USD-M Futures symbols to track (e.g. BTCUSDT). Needs a Futures-enabled API key set up on the server — see the Futures tab if sync fails.</div>
-        <div style="display:flex;gap:6px;margin-bottom:10px">
+        <div style="display:flex;gap:6px;margin-bottom:14px">
           <input class="form-input" id="futures-symbol-input" placeholder="e.g. BTCUSDT" style="flex:1;text-transform:uppercase"/>
           <button class="btn-outline" onclick="addFuturesSymbol()">+ Add</button>
         </div>
-        <div id="futures-symbol-list" style="font-size:0.76rem"></div>
+        <div id="futures-symbol-list" style="font-size:0.76rem;margin-bottom:14px"></div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px;line-height:1.45">Futures isn't a portfolio Kosh tracks trades against, so set how much you've actually deployed there by hand — bump it up whenever you move more in from Binance.</div>
+        <div class="form-group"><label class="form-label">Capital deployed (USDT)</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" type="number" id="futures-capital-input" placeholder="e.g. 900" style="flex:1"/>
+            <button class="btn-outline" onclick="saveFuturesCapitalDeployed()">Save</button>
+          </div>
+        </div>
       </div>
       <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
@@ -5094,6 +5101,7 @@ let futuresSymbols=[];
 let futuresPositions=[];
 let futuresTrades=[];
 let futuresLastSyncedAt=null;
+let futuresCapitalDeployed=0;
 async function loadFuturesSymbols(){
   const{data}=await sb.from('futures_symbols').select('*').eq('user_id',currentUser.id).order('symbol');
   futuresSymbols=data||[];
@@ -5101,19 +5109,40 @@ async function loadFuturesSymbols(){
 async function loadFuturesSyncSettings(){
   const{data}=await sb.from('futures_sync_settings').select('*').eq('user_id',currentUser.id).maybeSingle();
   futuresLastSyncedAt=data?data.last_synced_at:null;
+  futuresCapitalDeployed=data?(data.capital_deployed||0):0;
+}
+// Futures has no portfolio row/units_held to derive "capital deployed" from
+// the way Spot does, so it's just one number set directly here — bump it by
+// whatever you actually move into the Futures wallet on Binance.
+async function saveFuturesCapitalDeployed(){
+  const input=document.getElementById('futures-capital-input');
+  const amount=parseFloat(input.value);
+  if(isNaN(amount)||amount<0){showToast('Enter a valid amount.');return;}
+  const{error}=await sb.from('futures_sync_settings').upsert(
+    {user_id:currentUser.id,capital_deployed:amount},
+    {onConflict:'user_id'}
+  );
+  if(error){showToast('Error: '+error.message);return;}
+  futuresCapitalDeployed=amount;
+  renderFuturesSettingsCard();
+  showToast('Futures capital deployed saved ✅');
+  if(document.getElementById('sec-futures')?.classList.contains('active'))renderFutures();
 }
 async function loadFuturesTrades(){
   const{data}=await sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false});
   futuresTrades=data||[];
 }
 function renderFuturesSettingsCard(){
-  loadFuturesSymbols().then(()=>{
+  Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings()]).then(()=>{
     const list=document.getElementById('futures-symbol-list');
-    if(!list)return;
-    list.innerHTML=futuresSymbols.length?futuresSymbols.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
-      <span><b>${escapeHtml(s.symbol)}</b></span>
-      <button class="link-btn" style="color:var(--red)" onclick="removeFuturesSymbol('${s.id}')">Remove</button>
-    </div>`).join(''):'<div style="color:var(--ink3)">No symbols tracked yet — add one above (e.g. BTCUSDT) and sync from the Futures tab.</div>';
+    if(list){
+      list.innerHTML=futuresSymbols.length?futuresSymbols.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span><b>${escapeHtml(s.symbol)}</b></span>
+        <button class="link-btn" style="color:var(--red)" onclick="removeFuturesSymbol('${s.id}')">Remove</button>
+      </div>`).join(''):'<div style="color:var(--ink3)">No symbols tracked yet — add one above (e.g. BTCUSDT) and sync from the Futures tab.</div>';
+    }
+    const capInput=document.getElementById('futures-capital-input');
+    if(capInput&&document.activeElement!==capInput)capInput.value=futuresCapitalDeployed||'';
   });
 }
 async function addFuturesSymbol(){
@@ -5243,6 +5272,9 @@ async function renderFutures(){
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
   const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+  const totalPnl=totalRealized+totalUnrealized;
+  const netRoi=futuresCapitalDeployed>0?(totalPnl/futuresCapitalDeployed)*100:null;
+  const roiCol=netRoi==null?'var(--ink3)':(netRoi>=0?'var(--green)':'var(--red)');
   const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
   const trackingNote=futuresSymbols.length
     ?`Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')} (for closed-trade history)`
@@ -5253,6 +5285,17 @@ async function renderFutures(){
   el.innerHTML=`
     ${errorBanner}
     <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">Last synced: ${lastSync} · ${trackingNote}</div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
+        <span class="hide-figure" style="font-size:0.9rem;font-weight:700">${futuresCapitalDeployed>0?fmtUsd(futuresCapitalDeployed):'No capital set'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
+        <span style="font-size:0.9rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
+      </div>
+      ${futuresCapitalDeployed===0?`<div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">Set this in Settings → Futures symbols → Capital deployed.</div>`:''}
+    </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Unrealized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalUnrealized>=0?'var(--green)':'var(--red)'}">${totalUnrealized>=0?'+':''}${fmtUsd(totalUnrealized)}</div></div>
