@@ -360,10 +360,11 @@ select option{color:#14181D;background:#fff;}
           <div style="font-size:0.8rem;font-weight:700" id="settings-total-capital-display"></div>
         </div>
         <div style="font-size:0.7rem;color:var(--ink3);margin-bottom:10px">Total capital, above, updates automatically from Fund and Withdraw — no manual entry needed.</div>
-        <div style="display:flex;gap:10px">
+        <div style="display:flex;gap:10px;margin-bottom:8px">
           <button class="btn-primary" id="settings-fund-button" style="flex:1" onclick="openFundSpotModal()">💵 Fund with USDT</button>
           <button class="btn-outline" id="settings-withdraw-button" style="flex:1" onclick="openWithdrawSpotModal()">🏧 Withdraw</button>
         </div>
+        <button class="link-btn" style="font-size:0.72rem" onclick="openModal('adjust-capital-modal')">✏️ Adjust capital (no trade) — use this if Withdraw says nothing's available</button>
       </div>
       <div class="card" id="settings-transfer-card">
         <div class="card-title">Move funds between portfolios</div>
@@ -564,6 +565,25 @@ select option{color:#14181D;background:#fff;}
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('withdraw-spot-modal')">Cancel</button>
       <button class="btn-primary" style="flex:1" onclick="confirmWithdrawSpot()">Withdraw</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADJUST CAPITAL MODAL (bookkeeping-only — no coin balance touched) -->
+<div class="modal-overlay" id="adjust-capital-modal">
+  <div class="modal">
+    <div class="modal-title">✏️ Adjust capital (no trade)</div>
+    <div style="font-size:0.76rem;color:var(--ink2);margin-bottom:12px">For money that left or entered this portfolio outside Kosh (e.g. moved to Futures, or Binance Lead Trading has little free USDT to actually "withdraw" from). Changes only the capital-deployed figure and ROI% baseline — no coin units are touched.</div>
+    <div class="form-group"><label class="form-label">Direction</label>
+      <select class="form-select" id="adjust-capital-direction">
+        <option value="decrease">Decrease capital (money left this portfolio)</option>
+        <option value="increase">Increase capital (money added to this portfolio)</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Amount (USDT)</label><input class="form-input" type="number" step="0.01" id="adjust-capital-amount" placeholder="e.g. 900"/></div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('adjust-capital-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmAdjustCapital()">Save</button>
     </div>
   </div>
 </div>
@@ -3010,6 +3030,32 @@ async function confirmWithdrawSpot(){
   renderAll();
   {const tcd=document.getElementById('settings-total-capital-display');if(tcd)tcd.textContent=fmtUsd(settings.total_capital||0);}
   showToast(`Withdrew ${actualAmount} ${ticker} ✅`);
+}
+// Pure bookkeeping adjustment to total_capital (and the rebalance band's
+// base), with NO coin units touched and no trade logged. Withdraw requires
+// actual free USDT/USD sitting in the reserve coin to sell against — for an
+// auto-synced portfolio like Lead Trading, almost all capital may be
+// deployed into positions with little free cash, so Withdraw can have
+// nothing to debit even though real money genuinely left the account (e.g.
+// moved to Futures on Binance directly). This is for exactly that case.
+async function confirmAdjustCapital(){
+  const dir=document.getElementById('adjust-capital-direction').value;
+  const amount=parseFloat(document.getElementById('adjust-capital-amount').value);
+  if(!amount||amount<=0){showToast('Enter a valid amount.');return;}
+  if(!currentPortfolioId){showToast('Create a portfolio first.');return;}
+  const delta=dir==='decrease'?-amount:amount;
+  const newCapital=Math.max(0,(settings.total_capital||0)+delta);
+  await sb.from('kosh_settings').upsert(
+    {user_id:currentUser.id,portfolio_id:currentPortfolioId,total_capital:newCapital,updated_at:new Date().toISOString()},
+    {onConflict:'user_id,portfolio_id'}
+  );
+  settings.total_capital=newCapital;
+  {const cp=currentPortfolio(),bd=cp&&getBand(cp);if(bd&&bd.base)await persistBand(cp.id,{up:bd.up,down:bd.down,base:Math.max(0,bd.base+delta)});}
+  closeModal('adjust-capital-modal');
+  document.getElementById('adjust-capital-amount').value='';
+  renderAll();
+  {const tcd=document.getElementById('settings-total-capital-display');if(tcd)tcd.textContent=fmtUsd(settings.total_capital||0);}
+  showToast(`Capital ${dir==='decrease'?'decreased':'increased'} by ${amount} — now ${fmtUsd(newCapital)} ✅`);
 }
 async function confirmAddPosition(){
   if(!_apSelectedCoin){showToast('Search and select a coin first.');return;}
