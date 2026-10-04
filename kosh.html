@@ -5168,22 +5168,39 @@ async function syncFuturesSymbol(symbol){
   }
   return totalSynced;
 }
+let futuresPositionsError=null;
+// Open positions come straight from Binance's positionRisk endpoint and are
+// account-wide — unlike closed-trade history, they need NO symbol tracked
+// in futures_symbols to show up. Errors are captured instead of swallowed
+// (e.g. the server secret not set, or a Binance permission/IP error) so a
+// misconfiguration shows up on screen instead of just an empty list.
 async function loadFuturesPositions(){
   const res=await binanceFetch('futuresPositions',{},'futures');
-  if(!res||!res.ok){futuresPositions=[];return;}
+  if(!res){futuresPositions=[];futuresPositionsError='Your session expired — please sign in again.';return;}
+  if(!res.ok){
+    futuresPositions=[];
+    let msg='HTTP '+res.status;
+    try{const body=await res.json();if(body&&body.error)msg=body.error;}catch(e){}
+    futuresPositionsError=msg;
+    return;
+  }
+  futuresPositionsError=null;
   const rows=await res.json();
   futuresPositions=(Array.isArray(rows)?rows:[]).filter(p=>Math.abs(parseFloat(p.positionAmt||0))>0);
 }
 async function syncFuturesNow(){
-  if(!futuresSymbols.length){showToast('Add a symbol to track first (Settings → Futures symbols).');return;}
   showToast('Syncing Futures...');
   let total=0;
-  for(const s of futuresSymbols)total+=await syncFuturesSymbol(s.symbol);
+  if(futuresSymbols.length){
+    for(const s of futuresSymbols)total+=await syncFuturesSymbol(s.symbol);
+  }
   await loadFuturesPositions();
   await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,last_synced_at:new Date().toISOString()},{onConflict:'user_id'});
   await loadFuturesSyncSettings();
   await loadFuturesTrades();
   renderFutures();
+  if(futuresPositionsError){showToast('Could not load positions: '+futuresPositionsError);return;}
+  if(!futuresSymbols.length){showToast('Positions refreshed. Add a symbol in Settings to also sync closed-trade history ✅');return;}
   showToast(total?`Synced ${total} new futures fill(s) ✅`:'Futures already up to date ✅');
 }
 function futuresPositionRowHtml(p){
@@ -5221,18 +5238,21 @@ async function renderFutures(){
   if(!el)return;
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
   await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions()]);
-  if(!futuresSymbols.length){
-    el.innerHTML=`<div class="empty-state"><div class="ic">🧮</div><div>No Futures symbols tracked yet.</div><div style="font-size:0.76rem;color:var(--ink3);margin-top:6px">Add one in Settings → Futures symbols (e.g. BTCUSDT), then sync.</div></div>`;
-    return;
-  }
   const closed=futuresTrades.filter(t=>t.realized_pnl!=null);
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
   const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
   const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
+  const trackingNote=futuresSymbols.length
+    ?`Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')} (for closed-trade history)`
+    :`No symbols added yet — add one in Settings to sync closed-trade history. Open positions below don't need one.`;
+  const errorBanner=futuresPositionsError
+    ?`<div style="background:var(--red-bg);color:var(--red);font-size:0.76rem;padding:10px 12px;border-radius:8px;margin-bottom:12px">⚠️ Could not load positions: ${escapeHtml(futuresPositionsError)}</div>`
+    :'';
   el.innerHTML=`
-    <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">Last synced: ${lastSync} · Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')}</div>
+    ${errorBanner}
+    <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">Last synced: ${lastSync} · ${trackingNote}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Unrealized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalUnrealized>=0?'var(--green)':'var(--red)'}">${totalUnrealized>=0?'+':''}${fmtUsd(totalUnrealized)}</div></div>
