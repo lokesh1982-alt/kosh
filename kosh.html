@@ -1037,7 +1037,6 @@ function initPfCardDrag(){
       const card=h.closest('.pf-card');
       if(!card)return;
       e.preventDefault();
-      h.setPointerCapture(e.pointerId);
       card.classList.add('pf-dragging');
       const move=ev=>{
         const others=[...row.querySelectorAll('.pf-card')].filter(c=>c!==card);
@@ -1053,15 +1052,17 @@ function initPfCardDrag(){
         else if(ev.clientX>rr.right-40)row.scrollLeft+=14;
       };
       const up=()=>{
-        h.removeEventListener('pointermove',move);
-        h.removeEventListener('pointerup',up);
-        h.removeEventListener('pointercancel',up);
+        window.removeEventListener('pointermove',move);
+        window.removeEventListener('pointerup',up);
+        window.removeEventListener('pointercancel',up);
         card.classList.remove('pf-dragging');
         try{localStorage.setItem(PF_CARD_ORDER_KEY,JSON.stringify([...row.querySelectorAll('.pf-card')].map(c=>c.dataset.pfKey)));}catch(e){}
       };
-      h.addEventListener('pointermove',move);
-      h.addEventListener('pointerup',up);
-      h.addEventListener('pointercancel',up);
+      // Listen on window, not the handle: re-inserting the card in the DOM
+      // while dragging detaches the handle and would drop pointer capture.
+      window.addEventListener('pointermove',move);
+      window.addEventListener('pointerup',up);
+      window.addEventListener('pointercancel',up);
     });
   });
 }
