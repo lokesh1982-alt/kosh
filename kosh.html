@@ -262,6 +262,7 @@ select option{color:#14181D;background:#fff;}
       <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
       <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
       <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
+      <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
       <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
         <span class="binance-sync-status" style="font-size:0.66rem;color:#8B93A1;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
@@ -315,6 +316,15 @@ select option{color:#14181D;background:#fff;}
     <!-- NEWS -->
     <div class="section" id="sec-news">
       <div id="news-content"></div>
+    </div>
+
+    <!-- FUTURES (Binance USD-M, account-wide — not tied to a crypto/stock portfolio) -->
+    <div class="section" id="sec-futures">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <div class="card-title" style="margin:0">🧮 Futures (Binance USD-M)</div>
+        <button class="btn-outline" style="padding:5px 11px;font-size:0.72rem" onclick="syncFuturesNow()">🔄 Sync Futures</button>
+      </div>
+      <div id="futures-content"></div>
     </div>
 
     <!-- TIERS & COINS -->
@@ -393,6 +403,15 @@ select option{color:#14181D;background:#fff;}
         <button class="btn-primary" style="width:100%" onclick="savePublicSettings()">Save public page settings</button>
         <div id="public-link-slot" style="font-size:0.72rem;margin-top:10px;word-break:break-all"></div>
       </div>
+      <div class="card" id="settings-futures-card">
+        <div class="card-title">Futures symbols</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Pick which Binance USD-M Futures symbols to track (e.g. BTCUSDT). Needs a Futures-enabled API key set up on the server — see the Futures tab if sync fails.</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <input class="form-input" id="futures-symbol-input" placeholder="e.g. BTCUSDT" style="flex:1;text-transform:uppercase"/>
+          <button class="btn-outline" onclick="addFuturesSymbol()">+ Add</button>
+        </div>
+        <div id="futures-symbol-list" style="font-size:0.76rem"></div>
+      </div>
       <div class="card" id="settings-data-card">
         <div class="card-title">Data</div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="refreshPrices()">🔄 Refresh live prices</button>
@@ -413,6 +432,7 @@ select option{color:#14181D;background:#fff;}
     <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
     <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watch</div></button>
     <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
+    <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
     <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
   </div>
     </div>
@@ -939,6 +959,7 @@ function switchTab(name){
   if(name==='journal')renderJournal();
   if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
+  if(name==='futures')renderFutures();
   if(name==='settings')refreshSettingsPanel();
 }
 // Populates the Settings section for whichever portfolio is currently
@@ -956,6 +977,7 @@ function refreshSettingsPanel(){
   document.getElementById('settings-wizard-card').style.display=isSpotSettings?'none':'';
   renderBinanceSettingsCard();
   renderPublicSettingsCard();
+  renderFuturesSettingsCard();
 }
 function goToDashboard(){switchTab('dashboard');}
 function toggleFigures(){
@@ -3358,7 +3380,7 @@ async function confirmPastTrade(){
   showToast('Added to the Journal ✅');
 }
 
-let journalViewMode='crypto'; // 'crypto' | 'stocks' — separate journals per the user's request
+let journalViewMode='crypto'; // 'crypto' | 'stocks' | 'futures' — separate journals per the user's request
 async function loadAllTradesForJournal(){
   const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
   return data||[];
@@ -3487,18 +3509,27 @@ function setJournalSortMode(v){journalSortMode=v;renderJournalTableBody();}
 async function renderJournal(){
   const el=document.getElementById('journal-content');
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
+  const hasAnyStockPortfolio=portfolios.some(p=>isStockKind(p.kind));
+  await loadFuturesSymbols();
+  const hasFutures=futuresSymbols.length>0;
+  let toggleHtml='';
+  if(hasAnyStockPortfolio||hasFutures){
+    toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
+      <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
+      ${hasAnyStockPortfolio?`<button class="tab-btn ${journalViewMode==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>`:''}
+      ${hasFutures?`<button class="tab-btn ${journalViewMode==='futures'?'active':''}" onclick="setJournalViewMode('futures')">🧮 Futures</button>`:''}
+    </div>`;
+  }
+  // Futures has its own data shape (no coin_id/avg-cost, Binance-reported
+  // PnL per fill, no INR leg) — rendered by its own function entirely,
+  // rather than forcing it through the crypto/stocks table shape below.
+  if(journalViewMode==='futures'){
+    await renderFuturesJournal(el,toggleHtml);
+    return;
+  }
   const rawTrades=await loadAllTradesForJournal();
   const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
   allJournalTrades=rawTrades.filter(t=>journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id));
-
-  const hasAnyStockPortfolio=portfolios.some(p=>isStockKind(p.kind));
-  let toggleHtml='';
-  if(hasAnyStockPortfolio){
-    toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
-      <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
-      <button class="tab-btn ${journalViewMode==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>
-    </div>`;
-  }
 
   const addPastBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
   if(!allJournalTrades.length){
@@ -3636,6 +3667,95 @@ function exportJournalPDF(){
     alternateRowStyles:{fillColor:[241,243,245]}
   });
   doc.save(`kosh-journal-${new Date().toISOString().slice(0,10)}.pdf`);
+}
+// ── Futures Journal — separate from the crypto/stocks table above since
+// futures_trades has its own shape (symbol/side/position_side, Binance's
+// own per-fill realized PnL, no coin_id/avg-cost, no INR leg). ──
+function futuresJournalRowHtml(t,i){
+  const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+  const rowBg=i%2===1?'background:var(--card2)':'';
+  return`<tr style="border-bottom:1px solid var(--border);${rowBg}">
+    <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
+    <td style="padding:7px 10px;font-weight:600">${escapeHtml(t.symbol)}${t.position_side?`<span style="margin-left:6px;font-size:0.62rem;color:var(--ink3);font-weight:500">${escapeHtml(t.position_side)}</span>`:''}</td>
+    <td style="padding:7px 10px;text-align:center">${transferBadgeHtml(t.side)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${t.qty}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.price)}</td>
+    <td style="padding:7px 10px;text-align:right;color:var(--ink3)" class="hide-figure">${t.commission!=null?t.commission+' '+(t.commission_asset||''):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
+  </tr>`;
+}
+async function renderFuturesJournal(el,toggleHtml){
+  await loadFuturesTrades();
+  const syncBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="syncFuturesNow().then(renderJournal)">🔄 Sync Futures</button>`;
+  if(!futuresTrades.length){
+    el.innerHTML=toggleHtml+syncBtn+`<div class="empty-state"><div class="ic">📒</div><div>No futures trades synced yet.</div></div>`;
+    return;
+  }
+  const closed=futuresTrades.filter(t=>t.realized_pnl!=null);
+  const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
+  let html=toggleHtml;
+  html+=`<div class="card" style="text-align:center">
+    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (Futures)</div>
+    <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
+  </div>`;
+  html+=syncBtn;
+  html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalExcel()">📊 Export Excel</button>
+    <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalPDF()">📄 Export PDF</button>
+  </div>`;
+  html+=`<div class="card" style="padding:0;overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
+      <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
+        <th style="padding:8px 10px;text-align:left">Date</th>
+        <th style="padding:8px 10px;text-align:left">Symbol</th>
+        <th style="padding:8px 10px;text-align:center">Side</th>
+        <th style="padding:8px 10px;text-align:right">Qty</th>
+        <th style="padding:8px 10px;text-align:right">Price</th>
+        <th style="padding:8px 10px;text-align:right">Commission</th>
+        <th style="padding:8px 10px;text-align:right">Realized P&amp;L</th>
+      </tr></thead>
+      <tbody>${futuresTrades.map(futuresJournalRowHtml).join('')}</tbody>
+    </table>
+  </div>`;
+  el.innerHTML=html;
+}
+const FUTURES_JOURNAL_COLUMNS=['Date','Symbol','Position Side','Side','Qty','Price','Commission','Commission Asset','Realized P&L'];
+function futuresJournalExportRows(){
+  return futuresTrades.map(t=>{
+    const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
+    return[date,t.symbol,t.position_side||'',t.side==='buy'?'Buy':'Sell',t.qty,t.price,
+      t.commission!=null?t.commission:'',t.commission_asset||'',t.realized_pnl!=null?t.realized_pnl:''];
+  });
+}
+function exportFuturesJournalExcel(){
+  if(typeof XLSX==='undefined'){showToast('Excel export library still loading — try again in a moment.');return;}
+  const rows=futuresJournalExportRows();
+  const wsData=[['Kosh — Futures Journal'],[],FUTURES_JOURNAL_COLUMNS,...rows];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=FUTURES_JOURNAL_COLUMNS.map(()=>({wch:14}));
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:FUTURES_JOURNAL_COLUMNS.length-1}}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Futures Journal');
+  XLSX.writeFile(wb,`kosh-futures-journal-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+function exportFuturesJournalPDF(){
+  if(typeof window.jspdf==='undefined'){showToast('PDF export library still loading — try again in a moment.');return;}
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFontSize(14);doc.setTextColor(20,24,29);
+  doc.text('Kosh — Futures Journal',14,16);
+  doc.setFontSize(9);doc.setTextColor(120,120,120);
+  doc.text('Generated '+new Date().toLocaleDateString(),14,22);
+  doc.autoTable({
+    startY:28,
+    head:[FUTURES_JOURNAL_COLUMNS],
+    body:futuresJournalExportRows().map(r=>r.map(v=>typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:2}):v)),
+    theme:'grid',
+    headStyles:{fillColor:[20,24,29],textColor:255,fontSize:8},
+    styles:{fontSize:7.5,cellPadding:2.5},
+    alternateRowStyles:{fillColor:[241,243,245]}
+  });
+  doc.save(`kosh-futures-journal-${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
 // ═══════════════════════════════
@@ -4958,6 +5078,173 @@ async function savePublicSettings(){
   settings.public_slug=slug||null;settings.public_enabled=enabled;settings.starting_capital_override=startCap;
   renderPublicSettingsCard();
   showToast('Public page settings saved ✅');
+}
+
+// ═══════════════════════════════
+//  FUTURES (Binance USD-M) — account-wide, not tied to a crypto/stock
+//  portfolio. A leveraged position (entry/mark price, leverage, margin,
+//  unrealized PnL) doesn't fit the units-held/avg-cost model the rest of
+//  Kosh uses for Spot, so this gets its own tab, its own tables
+//  (futures_symbols/futures_trades/futures_sync_cursor/futures_sync_settings),
+//  and its own render/sync functions — deliberately NOT merged into
+//  tiers/coins/trades or the Combined Portfolio equity total, since
+//  leveraged PnL isn't "portfolio value" in the same sense.
+// ═══════════════════════════════
+let futuresSymbols=[];
+let futuresPositions=[];
+let futuresTrades=[];
+let futuresLastSyncedAt=null;
+async function loadFuturesSymbols(){
+  const{data}=await sb.from('futures_symbols').select('*').eq('user_id',currentUser.id).order('symbol');
+  futuresSymbols=data||[];
+}
+async function loadFuturesSyncSettings(){
+  const{data}=await sb.from('futures_sync_settings').select('*').eq('user_id',currentUser.id).maybeSingle();
+  futuresLastSyncedAt=data?data.last_synced_at:null;
+}
+async function loadFuturesTrades(){
+  const{data}=await sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false});
+  futuresTrades=data||[];
+}
+function renderFuturesSettingsCard(){
+  loadFuturesSymbols().then(()=>{
+    const list=document.getElementById('futures-symbol-list');
+    if(!list)return;
+    list.innerHTML=futuresSymbols.length?futuresSymbols.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
+      <span><b>${escapeHtml(s.symbol)}</b></span>
+      <button class="link-btn" style="color:var(--red)" onclick="removeFuturesSymbol('${s.id}')">Remove</button>
+    </div>`).join(''):'<div style="color:var(--ink3)">No symbols tracked yet — add one above (e.g. BTCUSDT) and sync from the Futures tab.</div>';
+  });
+}
+async function addFuturesSymbol(){
+  const input=document.getElementById('futures-symbol-input');
+  const symbol=(input.value||'').trim().toUpperCase();
+  if(!symbol){showToast('Enter a symbol, e.g. BTCUSDT.');return;}
+  const{error}=await sb.from('futures_symbols').insert({user_id:currentUser.id,symbol});
+  if(error){showToast(error.message.includes('unique')?'Already tracking '+symbol:'Error: '+error.message);return;}
+  input.value='';
+  renderFuturesSettingsCard();
+  showToast(symbol+' added — sync from the Futures tab to pull its history ✅');
+}
+async function removeFuturesSymbol(id){
+  await sb.from('futures_symbols').delete().eq('id',id);
+  renderFuturesSettingsCard();
+}
+// Mirrors syncSymbolMapping()'s pagination/idempotency pattern, but against
+// /fapi/v1/userTrades, which — unlike Spot's myTrades — already reports
+// realized PnL per fill, so there's no weighted-average-cost math to redo.
+async function syncFuturesSymbol(symbol){
+  const{data:cursorRow}=await sb.from('futures_sync_cursor').select('*').eq('user_id',currentUser.id).eq('symbol',symbol).maybeSingle();
+  let lastId=cursorRow?cursorRow.last_trade_id:0;
+  let totalSynced=0;
+  for(let page=0;page<50;page++){
+    const params={symbol};
+    if(lastId>0)params.fromId=String(lastId+1);
+    const res=await binanceFetch('futuresTrades',params,'futures');
+    if(!res)return totalSynced;
+    if(!res.ok){
+      const errBody=await res.text();
+      showToast(`Futures sync error for ${symbol}: ${errBody.slice(0,140)}`);
+      return totalSynced;
+    }
+    const fills=await res.json();
+    if(!Array.isArray(fills)||!fills.length)break;
+    for(const f of fills){
+      const{error}=await sb.from('futures_trades').insert({
+        user_id:currentUser.id,symbol,side:f.side==='BUY'?'buy':'sell',position_side:f.positionSide||null,
+        qty:parseFloat(f.qty),price:parseFloat(f.price),quote_qty:parseFloat(f.quoteQty||(f.qty*f.price)),
+        commission:parseFloat(f.commission||0),commission_asset:f.commissionAsset||null,
+        realized_pnl:f.realizedPnl!=null?parseFloat(f.realizedPnl):null,
+        trade_time:new Date(f.time).toISOString(),binance_trade_id:f.id
+      });
+      if(!error){totalSynced++;lastId=Math.max(lastId,f.id);} // a unique-constraint error just means this fill was already synced
+    }
+    await sb.from('futures_sync_cursor').upsert(
+      {user_id:currentUser.id,symbol,last_trade_id:lastId,last_synced_at:new Date().toISOString()},
+      {onConflict:'user_id,symbol'}
+    );
+    if(fills.length<1000)break;
+    await new Promise(r=>setTimeout(r,300));
+  }
+  return totalSynced;
+}
+async function loadFuturesPositions(){
+  const res=await binanceFetch('futuresPositions',{},'futures');
+  if(!res||!res.ok){futuresPositions=[];return;}
+  const rows=await res.json();
+  futuresPositions=(Array.isArray(rows)?rows:[]).filter(p=>Math.abs(parseFloat(p.positionAmt||0))>0);
+}
+async function syncFuturesNow(){
+  if(!futuresSymbols.length){showToast('Add a symbol to track first (Settings → Futures symbols).');return;}
+  showToast('Syncing Futures...');
+  let total=0;
+  for(const s of futuresSymbols)total+=await syncFuturesSymbol(s.symbol);
+  await loadFuturesPositions();
+  await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,last_synced_at:new Date().toISOString()},{onConflict:'user_id'});
+  await loadFuturesSyncSettings();
+  await loadFuturesTrades();
+  renderFutures();
+  showToast(total?`Synced ${total} new futures fill(s) ✅`:'Futures already up to date ✅');
+}
+function futuresPositionRowHtml(p){
+  const amt=parseFloat(p.positionAmt||0);
+  const side=amt>0?'LONG':'SHORT';
+  const uPnl=parseFloat(p.unRealizedProfit||0);
+  const entry=parseFloat(p.entryPrice||0);
+  const mark=parseFloat(p.markPrice||0);
+  const lev=p.leverage||'—';
+  return`<div class="card" style="margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><b>${escapeHtml(p.symbol)}</b> <span style="font-size:0.7rem;color:${side==='LONG'?'var(--green)':'var(--red)'};font-weight:700">${side}</span> <span style="font-size:0.68rem;color:var(--ink3)">${lev}x</span></div>
+      <div style="font-weight:700;color:${uPnl>=0?'var(--green)':'var(--red)'}">${uPnl>=0?'+':''}${fmtUsd(uPnl)}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--ink3);margin-top:6px">
+      <span>Qty: ${Math.abs(amt)}</span>
+      <span>Entry: ${fmtUsd(entry)}</span>
+      <span>Mark: ${fmtUsd(mark)}</span>
+    </div>
+  </div>`;
+}
+function futuresTradeRowHtml(t){
+  const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+  return`<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
+    <td style="padding:7px 10px">${escapeHtml(t.symbol)}</td>
+    <td style="padding:7px 10px;text-transform:capitalize">${t.side}${t.position_side?' · '+t.position_side:''}</td>
+    <td style="padding:7px 10px;text-align:right">${t.qty}</td>
+    <td style="padding:7px 10px;text-align:right">${fmtUsd(t.price)}</td>
+    <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
+  </tr>`;
+}
+async function renderFutures(){
+  const el=document.getElementById('futures-content');
+  if(!el)return;
+  el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
+  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions()]);
+  if(!futuresSymbols.length){
+    el.innerHTML=`<div class="empty-state"><div class="ic">🧮</div><div>No Futures symbols tracked yet.</div><div style="font-size:0.76rem;color:var(--ink3);margin-top:6px">Add one in Settings → Futures symbols (e.g. BTCUSDT), then sync.</div></div>`;
+    return;
+  }
+  const closed=futuresTrades.filter(t=>t.realized_pnl!=null);
+  const wins=closed.filter(t=>t.realized_pnl>0);
+  const winRate=closed.length?(wins.length/closed.length)*100:null;
+  const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
+  const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+  const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
+  el.innerHTML=`
+    <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">Last synced: ${lastSync} · Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
+      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div></div>
+      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Unrealized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalUnrealized>=0?'var(--green)':'var(--red)'}">${totalUnrealized>=0?'+':''}${fmtUsd(totalUnrealized)}</div></div>
+      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Win rate</div><div style="font-weight:700;font-size:1.05rem">${winRate!=null?winRate.toFixed(1)+'%':'—'}</div></div>
+      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Closed trades</div><div style="font-weight:700;font-size:1.05rem">${closed.length}</div></div>
+    </div>
+    <div class="dash-section"><h3>Open positions</h3></div>
+    ${futuresPositions.length?futuresPositions.map(futuresPositionRowHtml).join(''):'<div class="empty-state" style="padding:12px 0"><div>No open positions.</div></div>'}
+    <div style="text-align:center;margin-top:14px">
+      <button class="link-btn" onclick="switchTab('journal');setJournalViewMode('futures')">📒 View closed trades in Journal →</button>
+    </div>
+  `;
 }
 
 // ═══════════════════════════════
