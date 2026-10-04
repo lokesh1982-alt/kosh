@@ -2265,7 +2265,16 @@ async function renderDashboard(){
     // combined.perPortfolio math, since leveraged P&L isn't the same kind
     // of number as spot portfolio value and mixing them would misstate the
     // Combined Portfolio Value figure above.
-    await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
+    // Guarded: Futures is loaded here purely to draw its own card below —
+    // if it fails for any reason (migration not run yet, proxy not deployed,
+    // a transient network error), that must never blank out the rest of the
+    // Dashboard (the per-portfolio cards, incl. Alpha, render right after this).
+    try{
+      await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
+    }catch(e){
+      console.error('Futures dashboard-card data load failed:',e);
+      futuresSymbols=[];futuresPositions=[];futuresTrades=[];futuresPositionsError=e.message||String(e);
+    }
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
@@ -3607,7 +3616,10 @@ async function renderJournal(){
   const el=document.getElementById('journal-content');
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
   const hasAnyStockPortfolio=portfolios.some(p=>isStockKind(p.kind));
-  await loadFuturesSymbols();
+  // Guarded: a Futures hiccup (migration not run yet, proxy not deployed,
+  // a transient network error) must never take down the Spot/Crypto Journal
+  // — it should just mean "no Futures sub-tab shown" for this render.
+  try{await loadFuturesSymbols();}catch(e){console.error('loadFuturesSymbols failed:',e);futuresSymbols=[];}
   const hasFutures=futuresSymbols.length>0;
   // Futures is still crypto, just a different instrument — so it nests as a
   // Spot/Futures sub-toggle under the "Crypto" tab rather than sitting next
@@ -3777,6 +3789,78 @@ function exportJournalPDF(){
 // ── Futures Journal — separate from the crypto/stocks table above since
 // futures_trades has its own shape (symbol/side/position_side, Binance's
 // own per-fill realized PnL, no coin_id/avg-cost, no INR leg). ──
+// Same same-day/same-symbol/same-side merge as the Spot Journal, for the
+// same reason: a single Lead order fills across many small pieces, which
+// otherwise reads as a wall of near-identical rows. Display-only — export
+// and the underlying futures_trades stay at full fidelity.
+let futuresJournalGroupRows=true;
+function groupFuturesTrades(list){
+  const groups={};
+  const order=[];
+  list.forEach(t=>{
+    const day=new Date(t.trade_time).toISOString().slice(0,10);
+    const key=[day,t.symbol,t.side].join('|');
+    if(!groups[key]){groups[key]={key,trades:[],qty:0,quoteQty:0,commission:0,commissionAsset:t.commission_asset,commissionMixed:false,realizedPnl:null,hasPnl:false};order.push(key);}
+    const g=groups[key];
+    g.trades.push(t);
+    g.qty+=(t.qty||0);
+    g.quoteQty+=(t.qty||0)*(t.price||0);
+    g.commission+=(t.commission||0);
+    if(t.commission_asset&&g.commissionAsset&&t.commission_asset!==g.commissionAsset)g.commissionMixed=true;
+    if(t.realized_pnl!=null){g.realizedPnl=(g.realizedPnl||0)+t.realized_pnl;g.hasPnl=true;}
+  });
+  return order.map(key=>{
+    const g=groups[key],first=g.trades[0];
+    return{
+      id:'fgrp-'+key.replace(/[^a-zA-Z0-9]/g,'_'),
+      trade_time:first.trade_time,symbol:first.symbol,side:first.side,position_side:first.position_side,
+      qty:g.qty,price:g.qty>0?g.quoteQty/g.qty:0,
+      commission:g.commission,commission_asset:g.commissionMixed?'mixed':g.commissionAsset,
+      realized_pnl:g.hasPnl?g.realizedPnl:null,
+      fillCount:g.trades.length,fills:g.trades
+    };
+  });
+}
+function futuresJournalTableBodyHtml(list){
+  if(!futuresJournalGroupRows)return list.map((t,i)=>futuresJournalRowHtml(t,i)).join('');
+  const groups=groupFuturesTrades(list);
+  return groups.map((g,i)=>futuresJournalGroupRowHtml(g,i)).join('');
+}
+function toggleFuturesJournalGroupRows(){
+  futuresJournalGroupRows=!futuresJournalGroupRows;
+  const tbody=document.getElementById('futures-journal-table-body');
+  if(tbody)tbody.innerHTML=futuresJournalTableBodyHtml(futuresTrades);
+  const btn=document.getElementById('futures-journal-group-toggle');
+  if(btn)btn.textContent=futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades';
+}
+function toggleFuturesJournalGroupExpand(id){
+  const rows=document.querySelectorAll('[data-journal-group="'+id+'"]');
+  if(!rows.length)return;
+  const caret=document.getElementById('journal-caret-'+id);
+  const show=rows[0].style.display==='none';
+  rows.forEach(r=>{r.style.display=show?'':'none';});
+  if(caret)caret.textContent=show?'▾':'▸';
+}
+function futuresJournalGroupRowHtml(g,i){
+  const date=new Date(g.trade_time).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
+  const rowBg=i%2===1?'background:var(--card2)':'';
+  const multi=g.fillCount>1;
+  const head=`<tr style="border-bottom:${multi?'none':'1px solid var(--border)'};${rowBg};${multi?'cursor:pointer':''}" ${multi?`onclick="toggleFuturesJournalGroupExpand('${g.id}')"`:''}>
+    <td style="padding:7px 10px;color:var(--ink2)">${date}</td>
+    <td style="padding:7px 10px;font-weight:600">${multi?`<span id="journal-caret-${g.id}" style="color:var(--ink3);margin-right:4px">▸</span>`:''}${escapeHtml(g.symbol)}${g.position_side?`<span style="margin-left:6px;font-size:0.62rem;color:var(--ink3);font-weight:500">${escapeHtml(g.position_side)}</span>`:''}${multi?`<span style="margin-left:6px;font-size:0.62rem;color:var(--ink3);font-weight:500">(${g.fillCount} fills)</span>`:''}</td>
+    <td style="padding:7px 10px;text-align:center">${transferBadgeHtml(g.side)}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${g.qty}</td>
+    <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(g.price)}${multi?'<span style="color:var(--ink3)"> avg</span>':''}</td>
+    <td style="padding:7px 10px;text-align:right;color:var(--ink3)" class="hide-figure">${g.commission!=null?g.commission.toFixed(6)+' '+(g.commission_asset||''):'—'}</td>
+    <td style="padding:7px 10px;text-align:right;color:${g.realized_pnl==null?'var(--ink3)':(g.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${g.realized_pnl!=null?(g.realized_pnl>=0?'+':'')+fmtUsd(g.realized_pnl):'—'}</td>
+  </tr>`;
+  if(!multi)return head;
+  const subrows=g.fills.map((t,j)=>{
+    const row=futuresJournalRowHtml(t,j).replace('<td style="padding:7px 10px;color:var(--ink2)">','<td style="padding:5px 10px 5px 26px;color:var(--ink3);font-size:0.9em">');
+    return row.replace(' style="', ' data-journal-group="'+g.id+'" style="display:none;');
+  }).join('');
+  return head+subrows;
+}
 function futuresJournalRowHtml(t,i){
   const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
   const rowBg=i%2===1?'background:var(--card2)':'';
@@ -3791,7 +3875,7 @@ function futuresJournalRowHtml(t,i){
   </tr>`;
 }
 async function renderFuturesJournal(el,toggleHtml){
-  await loadFuturesTrades();
+  try{await loadFuturesTrades();}catch(e){console.error('loadFuturesTrades failed:',e);futuresTrades=[];}
   const syncBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="syncFuturesNow().then(renderJournal)">🔄 Sync Futures</button>`;
   if(!futuresTrades.length){
     el.innerHTML=toggleHtml+syncBtn+`<div class="empty-state"><div class="ic">📒</div><div>No futures trades synced yet.</div></div>`;
@@ -3809,6 +3893,7 @@ async function renderFuturesJournal(el,toggleHtml){
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalPDF()">📄 Export PDF</button>
   </div>`;
+  html+=`<button class="link-btn" id="futures-journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleFuturesJournalGroupRows()">${futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades'}</button>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
@@ -3820,7 +3905,7 @@ async function renderFuturesJournal(el,toggleHtml){
         <th style="padding:8px 10px;text-align:right">Commission</th>
         <th style="padding:8px 10px;text-align:right">Realized P&amp;L</th>
       </tr></thead>
-      <tbody>${futuresTrades.map(futuresJournalRowHtml).join('')}</tbody>
+      <tbody id="futures-journal-table-body">${futuresJournalTableBodyHtml(futuresTrades)}</tbody>
     </table>
   </div>`;
   el.innerHTML=html;
