@@ -694,6 +694,27 @@ select option{color:#14181D;background:#fff;}
   </div>
 </div>
 
+<div class="modal-overlay" id="edit-trade-modal">
+  <div class="modal">
+    <div class="modal-title">Edit Journal entry</div>
+    <div style="font-size:0.72rem;color:var(--ink2);margin-bottom:12px;line-height:1.45" id="edit-trade-note"></div>
+    <input type="hidden" id="et-id"/>
+    <div class="form-group"><label class="form-label">Type</label>
+      <select class="form-select" id="et-action"><option value="buy">Buy</option><option value="sell">Sell</option><option value="transfer_in">Transfer in</option><option value="transfer_out">Transfer out</option></select>
+    </div>
+    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="et-date"/></div>
+    <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="et-units" step="0.00000001"/></div>
+    <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="et-price" step="0.0000001"/></div>
+    <div class="form-group"><label class="form-label">Realized P&amp;L (USD)</label><input class="form-input" type="number" id="et-pnl" step="0.0001"/>
+      <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">Sells only. Leave empty for no profit or loss.</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="btn-outline" style="flex:1" onclick="closeModal('edit-trade-modal')">Cancel</button>
+      <button class="btn-primary" style="flex:1" onclick="confirmEditTrade()">Save changes</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="manual-trade-modal">
   <div class="modal">
     <div class="modal-title">Log a Trade</div>
@@ -3549,11 +3570,89 @@ async function executeTrade(coinId,action,units,pricePerUnit,notes){
 //  JOURNAL — combined across all portfolios, table format with INR columns
 // ═══════════════════════════════
 let allJournalTrades=[];
+// ── Edit / delete Journal lines. Editing changes the Journal log only; deleting
+// can optionally also undo the entry's effect on the coin's units (asked at
+// delete time). Binance sync tracks a cursor per symbol, so a deleted line is
+// not re-imported by a later sync. ──
+function journalActionsHtml(ids,editId){
+  return`<td style="padding:7px 10px;text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${editId?`<button class="link-btn" style="padding:2px 4px" title="Edit this entry" onclick="openEditTrade('${editId}')">✏️</button>`:''}<button class="link-btn" style="padding:2px 4px;color:var(--red)" title="Delete ${ids.length>1?ids.length+' entries':'this entry'}" onclick="deleteJournalTrades('${ids.join(',')}')">🗑️</button></td>`;
+}
+function openEditTrade(id){
+  const t=allJournalTrades.find(x=>x.id===id);
+  if(!t){showToast('Entry not found — reload the Journal.');return;}
+  document.getElementById('et-id').value=id;
+  document.getElementById('edit-trade-note').textContent=(t.coin_ticker||t.coin_name||'')+' — this only edits the Journal line. It does not change your holdings or balances.';
+  document.getElementById('et-action').value=t.action;
+  document.getElementById('et-date').value=new Date(t.trade_date).toLocaleDateString('en-CA');
+  document.getElementById('et-units').value=t.units;
+  document.getElementById('et-price').value=t.price_per_unit;
+  document.getElementById('et-pnl').value=t.realized_pnl!=null?t.realized_pnl:'';
+  openModal('edit-trade-modal');
+}
+async function confirmEditTrade(){
+  const id=document.getElementById('et-id').value;
+  const t=allJournalTrades.find(x=>x.id===id);
+  if(!t)return;
+  const units=parseFloat(document.getElementById('et-units').value);
+  const price=parseFloat(document.getElementById('et-price').value);
+  const pnlRaw=document.getElementById('et-pnl').value;
+  const dateStr=document.getElementById('et-date').value;
+  if(!(units>0)||isNaN(price)||price<0||!dateStr){showToast('Enter valid units, price and date.');return;}
+  const upd={action:document.getElementById('et-action').value,units,price_per_unit:price,total_usd:units*price,realized_pnl:pnlRaw===''?null:parseFloat(pnlRaw)};
+  if(dateStr!==new Date(t.trade_date).toLocaleDateString('en-CA')){
+    upd.trade_date=new Date(dateStr+'T12:00:00').toISOString();
+    upd.inr_rate=await getHistoricalInrRate(dateStr);
+  }
+  const{error}=await sb.from('trades').update(upd).eq('id',id).eq('user_id',currentUser.id);
+  if(error){showToast('Could not save: '+error.message);return;}
+  closeModal('edit-trade-modal');
+  await renderJournal();
+  showToast('Entry updated ✅');
+}
+async function deleteJournalTrades(idsStr){
+  const ids=idsStr.split(',').filter(Boolean);
+  if(!ids.length)return;
+  const rows=ids.map(id=>allJournalTrades.find(x=>x.id===id)).filter(Boolean);
+  const first=rows[0];
+  const label=first?(first.coin_ticker||first.coin_name||'entry'):'entry';
+  if(!confirm(`Delete ${ids.length>1?ids.length+' Journal entries for '+label:'this '+label+' Journal entry'}?\n\nThis removes the log line${ids.length>1?'s':''}. It cannot be undone.`))return;
+  // Net effect these entries had on each coin's units (buy/transfer-in added
+  // units, sell/transfer-out removed them) — offered as an optional undo.
+  const delta={};
+  rows.forEach(t=>{
+    if(!t.coin_id)return;
+    const sign=(t.action==='buy'||t.action==='transfer_in')?1:-1;
+    const d=delta[t.coin_id]||(delta[t.coin_id]={ticker:t.coin_ticker||t.coin_name||'coin',units:0});
+    d.units+=sign*(t.units||0);
+  });
+  const effects=Object.entries(delta).filter(([,d])=>Math.abs(d.units)>0);
+  const{error}=await sb.from('trades').delete().in('id',ids).eq('user_id',currentUser.id);
+  if(error){showToast('Could not delete: '+error.message);return;}
+  let adjusted=0;
+  if(effects.length&&confirm(`Also undo ${ids.length>1?'their':'its'} effect on your holdings?\n\n${effects.map(([,d])=>`${d.ticker}: ${d.units>0?'−':'+'}${Math.abs(d.units).toLocaleString('en-US',{maximumFractionDigits:8})} units`).join('\n')}\n\nOK = adjust holdings to match.\nCancel = leave holdings as they are (you can fix them with "Correct" on the coin).`)){
+    for(const[coinId,d]of effects){
+      const{data:c}=await sb.from('coins').select('units_held').eq('id',coinId).maybeSingle();
+      if(!c)continue;
+      const newUnits=Math.max(0,(c.units_held||0)-d.units);
+      const{error:e2}=await sb.from('coins').update({units_held:newUnits}).eq('id',coinId);
+      if(!e2)adjusted++;
+    }
+    try{await loadAllData();}catch(e){}
+  }
+  await renderJournal();
+  showToast(`Deleted ${ids.length} entr${ids.length===1?'y':'ies'}${adjusted?` and adjusted ${adjusted} holding${adjusted===1?'':'s'}`:''} ✅`);
+}
+// Which portfolio a manually added past trade is recorded in: the one picked
+// in the Journal dropdown, otherwise the currently selected portfolio.
+function journalTargetPortfolio(){
+  const sel=journalPortfolioId&&journalViewMode!=='futures'?portfolios.find(p=>p.id===journalPortfolioId):null;
+  return sel||currentPortfolio();
+}
 function openPastTradeModal(){
-  const cp=currentPortfolio();
+  const cp=journalTargetPortfolio();
   if(!cp){showToast('Select a portfolio first.');return;}
   document.getElementById('past-trade-note').textContent='Recorded in: '+cp.name+'. This only adds a line to the Journal. It does not change your holdings or your '+reserveTickerFor(cp.kind)+' balance. To record it in a different portfolio, select that portfolio first.';
-  document.getElementById('pt-coin').innerHTML='<option value="">Other (type it below)</option>'+coins.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker||'')})</option>`).join('');
+  document.getElementById('pt-coin').innerHTML='<option value="">Other (type it below)</option>'+(cp.id===currentPortfolioId?coins:[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker||'')})</option>`).join('');
   ['pt-name','pt-ticker','pt-units','pt-price','pt-cost'].forEach(id=>{document.getElementById(id).value='';});
   document.getElementById('pt-action').value='sell';
   document.getElementById('pt-date').value=new Date().toISOString().slice(0,10);
@@ -3567,7 +3666,7 @@ function pastTradePickCoin(){
   if(c.avg_cost_usd!=null)document.getElementById('pt-cost').value=c.avg_cost_usd;
 }
 async function confirmPastTrade(){
-  const cp=currentPortfolio();
+  const cp=journalTargetPortfolio();
   const name=document.getElementById('pt-name').value.trim();
   const ticker=document.getElementById('pt-ticker').value.trim().toUpperCase();
   const action=document.getElementById('pt-action').value;
@@ -3590,13 +3689,21 @@ async function confirmPastTrade(){
   showToast('Added to the Journal ✅');
 }
 
+let journalPortfolioId=''; // '' = all portfolios in the current crypto/stocks mode
 let journalViewMode='crypto'; // 'crypto' | 'stocks' | 'futures' — separate journals per the user's request
 async function loadAllTradesForJournal(){
   const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
   return data||[];
 }
+function setJournalScope(v){
+  if(v==='futures'){journalViewMode='futures';journalPortfolioId='';}
+  else if(v==='crypto:all'){journalViewMode='crypto';journalPortfolioId='';}
+  else if(v==='stocks:all'){journalViewMode='stocks';journalPortfolioId='';}
+  else{const p=portfolios.find(x=>x.id===v);if(!p)return;journalViewMode=isStockKind(p.kind)?'stocks':'crypto';journalPortfolioId=p.id;}
+  renderJournal();
+}
 function setJournalViewMode(mode){
-  journalViewMode=mode;
+  journalViewMode=mode;journalPortfolioId='';
   renderJournal();
 }
 let journalFilterText='';
@@ -3678,7 +3785,7 @@ function groupJournalTrades(list){
 // Shared by the initial render and renderJournalTableBody (re-renders on
 // filter/sort/group-toggle without re-fetching from the database).
 function journalTableBodyHtml(filtered){
-  if(!filtered.length)return`<tr><td colspan="11" style="padding:16px;text-align:center;color:var(--ink3)">No trades match the current filter.</td></tr>`;
+  if(!filtered.length)return`<tr><td colspan="12" style="padding:16px;text-align:center;color:var(--ink3)">No trades match the current filter.</td></tr>`;
   if(!journalGroupRows)return filtered.map((t,i)=>journalRowHtml(t,i)).join('');
   const groups=groupJournalTrades(filtered);
   return groups.map((g,i)=>journalGroupRowHtml(g,i)).join('');
@@ -3721,6 +3828,7 @@ function journalGroupRowHtml(g,i){
     <td style="padding:7px 10px;text-align:right;color:${g.realized_pnl==null?'var(--ink3)':(g.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${g.realized_pnl!=null?(g.realized_pnl>=0?'+':'')+fmtUsd(g.realized_pnl):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${g.inr_rate!=null?g.inr_rate.toFixed(2):'—'}</td>
+    ${journalActionsHtml(g.fills.map(f=>f.id),multi?null:g.fills[0].id)}
   </tr>`;
   if(!multi)return head;
   // Individual fills as plain sibling <tr>s (NOT a nested <tbody> — the
@@ -3751,23 +3859,18 @@ async function renderJournal(){
   // — it should just mean "no Futures sub-tab shown" for this render.
   try{await loadFuturesSymbols();}catch(e){console.error('loadFuturesSymbols failed:',e);futuresSymbols=[];}
   const hasFutures=futuresSymbols.length>0;
-  // Futures is still crypto, just a different instrument — so it nests as a
-  // Spot/Futures sub-toggle under the "Crypto" tab rather than sitting next
-  // to Crypto/US-Stocks as its own top-level option.
-  const topGroup=journalViewMode==='stocks'?'stocks':'crypto';
-  let toggleHtml='';
-  if(hasAnyStockPortfolio||hasFutures){
-    toggleHtml=`<div class="tabs-row" style="margin-bottom:${topGroup==='crypto'&&hasFutures?'6px':'12px'}">
-      <button class="tab-btn ${topGroup==='crypto'?'active':''}" onclick="setJournalViewMode('crypto')">⚖️ Crypto</button>
-      ${hasAnyStockPortfolio?`<button class="tab-btn ${topGroup==='stocks'?'active':''}" onclick="setJournalViewMode('stocks')">🇺🇸 US-Stocks</button>`:''}
-    </div>`;
-    if(topGroup==='crypto'&&hasFutures){
-      toggleHtml+=`<div class="tabs-row" style="margin-bottom:12px">
-        <button class="tab-btn ${journalViewMode==='crypto'?'active':''}" style="font-size:0.7rem;padding:5px 10px" onclick="setJournalViewMode('crypto')">Spot</button>
-        <button class="tab-btn ${journalViewMode==='futures'?'active':''}" style="font-size:0.7rem;padding:5px 10px" onclick="setJournalViewMode('futures')">Futures</button>
-      </div>`;
-    }
-  }
+  // One dropdown instead of tabs: every portfolio gets its own Journal, plus
+  // combined views and Futures (separate data shape, own renderer below).
+  const cryptoPfs=portfolios.filter(p=>!isStockKind(p.kind)),stockPfs=portfolios.filter(p=>isStockKind(p.kind));
+  const curVal=journalViewMode==='futures'?'futures':(journalPortfolioId||(journalViewMode==='stocks'?'stocks:all':'crypto:all'));
+  const opt=(v,l)=>`<option value="${v}" ${curVal===v?'selected':''}>${l}</option>`;
+  const toggleHtml=`<div style="margin-bottom:12px"><select class="an-select" style="width:100%" onchange="setJournalScope(this.value)">
+    ${opt('crypto:all','⚖️ All crypto portfolios')}
+    ${cryptoPfs.map(p=>opt(p.id,portfolioIcon(p.kind)+' '+escapeHtml(p.name))).join('')}
+    ${stockPfs.length>1?opt('stocks:all','🇺🇸 All US-Stocks'):''}
+    ${stockPfs.map(p=>opt(p.id,portfolioIcon(p.kind)+' '+escapeHtml(p.name))).join('')}
+    ${hasFutures?opt('futures','🧮 Futures'):''}
+  </select></div>`;
   // Futures has its own data shape (no coin_id/avg-cost, Binance-reported
   // PnL per fill, no INR leg) — rendered by its own function entirely,
   // rather than forcing it through the crypto/stocks table shape below.
@@ -3777,7 +3880,7 @@ async function renderJournal(){
   }
   const rawTrades=await loadAllTradesForJournal();
   const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
-  allJournalTrades=rawTrades.filter(t=>journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id));
+  allJournalTrades=rawTrades.filter(t=>(journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id))&&(!journalPortfolioId||t.portfolio_id===journalPortfolioId));
 
   const addPastBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
   if(!allJournalTrades.length){
@@ -3787,7 +3890,7 @@ async function renderJournal(){
   const totalRealized=journalDateFiltered(allJournalTrades).reduce((s,t)=>s+(t.realized_pnl||0),0);
   let html=toggleHtml;
   html+=`<div class="card" style="text-align:center">
-    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalViewMode==='stocks'?'US-Stocks':'crypto'} portfolios)</div>
+    <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalPortfolioId?escapeHtml((portfolios.find(p=>p.id===journalPortfolioId)||{}).name||'portfolio'):(journalViewMode==='stocks'?'all US-Stocks':'all crypto portfolios')})</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
   </div>`;
   html+=addPastBtn;
@@ -3820,6 +3923,7 @@ async function renderJournal(){
         <th style="padding:8px 10px;text-align:right">P&amp;L (USD)</th>
         <th style="padding:8px 10px;text-align:right">P&amp;L (INR)</th>
         <th style="padding:8px 10px;text-align:right">FX Rate</th>
+        <th style="padding:8px 10px"></th>
       </tr></thead>
       <tbody id="journal-table-body">${journalTableBodyHtml(journalFilterSort(allJournalTrades))}</tbody>
     </table>
@@ -3856,6 +3960,7 @@ function journalRowHtml(t,i){
     <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${t.inr_rate!=null?t.inr_rate.toFixed(2):'—'}</td>
+    ${journalActionsHtml([t.id],t.id)}
   </tr>`;
 }
 async function backfillMissingInrRates(){
