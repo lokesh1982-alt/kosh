@@ -3756,22 +3756,38 @@ function journalFilterSort(list){
 // DISPLAY only — the underlying trades (and the Excel export) stay at full
 // fidelity, one row per real fill; a group can be expanded to see them.
 let journalGroupRows=true;
+// Fills of the same coin + side are merged only when they follow each other
+// closely (one order filled in pieces); a gap longer than this starts a NEW
+// row, so separate trades hours apart are never lumped together.
+const GROUP_GAP_MS=10*60*1000;
 function groupJournalTrades(list){
   const groups={};
   const order=[];
-  list.forEach(t=>{
+  const lastByBase={};
+  const idx=new Map();list.forEach((t,i)=>idx.set(t,i));
+  const chrono=[...list].sort((a,b)=>new Date(a.trade_date)-new Date(b.trade_date));
+  chrono.forEach(t=>{
+    const ms=new Date(t.trade_date).getTime();
     const day=new Date(t.trade_date).toISOString().slice(0,10);
-    const key=[day,t.coin_ticker||t.coin_name||'',t.action,t.portfolio_id].join('|');
-    if(!groups[key]){groups[key]={key,trades:[],units:0,totalUsd:0,totalInr:0,hasInr:true,realizedPnl:null,hasPnl:false};order.push(key);}
+    const base=[day,t.coin_ticker||t.coin_name||'',t.action,t.portfolio_id].join('|');
+    const prev=lastByBase[base];
+    const seq=(prev&&ms-prev.ms<=GROUP_GAP_MS)?prev.seq:(prev?prev.seq+1:0);
+    lastByBase[base]={ms,seq};
+    const key=base+'|'+seq;
+    if(!groups[key]){groups[key]={key,trades:[],units:0,totalUsd:0,totalInr:0,hasInr:true,realizedPnl:null,hasPnl:false,firstIdx:idx.get(t)};order.push(key);}
     const g=groups[key];
+    g.firstIdx=Math.min(g.firstIdx,idx.get(t));
     g.trades.push(t);
     g.units+=(t.units||0);
     g.totalUsd+=(t.total_usd||0);
     if(t.inr_rate!=null)g.totalInr+=(t.total_usd||0)*t.inr_rate;else g.hasInr=false;
     if(t.realized_pnl!=null){g.realizedPnl=(g.realizedPnl||0)+t.realized_pnl;g.hasPnl=true;}
   });
+  order.sort((a,b)=>groups[a].firstIdx-groups[b].firstIdx);
   return order.map(key=>{
-    const g=groups[key],first=g.trades[0];
+    const g=groups[key];
+    g.trades.sort((a,b)=>idx.get(a)-idx.get(b));
+    const first=g.trades[0];
     return{
       id:'grp-'+key.replace(/[^a-zA-Z0-9]/g,'_'),
       trade_date:first.trade_date,coin_ticker:first.coin_ticker,coin_name:first.coin_name,action:first.action,
@@ -3798,7 +3814,7 @@ function renderJournalTableBody(){
 function toggleJournalGroupRows(){
   journalGroupRows=!journalGroupRows;
   const btn=document.getElementById('journal-group-toggle');
-  if(btn)btn.textContent=journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades';
+  if(btn)btn.textContent=journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge fills of one order';
   renderJournalTableBody();
 }
 function toggleJournalGroupExpand(id){
@@ -3908,7 +3924,7 @@ async function renderJournal(){
       <option value="symbol_desc" ${journalSortMode==='symbol_desc'?'selected':''}>Symbol Z→A</option>
     </select>
   </div>`;
-  html+=`<button class="link-btn" id="journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleJournalGroupRows()">${journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades'}</button>`;
+  html+=`<button class="link-btn" id="journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleJournalGroupRows()">${journalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge fills of one order'}</button>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
@@ -4033,11 +4049,20 @@ let futuresJournalGroupRows=true;
 function groupFuturesTrades(list){
   const groups={};
   const order=[];
-  list.forEach(t=>{
+  const lastByBase={};
+  const idx=new Map();list.forEach((t,i)=>idx.set(t,i));
+  const chrono=[...list].sort((a,b)=>new Date(a.trade_time)-new Date(b.trade_time));
+  chrono.forEach(t=>{
+    const ms=new Date(t.trade_time).getTime();
     const day=new Date(t.trade_time).toISOString().slice(0,10);
-    const key=[day,t.symbol,t.side].join('|');
-    if(!groups[key]){groups[key]={key,trades:[],qty:0,quoteQty:0,commission:0,commissionAsset:t.commission_asset,commissionMixed:false,realizedPnl:null,hasPnl:false};order.push(key);}
+    const base=[day,t.symbol,t.side].join('|');
+    const prev=lastByBase[base];
+    const seq=(prev&&ms-prev.ms<=GROUP_GAP_MS)?prev.seq:(prev?prev.seq+1:0);
+    lastByBase[base]={ms,seq};
+    const key=base+'|'+seq;
+    if(!groups[key]){groups[key]={key,firstIdx:idx.get(t),trades:[],qty:0,quoteQty:0,commission:0,commissionAsset:t.commission_asset,commissionMixed:false,realizedPnl:null,hasPnl:false};order.push(key);}
     const g=groups[key];
+    g.firstIdx=Math.min(g.firstIdx,idx.get(t));
     g.trades.push(t);
     g.qty+=(t.qty||0);
     g.quoteQty+=(t.qty||0)*(t.price||0);
@@ -4045,8 +4070,11 @@ function groupFuturesTrades(list){
     if(t.commission_asset&&g.commissionAsset&&t.commission_asset!==g.commissionAsset)g.commissionMixed=true;
     if(t.realized_pnl!=null){g.realizedPnl=(g.realizedPnl||0)+t.realized_pnl;g.hasPnl=true;}
   });
+  order.sort((a,b)=>groups[a].firstIdx-groups[b].firstIdx);
   return order.map(key=>{
-    const g=groups[key],first=g.trades[0];
+    const g=groups[key];
+    g.trades.sort((a,b)=>idx.get(a)-idx.get(b));
+    const first=g.trades[0];
     return{
       id:'fgrp-'+key.replace(/[^a-zA-Z0-9]/g,'_'),
       trade_time:first.trade_time,symbol:first.symbol,side:first.side,position_side:first.position_side,
@@ -4067,7 +4095,7 @@ function toggleFuturesJournalGroupRows(){
   const tbody=document.getElementById('futures-journal-table-body');
   if(tbody)tbody.innerHTML=futuresJournalTableBodyHtml(futuresDateFiltered(futuresTrades));
   const btn=document.getElementById('futures-journal-group-toggle');
-  if(btn)btn.textContent=futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades';
+  if(btn)btn.textContent=futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge fills of one order';
 }
 function toggleFuturesJournalGroupExpand(id){
   const rows=document.querySelectorAll('[data-journal-group="'+id+'"]');
@@ -4131,7 +4159,7 @@ async function renderFuturesJournal(el,toggleHtml){
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportFuturesJournalPDF()">📄 Export PDF</button>
   </div>`;
   html+=journalDateRangeHtml();
-  html+=`<button class="link-btn" id="futures-journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleFuturesJournalGroupRows()">${futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge same-day trades'}</button>`;
+  html+=`<button class="link-btn" id="futures-journal-group-toggle" style="font-size:0.72rem;margin-bottom:8px" onclick="toggleFuturesJournalGroupRows()">${futuresJournalGroupRows?'Showing merged — Show every fill':'Showing every fill — Merge fills of one order'}</button>`;
   html+=`<div class="card" style="padding:0;overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink-accent);color:#F1F3F5">
@@ -5600,8 +5628,13 @@ function anBuildFuturesFills(rows){
 }
 function anGroupFills(fills){
   const g={};
-  fills.forEach(f=>{
-    const k=f.key+'|'+f.dir+'|'+anDay(f.ms);
+  const lastBy={};
+  [...fills].sort((a,b)=>a.ms-b.ms).forEach(f=>{
+    const base=f.key+'|'+f.dir+'|'+anDay(f.ms);
+    const pv=lastBy[base];
+    const seq=(pv&&f.ms-pv.ms<=GROUP_GAP_MS)?pv.seq:(pv?pv.seq+1:0);
+    lastBy[base]={ms:f.ms,seq};
+    const k=base+'|'+seq;
     const o=g[k]||(g[k]={id:'ag-'+k.replace(/[^a-zA-Z0-9]/g,'_'),key:f.key,table:f.table,portfolioId:f.portfolioId,symbol:f.symbol,dir:f.dir,rows:[],pnl:0,value:0,ms:0,held:null,avgDown:false});
     o.rows.push(f.row);o.pnl+=f.pnl;o.value+=f.value;
     o.ms=Math.max(o.ms,f.ms);
@@ -5762,7 +5795,7 @@ function renderAnalysisView(keepScroll){
     el.innerHTML=h;if(keepScroll)window.scrollTo(0,y);return;
   }
   const noteMsg=(st.winRate>=50&&st.total<0)?`<div class="an-flag warn"><div>💡</div><div><b>High win rate, still losing money.</b>You win ${st.winRate.toFixed(0)}% of trades, but the average loss is ${st.avgWin>0?(st.avgLoss/st.avgWin).toFixed(1)+'×':'larger than'} the average win. Fixing loss size matters more than finding more winners.</div></div>`:'';
-  h+=`<div class="an-sec"><h3>Scorecard</h3><span>${st.n} closed trade${st.n===1?'':'s'} · same-day fills of a coin count as one</span></div>
+  h+=`<div class="an-sec"><h3>Scorecard</h3><span>${st.n} closed trade${st.n===1?'':'s'} · fills of one coin within 10 min count as one</span></div>
   <div class="an-grid">
     <div class="an-tile"><div class="l">Win rate</div><div class="v">${st.winRate.toFixed(0)}%</div><div class="s">${st.wins.length} wins · ${st.losses.length} losses</div></div>
     <div class="an-tile"><div class="l">Avg win</div><div class="v g hide-figure">${st.wins.length?'+'+fmtUsd(st.avgWin):'—'}</div></div>
