@@ -5260,11 +5260,13 @@ async function syncFundingWallet(){
   try{data=await res.json();}catch(e){return 0;}
   if(!Array.isArray(data))return 0;
   let count=0;
+  const seenAssets=new Set();
   for(const bal of data){
     const asset=(bal.asset||'').toUpperCase();
     if(!asset)continue;
     const total=parseFloat(bal.free||0)+parseFloat(bal.locked||0)+parseFloat(bal.freeze||0)+parseFloat(bal.withdrawing||0);
     if(!(total>0))continue;
+    seenAssets.add(asset);
     const resolvedId=await resolveCoingeckoId(asset);
     const coin=await ensureCoinInPortfolio(fundingPortfolio.id,fundingPortfolio.kind,{
       name:asset,ticker:asset,coingecko_id:resolvedId
@@ -5278,6 +5280,18 @@ async function syncFundingWallet(){
     await sb.from('coins').update({units_held:total,avg_cost_usd:avgCost}).eq('id',coin.id);
     count++;
   }
+  // Zero out stale rows: any Funding Wallet coin Binance no longer reports
+  // (or reports as 0) must not keep its old units.
+  try{
+    const existing=fundingPortfolio.id===currentPortfolioId?coins:await getPortfolioCoins(fundingPortfolio.id);
+    for(const c of (existing||[])){
+      const t=(c.ticker||'').toUpperCase();
+      if(!seenAssets.has(t)&&(c.units_held||0)>0){
+        await sb.from('coins').update({units_held:0}).eq('id',c.id);
+        c.units_held=0;
+      }
+    }
+  }catch(e){}
   return count;
 }
 // One-off repair pass for coins that already exist with a stale/wrong
