@@ -6516,38 +6516,51 @@ async function drawFuturesChart(sym){
   slList.forEach(v=>lines.push({v,l:'SL',c:'var(--red)'}));
   tpList.forEach(v=>lines.push({v,l:'TP',c:'var(--green)'}));
   mine.filter(o=>o.type==='LIMIT').forEach(o=>lines.push({v:o.price,l:'Lmt',c:'#C9A227'}));
-  const cs=k.c;
+  const full=k.c;
+  const SHOW=Math.min(full.length,72);
+  const cs=full.slice(-SHOW);
   let lo=Math.min(...cs.map(x=>x.l)),hi=Math.max(...cs.map(x=>x.h));
   const span0=hi-lo||hi*0.01;
-  lines.forEach(L=>{if(L.v>0&&L.v>lo-span0*0.6&&L.v<hi+span0*0.6){lo=Math.min(lo,L.v);hi=Math.max(hi,L.v);}});
-  if(liq>0&&liq>lo-span0*0.6&&liq<hi+span0*0.6){lo=Math.min(lo,liq);hi=Math.max(hi,liq);lines.push({v:liq,l:'Liq',c:'#E8833A'});}
-  const pad=(hi-lo)*0.05;lo-=pad;hi+=pad;
-  // Real pixel size (no scaling), so text stays small however wide the screen is.
-  const W=Math.max(300,Math.floor(holder.parentElement.clientWidth||holder.clientWidth||600)),H=230,L0=4,R0=46,T0=6,B0=16,cw=(W-L0-R0)/cs.length;
+  // Only pull a line into the price range if it is close to the candles —
+  // far-away lines (e.g. liquidation) would squash the candles flat.
+  const near=v=>v>0&&v>lo-span0*0.25&&v<hi+span0*0.25;
+  lines.forEach(L=>{if(near(L.v)){lo=Math.min(lo,L.v);hi=Math.max(hi,L.v);}});
+  let liqOff=null;
+  if(liq>0){if(near(liq)){lo=Math.min(lo,liq);hi=Math.max(hi,liq);lines.push({v:liq,l:'Liq',c:'#E8833A'});}else liqOff=liq;}
+  const pad=(hi-lo)*0.06;lo-=pad;hi+=pad;
+  const W=Math.max(300,Math.min(980,Math.floor(holder.parentElement.clientWidth||holder.clientWidth||600))),H=320,L0=4,R0=54,T0=8,B0=18,cw=(W-L0-R0)/cs.length;
   const y=v=>T0+(hi-v)/(hi-lo)*(H-T0-B0);
   const px=v=>fmtPx(v).replace('$','');
   let g='';
-  for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,yy=y(v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--border)" stroke-width="0.5"/><text x="${W-R0+3}" y="${yy+3}" style="fill:var(--ink3)" font-size="8">${px(v)}</text>`;}
+  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,yy=y(v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--border)" stroke-width="0.5"/><text x="${W-R0+4}" y="${yy+3}" style="fill:var(--ink3)" font-size="10">${px(v)}</text>`;}
   cs.forEach((x,i)=>{
     const cx=L0+cw*i+cw/2,up=x.c>=x.o,col=up?'var(--green)':'var(--red)';
     const bt=y(Math.max(x.o,x.c)),bb=y(Math.min(x.o,x.c));
-    g+=`<line x1="${cx}" x2="${cx}" y1="${y(x.h)}" y2="${y(x.l)}" style="stroke:${col}" stroke-width="1"/><rect x="${cx-cw*0.34}" y="${bt}" width="${cw*0.68}" height="${Math.max(1,bb-bt)}" style="fill:${col}"/>`;
+    g+=`<line x1="${cx}" x2="${cx}" y1="${y(x.h)}" y2="${y(x.l)}" style="stroke:${col}" stroke-width="1.2"/><rect x="${cx-cw*0.36}" y="${bt}" width="${Math.max(2,cw*0.72)}" height="${Math.max(1.5,bb-bt)}" style="fill:${col}"/>`;
   });
-  const cl=cs.map(x=>x.c);
-  [[chEma(cl,20),'#E8A33A'],[chEma(cl,50),'#9B7BEA']].forEach(([arr,col])=>{
-    const pts=arr.map((v,i)=>v==null?null:`${(L0+cw*i+cw/2).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean).join(' ');
-    if(pts)g+=`<polyline points="${pts}" fill="none" style="stroke:${col}" stroke-width="1" opacity="0.85"/>`;
+  const clAll=full.map(x=>x.c);
+  [[chEma(clAll,20),'#E8A33A'],[chEma(clAll,50),'#9B7BEA']].forEach(([arr,col])=>{
+    const pts=arr.slice(-SHOW).map((v,i)=>v==null?null:`${(L0+cw*i+cw/2).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean).join(' ');
+    if(pts)g+=`<polyline points="${pts}" fill="none" style="stroke:${col}" stroke-width="1.4" opacity="0.9"/>`;
   });
-  // Small tags: label text sits on the line (left), price in a thin tag on the axis.
-  lines.forEach(L=>{if(!(L.v>=lo&&L.v<=hi))return;const yy=y(L.v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:${L.c}" stroke-width="0.9" stroke-dasharray="4 3"/><text x="${L0+2}" y="${yy-2}" style="fill:${L.c}" font-size="8" font-weight="700">${L.l}</text><rect x="${W-R0}" y="${yy-5}" width="${R0-1}" height="10" rx="2" style="fill:${L.c}"/><text x="${W-R0+2}" y="${yy+3}" fill="#fff" font-size="7.5" font-weight="700">${px(L.v)}</text>`;});
-  const last=cl[cl.length-1];
-  if(last>=lo&&last<=hi){const yy=y(last);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--ink2)" stroke-width="0.7" stroke-dasharray="1 3"/><rect x="${W-R0}" y="${yy-5}" width="${R0-1}" height="10" rx="2" style="fill:var(--ink2)"/><text x="${W-R0+2}" y="${yy+3}" style="fill:var(--card)" font-size="7.5" font-weight="700">${px(last)}</text>`;}
+  const last=clAll[clAll.length-1];
+  // Price tags on the right axis, nudged apart so they never overlap.
+  const tags=lines.filter(L=>L.v>=lo&&L.v<=hi).map(L=>({...L,yy:y(L.v),tagY:y(L.v)}));
+  if(last>=lo&&last<=hi)tags.push({v:last,l:'',c:'var(--ink2)',last:true,yy:y(last),tagY:y(last)});
+  tags.sort((a,b)=>a.yy-b.yy);
+  for(let i=1;i<tags.length;i++){if(tags[i].tagY-tags[i-1].tagY<13)tags[i].tagY=tags[i-1].tagY+13;}
+  tags.forEach(L=>{
+    g+=`<line x1="${L0}" x2="${W-R0}" y1="${L.yy}" y2="${L.yy}" style="stroke:${L.c}" stroke-width="${L.last?0.8:1}" stroke-dasharray="${L.last?'1 3':'5 3'}"/>`;
+    g+=`<rect x="${W-R0}" y="${L.tagY-6}" width="${R0-1}" height="12" rx="2" style="fill:${L.c}"/><text x="${W-R0+3}" y="${L.tagY+3}" ${L.last?'style="fill:var(--card)"':'fill="#fff"'} font-size="9.5" font-weight="700">${px(L.v)}</text>`;
+    if(L.l)g+=`<text x="${L0+3}" y="${L.yy-3}" style="fill:${L.c}" font-size="10" font-weight="700">${L.l}</text>`;
+  });
+  if(liqOff)g+=`<text x="${L0+3}" y="${H-B0-4}" style="fill:#E8833A" font-size="10" font-weight="700">▼ Liq ${px(liqOff)} (below chart)</text>`;
   const fmtT=t=>{const d=new Date(t);return tf==='1d'?d.toLocaleDateString('en-US',{month:'short',day:'numeric'}):d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});};
-  [0,Math.floor(cs.length/2),cs.length-1].forEach(i=>{g+=`<text x="${Math.min(L0+cw*i,W-R0-26)}" y="${H-4}" style="fill:var(--ink3)" font-size="8">${fmtT(cs[i].t)}</text>`;});
+  [0,Math.floor(cs.length/2),cs.length-1].forEach(i=>{g+=`<text x="${Math.min(L0+cw*i,W-R0-30)}" y="${H-4}" style="fill:var(--ink3)" font-size="10">${fmtT(cs[i].t)}</text>`;});
   holder.style.padding='0';
   holder.innerHTML=`<svg width="${W}" height="${H}" style="display:block;max-width:100%">${g}</svg>`;
   const note=document.getElementById('fchart-note-'+sym);
-  if(note)note.innerHTML=futuresChartComment(sym,tf,cs,p,{entry,liq,sl:slList,tp:tpList});
+  if(note)note.innerHTML=futuresChartComment(sym,tf,full,p,{entry,liq,sl:slList,tp:tpList});
 }
 function futuresPositionRowHtml(p){
   const amt=parseFloat(p.positionAmt||0);
