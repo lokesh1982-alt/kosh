@@ -60,7 +60,7 @@ button{cursor:pointer;}
 
 .app-layout{display:block;}
 .desktop-topnav{display:none;}
-@media(min-width:900px){
+@media(min-width:700px){
   .app-layout{display:block;}
   .desktop-topnav{
     display:flex;align-items:center;gap:4px;
@@ -77,6 +77,18 @@ button{cursor:pointer;}
   .frozen-header{display:none;}
   .tile-grid{display:none!important;}
   .main{max-width:1440px;margin:0;padding:24px 32px 60px;}
+}
+@media(min-width:700px) and (max-width:1099px){
+  /* Tablets / phones held sideways: same desktop layout, with a tighter top bar that scrolls if it still doesn't fit. */
+  .desktop-topnav{padding:8px 12px;gap:2px;overflow-x:auto;scrollbar-width:none;}
+  .desktop-topnav::-webkit-scrollbar{display:none;}
+  .desktop-topnav>*{flex:0 0 auto;}
+  .desktop-topnav .binance-sync-status{display:none;}
+  .desktop-topnav .menu-tile{padding:8px 10px;}
+  .desktop-topnav .menu-tile .lbl{font-size:0.72rem;}
+  .main{padding:20px 20px 60px;}
+}
+@media(min-width:900px){
   #tiers-content{column-count:2;column-gap:16px;}
   #tiers-content>*{break-inside:avoid;}
 }
@@ -164,7 +176,7 @@ button{cursor:pointer;}
 .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
 .hero-card{background:var(--card);border:1.5px solid #2E6FA3;border-radius:16px;padding:18px;color:var(--ink);margin-bottom:14px;position:relative;overflow:hidden;}
 .hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#2E6FA3;}
-@media(min-width:900px){
+@media(min-width:700px){
   .hero-flex{display:flex;align-items:center;gap:40px;}
   .hero-flex-left{flex:0 0 320px;}
   .hero-flex-right{flex:1;min-width:0;}
@@ -207,7 +219,7 @@ body.figures-hidden .hide-figure{filter:blur(7px);user-select:none;}
 .holding-row .hr-stats{display:flex;gap:10px;flex:0 0 auto;}
 .holding-row .hr-stats>div{flex:0 0 86px;text-align:right;}
 .holding-row .hr-actions{flex:0 0 96px;display:flex;gap:4px;justify-content:flex-end;}
-@media(max-width:899px){
+@media(max-width:699px){
   .holding-row{display:grid;grid-template-columns:1fr auto;align-items:start;gap:8px 10px;padding:12px 14px;}
   .holding-row .hr-name{grid-column:1;grid-row:1;min-width:0;}
   .holding-row .hr-value{grid-column:2;grid-row:1;}
