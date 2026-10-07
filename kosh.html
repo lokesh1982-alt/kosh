@@ -447,13 +447,8 @@ select option{color:#14181D;background:#fff;}
         <div id="public-link-slot" style="font-size:0.72rem;margin-top:10px;word-break:break-all"></div>
       </div>
       <div class="card" id="settings-futures-card">
-        <div class="card-title">Futures symbols</div>
-        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Pick which Binance USD-M Futures symbols to track (e.g. BTCUSDT). Needs a Futures-enabled API key set up on the server — see the Futures tab if sync fails.</div>
-        <div style="display:flex;gap:6px;margin-bottom:14px">
-          <input class="form-input" id="futures-symbol-input" placeholder="e.g. BTCUSDT" style="flex:1;text-transform:uppercase"/>
-          <button class="btn-outline" onclick="addFuturesSymbol()">+ Add</button>
-        </div>
-        <div id="futures-symbol-list" style="font-size:0.76rem;margin-bottom:14px"></div>
+        <div class="card-title">Futures</div>
+        <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Traded Futures pairs are picked up automatically when you sync — nothing to add here.</div>
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px;line-height:1.45">Futures isn't a portfolio Kosh tracks trades against, so set how much you've actually deployed there by hand — bump it up whenever you move more in from Binance.</div>
         <div class="form-group"><label class="form-label">Capital deployed (USDT)</label>
           <div style="display:flex;gap:6px">
@@ -5220,6 +5215,7 @@ async function spotFeeUsd(commission,asset,baseAsset,quoteAsset,price,ms){
 async function backfillSpotFees(){
   if(!(await spotFeeColsAvailable())){showToast('Run migration-spot-fees.sql in Supabase first, then reload.');return;}
   showToast('Filling in past fees from Binance…');
+  try{await loadBinanceSymbolMap();}catch(e){}
   let rows=[];
   for(let from=0;from<50000;from+=1000){
     const{data,error}=await sb.from('trades').select('id,portfolio_id,binance_symbol,binance_trade_id').eq('user_id',currentUser.id).not('binance_trade_id','is',null).is('fee_usd',null).range(from,from+999);
@@ -5230,17 +5226,21 @@ async function backfillSpotFees(){
   if(!rows.length){showToast('All synced trades already have their fees ✅');return;}
   const want=new Map(rows.map(r=>[r.portfolio_id+'|'+r.binance_symbol+'|'+r.binance_trade_id,r.id]));
   const pairs=[...new Set(rows.map(r=>r.portfolio_id+'|'+r.binance_symbol))];
-  let updated=0;
+  let updated=0,skipped=0,failed=0;
   for(const pair of pairs){
     const[pid,sym]=pair.split('|');
     const pf=portfolios.find(p=>p.id===pid);
-    const m=binanceSymbolMap.find(x=>x.portfolio_id===pid&&x.symbol===sym);
-    if(!pf||!m)continue;
+    let m=binanceSymbolMap.find(x=>x.portfolio_id===pid&&x.symbol===sym);
+    if(!m){
+      const q=['USDT','USDC','FDUSD','BUSD','TUSD','DAI'].find(x=>sym.endsWith(x));
+      if(q)m={base_asset:sym.slice(0,-q.length),quote_asset:q};
+    }
+    if(!pf||!m){skipped++;continue;}
     const keyset=keysetForPortfolio(pf);
     let fromId=0;
     for(let page=0;page<50;page++){
       const res=await binanceFetch('myTrades',{symbol:sym,fromId:String(fromId)},keyset);
-      if(!res||!res.ok)break;
+      if(!res||!res.ok){failed++;break;}
       const fills=await res.json();
       if(!Array.isArray(fills)||!fills.length)break;
       for(const f of fills){
@@ -5256,7 +5256,7 @@ async function backfillSpotFees(){
     }
   }
   await renderJournal();
-  showToast(`Filled in fees for ${updated} trade${updated===1?'':'s'} ✅`);
+  showToast(`Filled in fees for ${updated} of ${rows.length} trade${rows.length===1?'':'s'}${skipped||failed?` (${skipped+failed} symbol${skipped+failed===1?'':'s'} could not be read from Binance)`:''} ${updated?'✅':''}`);
 }
 async function applySyncedFill(portfolioId,portfolioKind,fill){
   const{baseAsset,quoteAsset,isBuy,qty,price,quoteQty,commission,commissionAsset,tradeTime,binanceSymbol,binanceTradeId}=fill;
@@ -6332,7 +6332,7 @@ async function renderFutures(){
         <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
         <span style="font-size:0.9rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
       </div>
-      ${futuresCapitalDeployed===0?`<div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">Set this in Settings → Futures symbols → Capital deployed.</div>`:''}
+      ${futuresCapitalDeployed===0?`<div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">Set this in Settings → Futures → Capital deployed.</div>`:''}
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div></div>
