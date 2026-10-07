@@ -344,7 +344,7 @@ select option{color:#14181D;background:#fff;}
     <div class="section" id="sec-watchlist">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div class="card-title" style="margin:0">⭐ Watchlist</div>
-        <button class="link-btn" onclick="openAddWatchlistModal()">+ Add coin</button>
+        <button class="link-btn" id="wl-add-btn" onclick="openAddWatchlistModal()">+ Add coin</button>
       </div>
       <div id="watchlist-content"></div>
     </div>
@@ -630,7 +630,7 @@ select option{color:#14181D;background:#fff;}
 <div class="modal-overlay" id="add-watchlist-modal">
   <div class="modal">
     <div class="modal-title">+ Add to Watchlist</div>
-    <div class="form-group"><label class="form-label">Coin</label>
+    <div class="form-group"><label class="form-label" id="wl-coin-label">Coin</label>
       <div class="wiz-coin-search-wrap">
         <input class="form-input" id="wl-search-input" placeholder="Search coin name or ticker..." oninput="watchlistSearch(this.value)" autocomplete="off"/>
         <div id="wl-search-dropdown"></div>
@@ -4370,24 +4370,33 @@ function exportFuturesJournalPDF(){
 // ═══════════════════════════════
 let watchlist=[];
 let watchlistData={}; // coingecko_id (or stock symbol) -> {price, change24h, low30d, high30d}
+// The database stores 'crypto' / 'us-stocks'; the screen's mode is 'crypto' / 'stocks'.
+const wlKindMode=w=>((w.kind||'crypto')==='crypto'?'crypto':'stocks');
 let watchlistViewMode='crypto'; // 'crypto' | 'stocks' — separate lists per the user's request
 
 async function loadWatchlist(){
   const{data}=await sb.from('watchlist').select('*').eq('user_id',currentUser.id).order('sort_order');
   watchlist=data||[];
 }
+function updateWatchlistLabels(){
+  const st=watchlistViewMode==='stocks';
+  const b=document.getElementById('wl-add-btn');if(b)b.textContent=st?'+ Add stock':'+ Add coin';
+  const l=document.getElementById('wl-coin-label');if(l)l.textContent=st?'Stock':'Coin';
+}
 function setWatchlistViewMode(mode){
   watchlistViewMode=mode;
+  updateWatchlistLabels();
   renderWatchlist();
 }
 function currentWatchlist(){
-  return watchlist.filter(w=>(w.kind||'crypto')===watchlistViewMode);
+  return watchlist.filter(w=>wlKindMode(w)===watchlistViewMode);
 }
 
 let _wlSelectedCoin=null;
 let _wlSearchTimer=null;
 function openAddWatchlistModal(){
   _wlSelectedCoin=null;
+  updateWatchlistLabels();
   document.getElementById('wl-search-input').value='';
   document.getElementById('wl-search-input').placeholder=watchlistViewMode==='stocks'?'Search ticker or company name...':'Search coin name or ticker...';
   document.getElementById('wl-search-dropdown').innerHTML='';
@@ -4419,11 +4428,11 @@ function watchlistSelectCoin(ri){
 }
 async function confirmAddWatchlist(){
   if(!_wlSelectedCoin){showToast('Search and select one first.');return;}
-  if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id&&(w.kind||'crypto')===watchlistViewMode)){showToast('Already in this watchlist.');closeModal('add-watchlist-modal');return;}
+  if(watchlist.some(w=>w.coingecko_id===_wlSelectedCoin.id&&wlKindMode(w)===watchlistViewMode)){showToast('Already in this watchlist.');closeModal('add-watchlist-modal');return;}
   if(currentWatchlist().length>=30){showToast('Watchlist is capped at 30 per list.');return;}
   const{error}=await sb.from('watchlist').insert({
     user_id:currentUser.id,name:_wlSelectedCoin.name,ticker:_wlSelectedCoin.symbol.toUpperCase(),
-    coingecko_id:_wlSelectedCoin.id,kind:watchlistViewMode,sort_order:watchlist.length
+    coingecko_id:_wlSelectedCoin.id,kind:watchlistViewMode==='stocks'?'us-stocks':'crypto',sort_order:watchlist.length
   });
   if(error){showToast('Error: '+error.message);return;}
   closeModal('add-watchlist-modal');
@@ -4510,6 +4519,7 @@ async function fetchWatchlistData(onProgress){
 
 async function renderWatchlist(){
   const el=document.getElementById('watchlist-content');
+  updateWatchlistLabels();
   el.innerHTML=`<div class="empty-state"><div class="ic">⏳</div><div>Loading...</div></div>`;
   await loadWatchlist(); // always fresh — also guards against the initial app-load fetch still being in flight
   const toggleHtml=`<div class="tabs-row" style="margin-bottom:12px">
@@ -4518,7 +4528,7 @@ async function renderWatchlist(){
   </div>`;
   const list=currentWatchlist();
   if(!list.length){
-    el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⭐</div><div>No ${watchlistViewMode==='stocks'?'stocks':'coins'} in this watchlist yet — tap "+ Add coin" to track your first one.</div></div>`;
+    el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⭐</div><div>No ${watchlistViewMode==='stocks'?'stocks':'coins'} in this watchlist yet — tap "${watchlistViewMode==='stocks'?'+ Add stock':'+ Add coin'}" to track your first one.</div></div>`;
     return;
   }
   el.innerHTML=toggleHtml+`<div class="empty-state"><div class="ic">⏳</div><div id="watchlist-loading-msg">${watchlistViewMode==='stocks'?'Fetching stock quotes — one at a time to stay under free API rate limits, so this can take a little while for a full list...':'Loading...'}</div></div>`;
