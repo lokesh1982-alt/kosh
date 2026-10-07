@@ -6373,18 +6373,132 @@ function toggleFuturesChart(sym){
   if(futuresChartOpen[sym])drawFuturesChart(sym);
 }
 function setFuturesChartTf(sym,tf){futuresChartTf[sym]=tf;drawFuturesChart(sym);}
+function chEma(vals,n){const k=2/(n+1);const out=[];let e=null;vals.forEach((v,i)=>{e=e==null?v:v*k+e*(1-k);out.push(i>=n-1?e:null);});return out;}
+function chEmaFull(vals,n){const k=2/(n+1);let e=null;return vals.map(v=>(e=e==null?v:v*k+e*(1-k)));}
+function chMacdHist(cl){
+  if(cl.length<35)return null;
+  const e12=chEmaFull(cl,12),e26=chEmaFull(cl,26);
+  const m=cl.map((_,i)=>e12[i]-e26[i]);
+  const sg=chEmaFull(m.slice(25),9);
+  const h=sg.map((v,i)=>m[i+25]-v);
+  return{hist:h[h.length-1],prev:h[h.length-2],macd:m[m.length-1]};
+}
+function chRsi(cl,n){
+  if(cl.length<=n)return null;
+  let g=0,l=0;
+  for(let i=1;i<=n;i++){const d=cl[i]-cl[i-1];if(d>=0)g+=d;else l-=d;}
+  g/=n;l/=n;
+  for(let i=n+1;i<cl.length;i++){const d=cl[i]-cl[i-1];g=(g*(n-1)+Math.max(d,0))/n;l=(l*(n-1)+Math.max(-d,0))/n;}
+  return l===0?100:100-100/(1+g/l);
+}
+function chAtr(cs,n){
+  if(cs.length<=n)return null;
+  const tr=cs.map((x,i)=>i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-cs[i-1].c),Math.abs(x.l-cs[i-1].c)));
+  let a=tr.slice(1,n+1).reduce((s,v)=>s+v,0)/n;
+  for(let i=n+1;i<tr.length;i++)a=(a*(n-1)+tr[i])/n;
+  return a;
+}
+// Rule-based read of the chart + the open trade. Not a prediction or advice.
+function futuresChartComment(sym,tf,cs,p,levels){
+  const cl=cs.map(x=>x.c),last=cl[cl.length-1];
+  const e20=chEma(cl,20),e50=chEma(cl,50);
+  const a20=e20[e20.length-1],a50=e50[e50.length-1];
+  const rsi=chRsi(cl,14),atr=chAtr(cs,14);
+  const recent=cs.slice(-30);
+  const sup=Math.min(...recent.map(x=>x.l)),res=Math.max(...recent.map(x=>x.h));
+  const pc=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
+  const out=[];
+  let trend='sideways';
+  if(a20!=null&&a50!=null){
+    if(last>a20&&a20>a50)trend='up';
+    else if(last<a20&&a20<a50)trend='down';
+  } else if(a20!=null){trend=last>a20?'up':'down';}
+  const trendTxt={up:'Uptrend — price is above the 20 and 50 average, and the 20 is above the 50.',down:'Downtrend — price is below the 20 and 50 average, and the 20 is below the 50.',sideways:'No clear trend — price is mixed around its averages, so the market is ranging or turning.'}[trend];
+  out.push(['Trend ('+tf+')',trendTxt]);
+  if(rsi!=null){
+    out.push(['Momentum',`RSI ${rsi.toFixed(0)} — `+(rsi>=70?'overbought; rallies often stall or pull back from here.':rsi<=30?'oversold; falls often slow down or bounce from here.':rsi>=55?'leaning bullish.':rsi<=45?'leaning bearish.':'neutral.')]);
+  }
+  out.push(['Range',`Last ${recent.length} candles: low ${fmtPx(sup)} (${pc((sup-last)/last*100)} from price), high ${fmtPx(res)} (${pc((res-last)/last*100)}). These act as nearby support/resistance.`]);
+  const vol=cs.slice(-1)[0].v,avgV=cs.slice(-21,-1).reduce((s,x)=>s+(x.v||0),0)/20;
+  if(vol&&avgV&&vol>avgV*2)out.push(['Volume','The latest candle has more than 2× the usual volume — a strong move; watch whether the next candle confirms it.']);
+  const tips=[];
+  let verdictHtml='';
+  if(p){
+    const d=parseFloat(p.positionAmt||0)>0?1:-1;
+    const sig=[];
+    const add=(name,score,text)=>sig.push({name,score,text});
+    if(a20!=null&&a50!=null){
+      const tr=trend==='up'?1:trend==='down'?-1:0;
+      add('Trend (EMA 20/50)',tr*d,trend==='sideways'?'no clear trend':(trend==='up'?'uptrend':'downtrend'));
+    }
+    if(a20!=null)add('Price vs EMA 20',(last>a20?1:-1)*d,last>a20?'price above the 20 average':'price below the 20 average');
+    if(rsi!=null){
+      let sc=rsi>55?1:rsi<45?-1:0,txt='RSI '+rsi.toFixed(0);
+      if(d===1&&rsi>75){sc=0;txt+=' — stretched, pullback risk';}
+      else if(d===-1&&rsi<25){sc=0;txt+=' — stretched, bounce risk';}
+      else txt+=rsi>55?' — bullish momentum':rsi<45?' — bearish momentum':' — neutral';
+      add('Momentum (RSI)',sc*d,txt);
+    }
+    const mc=chMacdHist(cl);
+    if(mc){
+      const bull=mc.hist>0,rising=mc.hist>mc.prev;
+      add('MACD',(bull&&rising?1:!bull&&!rising?-1:0)*d,(bull?'above':'below')+' its signal line and '+(rising?'strengthening':'weakening'));
+    }
+    if(cl.length>4){const ch=(last-cl[cl.length-4])/cl[cl.length-4]*100;add('Last 3 candles',(ch>0.05?1:ch<-0.05?-1:0)*d,'price '+(ch>=0?'up ':'down ')+Math.abs(ch).toFixed(2)+'%');}
+    const total=sig.reduce((x,y)=>x+y.score,0),n=sig.length||1,ratio=total/n;
+    let label,col,msg;
+    if(ratio>=0.6){label='Indicators support staying in the trade';col='var(--green)';msg='Most signals point the same way as your position.';}
+    else if(ratio>=0.2){label='Mostly supportive — stay, but keep your stop';col='var(--green)';msg='More signals favour than oppose your position.';}
+    else if(ratio>-0.2){label='Mixed — watch closely';col='#C9A227';msg='Signals are split. Consider tightening the stop or taking part profit if you are in profit.';}
+    else if(ratio>-0.6){label='Leaning against your trade — be ready to reduce';col='var(--red)';msg='More signals oppose your position than support it. Check a higher timeframe (4h / 1d) before deciding.';}
+    else{label='Indicators are against your trade — consider exiting or reducing';col='var(--red)';msg='Most signals point against your position. If your stop or exit plan is reached, follow it.';}
+    verdictHtml=`<div style="border:1px solid ${col};border-radius:10px;padding:8px 10px;margin-bottom:8px">
+      <div style="font-weight:700;font-size:0.76rem;color:${col}">${label}</div>
+      <div style="margin:2px 0 6px">${msg}</div>
+      ${sig.map(x=>`<div style="display:flex;gap:6px"><span style="width:14px;color:${x.score>0?'var(--green)':x.score<0?'var(--red)':'var(--ink3)'};font-weight:700">${x.score>0?'✔':x.score<0?'✖':'•'}</span><span><b style="color:var(--ink)">${x.name}:</b> ${x.text}</span></div>`).join('')}
+      <div style="margin-top:4px;font-size:0.62rem;color:var(--ink3)">${sig.filter(x=>x.score>0).length} for · ${sig.filter(x=>x.score<0).length} against · ${sig.filter(x=>x.score===0).length} neutral — on the ${tf} chart</div>
+    </div>`;
+  }
+  if(p){
+    const amt=parseFloat(p.positionAmt||0),long=amt>0,entry=levels.entry,liq=levels.liq;
+    const pnlPct=entry>0?(long?(last-entry)/entry:(entry-last)/entry)*100:null;
+    let t=`${long?'LONG':'SHORT'} from ${fmtPx(entry)}; price ${fmtPx(last)} (${pnlPct!=null?pnlPct.toFixed(1)+'% '+(pnlPct>=0?'in profit':'against you')+' on price':''}).`;
+    if((long&&trend==='down')||(!long&&trend==='up'))t+=' The '+tf+' trend is AGAINST your position.';
+    else if((long&&trend==='up')||(!long&&trend==='down'))t+=' The '+tf+' trend is WITH your position.';
+    out.push(['Your trade',t]);
+    const sl=levels.sl[0],tp=levels.tp[0];
+    if(!sl)tips.push('No stop loss is set on this position — consider placing one so a sudden move cannot hurt you more than planned.');
+    else{
+      const risk=Math.abs(entry-sl),slDist=Math.abs(last-sl);
+      if(atr&&slDist<atr)tips.push(`Your stop (${fmtPx(sl)}) is only ${(slDist/atr).toFixed(1)}× a normal candle's range away — it can easily be hit by ordinary noise.`);
+      if(tp){const rew=Math.abs(tp-entry);if(risk>0)tips.push(`Risk : reward is about 1 : ${(rew/risk).toFixed(1)} (stop ${fmtPx(sl)}, target ${fmtPx(tp)}).`+(rew/risk<1?' That is below 1 : 1 — you risk more than you can make.':''));}
+    }
+    if(!tp)tips.push('No take-profit is set — decide where you will take profit (for example near the range '+(long?'high '+fmtPx(res):'low '+fmtPx(sup))+').');
+    if(liq>0){const d=Math.abs(last-liq)/last*100;if(d<15)tips.push(`Liquidation is only ${d.toFixed(1)}% from the current price — high risk; consider reducing size or adding margin.`);}
+    if(!long&&rsi!=null&&rsi<30)tips.push('Short while RSI is oversold: a bounce is more likely, so consider securing part of the profit or tightening the stop.');
+    if(long&&rsi!=null&&rsi>70)tips.push('Long while RSI is overbought: a pullback is more likely, so consider securing part of the profit or tightening the stop.');
+    if(!long&&sup&&last<=sup*1.01)tips.push('Price is sitting on recent support — a bounce or a breakdown both come from here, so wait for a candle close before acting.');
+    if(long&&res&&last>=res*0.99)tips.push('Price is at recent resistance — it may reject here or break out; a close above would be the confirmation.');
+  }
+  return`<div style="font-size:0.7rem;line-height:1.5;margin-top:8px;color:var(--ink2)">
+    ${verdictHtml}
+    ${out.map(([k,v])=>`<div style="margin-bottom:3px"><b style="color:var(--ink)">${k}:</b> ${v}</div>`).join('')}
+    ${tips.length?`<div style="margin-top:6px;padding:7px 9px;border-radius:8px;background:var(--card2)"><b style="color:var(--ink)">Ideas to consider</b>${tips.map(t=>`<div style="margin-top:3px">• ${t}</div>`).join('')}</div>`:''}
+    <div style="margin-top:5px;font-size:0.62rem;color:var(--ink3)">Automatic read of the last ${cs.length} candles (EMA 20/50, RSI 14, MACD 12/26/9, ATR 14, 30-candle range). A guide only — not financial advice or a prediction.</div>
+  </div>`;
+}
 async function drawFuturesChart(sym){
   const box=document.getElementById('fchart-'+sym);
   if(!box)return;
   const tf=futuresChartTf[sym]||'1h';
   const tfBar=['5m','15m','1h','4h','1d'].map(t=>`<button class="link-btn" style="padding:2px 8px;font-size:0.7rem;border-radius:6px;${t===tf?'background:var(--card2);font-weight:700;color:var(--ink)':'color:var(--ink3)'}" onclick="setFuturesChartTf('${sym}','${t}')">${t}</button>`).join('');
-  box.innerHTML=`<div style="display:flex;gap:4px;margin:6px 0">${tfBar}</div><div id="fchart-svg-${sym}" style="font-size:0.72rem;color:var(--ink3);padding:20px 0;text-align:center">Loading chart…</div>`;
+  box.innerHTML=`<div style="display:flex;gap:4px;align-items:center;margin:6px 0">${tfBar}<span style="margin-left:auto;font-size:0.62rem;color:var(--ink3)"><span style="color:#E8A33A">━</span> EMA20 <span style="color:#9B7BEA">━</span> EMA50</span></div><div id="fchart-svg-${sym}" style="font-size:0.72rem;color:var(--ink3);padding:20px 0;text-align:center">Loading chart…</div><div id="fchart-note-${sym}"></div>`;
   const key=sym+'|'+tf;
   let k=_fKlineCache[key];
-  if(!k||Date.now()-k.at>20000){
+  if(!k||Date.now()-k.at>20000||!k.c[0]||k.c[0].v==null){
     try{
-      const r=await binanceFetch('public',{path:'/fapi/v1/klines',symbol:sym,interval:tf,limit:'90'},'futures');
-      if(r&&r.ok){const j=await r.json();if(Array.isArray(j))k=_fKlineCache[key]={at:Date.now(),c:j.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4]}))};}
+      const r=await binanceFetch('public',{path:'/fapi/v1/klines',symbol:sym,interval:tf,limit:'120'},'futures');
+      if(r&&r.ok){const j=await r.json();if(Array.isArray(j))k=_fKlineCache[key]={at:Date.now(),c:j.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5]}))};}
     }catch(e){}
   }
   const holder=document.getElementById('fchart-svg-'+sym);
@@ -6395,34 +6509,45 @@ async function drawFuturesChart(sym){
   const mine=futuresOpenOrders.filter(o=>o.symbol===sym);
   const isExit=o=>o.reduceOnly||o.closePosition;
   const trig=o=>o.stopPrice>0?o.stopPrice:o.price;
+  const slList=mine.filter(o=>(o.type.startsWith('STOP')&&isExit(o))||o.type==='TRAILING_STOP_MARKET').map(trig);
+  const tpList=mine.filter(o=>o.type.startsWith('TAKE_PROFIT')&&isExit(o)).map(trig);
   const lines=[];
   if(entry>0)lines.push({v:entry,l:'Entry',c:'#5B8DEF'});
-  mine.filter(o=>(o.type.startsWith('STOP')&&isExit(o))||o.type==='TRAILING_STOP_MARKET').forEach(o=>lines.push({v:trig(o),l:'SL',c:'var(--red)'}));
-  mine.filter(o=>o.type.startsWith('TAKE_PROFIT')&&isExit(o)).forEach(o=>lines.push({v:trig(o),l:'TP',c:'var(--green)'}));
-  mine.filter(o=>o.type==='LIMIT').forEach(o=>lines.push({v:o.price,l:'Limit',c:'#C9A227'}));
+  slList.forEach(v=>lines.push({v,l:'SL',c:'var(--red)'}));
+  tpList.forEach(v=>lines.push({v,l:'TP',c:'var(--green)'}));
+  mine.filter(o=>o.type==='LIMIT').forEach(o=>lines.push({v:o.price,l:'Lmt',c:'#C9A227'}));
   const cs=k.c;
   let lo=Math.min(...cs.map(x=>x.l)),hi=Math.max(...cs.map(x=>x.h));
   const span0=hi-lo||hi*0.01;
-  // keep lines in view only if they are reasonably near the candles
   lines.forEach(L=>{if(L.v>0&&L.v>lo-span0*0.6&&L.v<hi+span0*0.6){lo=Math.min(lo,L.v);hi=Math.max(hi,L.v);}});
   if(liq>0&&liq>lo-span0*0.6&&liq<hi+span0*0.6){lo=Math.min(lo,liq);hi=Math.max(hi,liq);lines.push({v:liq,l:'Liq',c:'#E8833A'});}
-  const pad=(hi-lo)*0.06;lo-=pad;hi+=pad;
-  const W=640,H=280,L0=8,R0=64,T0=8,B0=22,cw=(W-L0-R0)/cs.length;
+  const pad=(hi-lo)*0.05;lo-=pad;hi+=pad;
+  // Real pixel size (no scaling), so text stays small however wide the screen is.
+  const W=Math.max(300,Math.floor(holder.parentElement.clientWidth||holder.clientWidth||600)),H=230,L0=4,R0=46,T0=6,B0=16,cw=(W-L0-R0)/cs.length;
   const y=v=>T0+(hi-v)/(hi-lo)*(H-T0-B0);
+  const px=v=>fmtPx(v).replace('$','');
   let g='';
-  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,yy=y(v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--border)" stroke-width="0.5"/><text x="${W-R0+4}" y="${yy+3}" style="fill:var(--ink3)" font-size="9">${fmtPx(v)}</text>`;}
+  for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,yy=y(v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--border)" stroke-width="0.5"/><text x="${W-R0+3}" y="${yy+3}" style="fill:var(--ink3)" font-size="8">${px(v)}</text>`;}
   cs.forEach((x,i)=>{
     const cx=L0+cw*i+cw/2,up=x.c>=x.o,col=up?'var(--green)':'var(--red)';
     const bt=y(Math.max(x.o,x.c)),bb=y(Math.min(x.o,x.c));
     g+=`<line x1="${cx}" x2="${cx}" y1="${y(x.h)}" y2="${y(x.l)}" style="stroke:${col}" stroke-width="1"/><rect x="${cx-cw*0.34}" y="${bt}" width="${cw*0.68}" height="${Math.max(1,bb-bt)}" style="fill:${col}"/>`;
   });
-  lines.forEach(L=>{if(!(L.v>=lo&&L.v<=hi))return;const yy=y(L.v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:${L.c}" stroke-width="1" stroke-dasharray="5 3"/><rect x="${W-R0}" y="${yy-7}" width="${R0-2}" height="14" rx="3" style="fill:${L.c}"/><text x="${W-R0+3}" y="${yy+3}" fill="#fff" font-size="9" font-weight="700">${L.l} ${fmtPx(L.v).replace('$','')}</text>`;});
-  const last=cs[cs.length-1].c;
-  if(last>=lo&&last<=hi){const yy=y(last);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--ink2)" stroke-width="0.8" stroke-dasharray="1 3"/><rect x="${W-R0}" y="${yy-7}" width="${R0-2}" height="14" rx="3" style="fill:var(--ink2)"/><text x="${W-R0+3}" y="${yy+3}" style="fill:var(--card)" font-size="9" font-weight="700">${fmtPx(last).replace('$','')}</text>`;}
+  const cl=cs.map(x=>x.c);
+  [[chEma(cl,20),'#E8A33A'],[chEma(cl,50),'#9B7BEA']].forEach(([arr,col])=>{
+    const pts=arr.map((v,i)=>v==null?null:`${(L0+cw*i+cw/2).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean).join(' ');
+    if(pts)g+=`<polyline points="${pts}" fill="none" style="stroke:${col}" stroke-width="1" opacity="0.85"/>`;
+  });
+  // Small tags: label text sits on the line (left), price in a thin tag on the axis.
+  lines.forEach(L=>{if(!(L.v>=lo&&L.v<=hi))return;const yy=y(L.v);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:${L.c}" stroke-width="0.9" stroke-dasharray="4 3"/><text x="${L0+2}" y="${yy-2}" style="fill:${L.c}" font-size="8" font-weight="700">${L.l}</text><rect x="${W-R0}" y="${yy-5}" width="${R0-1}" height="10" rx="2" style="fill:${L.c}"/><text x="${W-R0+2}" y="${yy+3}" fill="#fff" font-size="7.5" font-weight="700">${px(L.v)}</text>`;});
+  const last=cl[cl.length-1];
+  if(last>=lo&&last<=hi){const yy=y(last);g+=`<line x1="${L0}" x2="${W-R0}" y1="${yy}" y2="${yy}" style="stroke:var(--ink2)" stroke-width="0.7" stroke-dasharray="1 3"/><rect x="${W-R0}" y="${yy-5}" width="${R0-1}" height="10" rx="2" style="fill:var(--ink2)"/><text x="${W-R0+2}" y="${yy+3}" style="fill:var(--card)" font-size="7.5" font-weight="700">${px(last)}</text>`;}
   const fmtT=t=>{const d=new Date(t);return tf==='1d'?d.toLocaleDateString('en-US',{month:'short',day:'numeric'}):d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});};
-  [0,Math.floor(cs.length/2),cs.length-1].forEach(i=>{g+=`<text x="${Math.min(L0+cw*i,W-R0-30)}" y="${H-6}" style="fill:var(--ink3)" font-size="9">${fmtT(cs[i].t)}</text>`;});
+  [0,Math.floor(cs.length/2),cs.length-1].forEach(i=>{g+=`<text x="${Math.min(L0+cw*i,W-R0-26)}" y="${H-4}" style="fill:var(--ink3)" font-size="8">${fmtT(cs[i].t)}</text>`;});
   holder.style.padding='0';
-  holder.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}</svg>`;
+  holder.innerHTML=`<svg width="${W}" height="${H}" style="display:block;max-width:100%">${g}</svg>`;
+  const note=document.getElementById('fchart-note-'+sym);
+  if(note)note.innerHTML=futuresChartComment(sym,tf,cs,p,{entry,liq,sl:slList,tp:tpList});
 }
 function futuresPositionRowHtml(p){
   const amt=parseFloat(p.positionAmt||0);
