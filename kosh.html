@@ -4825,7 +4825,7 @@ async function getPortfolioCoins(portfolioId){
 function openTransferModal(){
   if(!portfolios.length){showToast('Create a portfolio first.');return;}
   const fromSel=document.getElementById('tr-from-select');
-  fromSel.innerHTML=portfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('');
+  fromSel.innerHTML=portfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')+`<option value="__futures__">🧮 Futures (USDT margin)</option>`;
   fromSel.value=currentPortfolioId||portfolios[0].id;
   document.getElementById('tr-new-name').value='';
   document.getElementById('tr-new-kind').value='spot';
@@ -4838,7 +4838,15 @@ async function transferSourceChanged(){
   const sourcePortfolio=portfolios.find(p=>p.id===sourceId);
   const coinSel=document.getElementById('tr-coin-select');
   coinSel.innerHTML=`<option>Loading…</option>`;
-  _trSourceCoins=(sourceId===currentPortfolioId?coins:await getPortfolioCoins(sourceId)).filter(c=>(c.units_held||0)>1e-8);
+  if(sourceId==='__futures__'){
+    // Futures has no coins — its "balance" is capital deployed + realized profit, in USDT.
+    try{await Promise.all([loadFuturesSyncSettings(),loadFuturesTrades()]);}catch(e){}
+    const realized=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((a,t)=>a+t.realized_pnl,0);
+    const bal=Math.max(0,+(futuresCapitalDeployed+realized).toFixed(2));
+    _trSourceCoins=[{id:'__fut__',name:'Tether',ticker:'USDT',coingecko_id:'tether',units_held:bal,avg_cost_usd:1,isFutures:true}];
+  } else {
+    _trSourceCoins=(sourceId===currentPortfolioId?coins:await getPortfolioCoins(sourceId)).filter(c=>(c.units_held||0)>1e-8);
+  }
   if(!_trSourceCoins.length){
     coinSel.innerHTML=`<option value="">No coins with units held</option>`;
   } else {
@@ -4853,7 +4861,7 @@ async function transferSourceChanged(){
   const prevDest=destSel.value;
   const others=portfolios.filter(p=>p.id!==sourceId);
   destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
-    +`<option value="__futures__">🧮 Futures (USDT margin)</option>`
+    +(sourceId==='__futures__'?'':`<option value="__futures__">🧮 Futures (USDT margin)</option>`)
     +`<option value="__new__">+ New portfolio…</option>`;
   if(prevDest==='__futures__'||others.some(p=>p.id===prevDest))destSel.value=prevDest;
   transferDestChanged();
@@ -4861,7 +4869,7 @@ async function transferSourceChanged(){
 function transferCoinChanged(){
   const coin=_trSourceCoins.find(c=>c.id===document.getElementById('tr-coin-select').value);
   const sub=document.getElementById('tr-coin-sub');
-  sub.textContent=coin?`${coin.units_held||0} ${coin.ticker} held${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
+  sub.textContent=coin&&coin.isFutures?`${fmtUsd(coin.units_held||0)} available in Futures (capital deployed + realized profit)`:coin?`${coin.units_held||0} ${coin.ticker} held${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
 }
 function transferDestChanged(){
   const isNew=document.getElementById('tr-dest-select').value==='__new__';
@@ -4910,7 +4918,48 @@ async function setPortfolioCapital(portfolioId,val){
     {onConflict:'user_id,portfolio_id'}
   );
 }
+// Futures → a portfolio: lowers Futures "Capital deployed" (never below 0) and
+// credits USDT (cost $1) to the chosen portfolio, logged there as Transfer in.
+async function confirmTransferFromFutures(){
+  const amount=parseFloat(document.getElementById('tr-amount').value);
+  if(!amount||amount<=0){showToast('Enter a valid amount.');return;}
+  const max=(_trSourceCoins[0]||{}).units_held||0;
+  if(amount>max+0.005&&!confirm(`That is more than your Futures capital (${fmtUsd(max)}). Continue anyway?`))return;
+  const destSelectVal=document.getElementById('tr-dest-select').value;
+  let destPortfolio;
+  if(destSelectVal==='__new__'){
+    const name=document.getElementById('tr-new-name').value.trim();
+    const kind=document.getElementById('tr-new-kind').value;
+    if(!name){showToast('Enter a name for the new portfolio.');return;}
+    const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name,kind,sort_order:portfolios.length}).select().single();
+    if(error){showToast('Error creating portfolio: '+error.message);return;}
+    destPortfolio=data;portfolios.push(destPortfolio);
+  } else {
+    destPortfolio=portfolios.find(p=>p.id===destSelectVal);
+    if(!destPortfolio){showToast('Choose a destination portfolio.');return;}
+  }
+  const inrRate=await getHistoricalInrRate(new Date().toISOString().slice(0,10));
+  const destCoin=await ensureCoinInPortfolio(destPortfolio.id,destPortfolio.kind,{name:'Tether',ticker:'USDT',coingecko_id:'tether'});
+  if(!destCoin){return;}
+  await sb.from('coins').update({units_held:(destCoin.units_held||0)+amount,avg_cost_usd:1}).eq('id',destCoin.id);
+  await logTrade({
+    user_id:currentUser.id,portfolio_id:destPortfolio.id,coin_id:destCoin.id,coin_name:destCoin.name,coin_ticker:destCoin.ticker,
+    action:'transfer_in',units:amount,price_per_unit:1,total_usd:amount,realized_pnl:null,inr_rate:inrRate,notes:'Transfer from Futures'
+  });
+  await setPortfolioCapital(destPortfolio.id,(await getPortfolioCapital(destPortfolio.id))+amount);
+  const newCap=Math.max(0,(futuresCapitalDeployed||0)-amount);
+  const{error:fe}=await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,capital_deployed:newCap},{onConflict:'user_id'});
+  if(!fe)futuresCapitalDeployed=newCap;
+  closeModal('transfer-modal');
+  await loadAllData();
+  await fetchLivePrices();
+  renderAll();
+  renderPortfolioSwitcher();
+  if(document.getElementById('sec-futures')?.classList.contains('active'))renderFutures();
+  showToast(`Moved ${fmtUsd(amount)} USDT from Futures to ${destPortfolio.name} — Futures capital deployed is now ${fmtUsd(futuresCapitalDeployed)} ✅`);
+}
 async function confirmTransfer(){
+  if(document.getElementById('tr-from-select').value==='__futures__')return confirmTransferFromFutures();
   const sourceId=document.getElementById('tr-from-select').value;
   const sourcePortfolio=portfolios.find(p=>p.id===sourceId);
   if(!sourcePortfolio){showToast('Choose a source portfolio.');return;}
