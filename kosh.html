@@ -2324,6 +2324,26 @@ async function renderDashboard(){
 
   if(dashViewMode==='both'){
     const combined=await computeCombinedDashboardData();
+    // Futures is part of your money (capital moves to/from it via Transfer), so it
+    // counts in the headline: value = capital deployed + realized + unrealized,
+    // exactly the figure its own card and the Allocation donut show.
+    // Guarded: if Futures can't be loaded, the headline just excludes it.
+    try{
+      await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
+      if(futuresCapitalDeployed>0||futuresPositions.length>0){
+        const fReal=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((a,t)=>a+t.realized_pnl,0);
+        const fUnreal=futuresPositions.reduce((a,p)=>a+parseFloat(p.unRealizedProfit||0),0);
+        combined.combinedTotal+=futuresCapitalDeployed+fReal+fUnreal;
+        combined.totalCapital+=futuresCapitalDeployed;
+        combined.combinedUnrealized+=fUnreal;
+        combined.combinedRealized+=fReal;
+        combined.pricedCount+=1;
+        combined.includesFutures=true;
+      }
+    }catch(e){
+      console.error('Futures dashboard data load failed:',e);
+      futuresSymbols=[];futuresPositions=[];futuresTrades=[];futuresPositionsError=e.message||String(e);
+    }
     const snapshots=await getSnapshotHistoryAndRecordToday(combined.combinedTotal,combined.totalCapital);
     console.log('snapshot history:',snapshots.length,'day(s) recorded:',snapshots.map(s=>s.snapshot_date));
     lastTrend={snapshots,totalCapital:combined.totalCapital};
@@ -2358,7 +2378,7 @@ async function renderDashboard(){
     html+=`<div class="hero-card hero-flex">
       <div class="hero-flex-left">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px">
-          <div class="hero-label">Combined portfolio value</div>
+          <div class="hero-label">Combined portfolio value${combined.includesFutures?' <span style="opacity:0.6;font-weight:500">(incl. Futures)</span>':''}</div>
           <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
         </div>
         <div class="hero-val hide-figure">${fmtDisplay(combined.combinedTotal)}</div>
@@ -2373,21 +2393,8 @@ async function renderDashboard(){
 
     // ── Portfolio cards, one line — value, 30d-style trend and ROI, with
     // that portfolio's own holdings donut underneath each ──
-    // Futures isn't a `portfolios` row, so it's loaded separately here just
-    // to draw its own card below — kept OUT of combined.combinedTotal/
-    // combined.perPortfolio math, since leveraged P&L isn't the same kind
-    // of number as spot portfolio value and mixing them would misstate the
-    // Combined Portfolio Value figure above.
-    // Guarded: Futures is loaded here purely to draw its own card below —
-    // if it fails for any reason (migration not run yet, proxy not deployed,
-    // a transient network error), that must never blank out the rest of the
-    // Dashboard (the per-portfolio cards, incl. Alpha, render right after this).
-    try{
-      await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
-    }catch(e){
-      console.error('Futures dashboard-card data load failed:',e);
-      futuresSymbols=[];futuresPositions=[];futuresTrades=[];futuresPositionsError=e.message||String(e);
-    }
+    // Futures isn't a `portfolios` row; it was loaded above, added to the headline totals, and gets its own card below.
+    // (Futures data is already loaded above, before the headline figures.)
     const{data:allSnaps}=await sb.from('portfolio_equity_snapshots').select('portfolio_id,snapshot_date,equity_usd').eq('user_id',currentUser.id).order('snapshot_date',{ascending:true});
     const snapByPortfolio={};
     (allSnaps||[]).forEach(s=>{(snapByPortfolio[s.portfolio_id]=snapByPortfolio[s.portfolio_id]||[]).push(s.equity_usd);});
