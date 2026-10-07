@@ -4853,8 +4853,9 @@ async function transferSourceChanged(){
   const prevDest=destSel.value;
   const others=portfolios.filter(p=>p.id!==sourceId);
   destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
+    +`<option value="__futures__">🧮 Futures (USDT margin)</option>`
     +`<option value="__new__">+ New portfolio…</option>`;
-  if(others.some(p=>p.id===prevDest))destSel.value=prevDest;
+  if(prevDest==='__futures__'||others.some(p=>p.id===prevDest))destSel.value=prevDest;
   transferDestChanged();
 }
 function transferCoinChanged(){
@@ -4921,7 +4922,11 @@ async function confirmTransfer(){
 
   const destSelectVal=document.getElementById('tr-dest-select').value;
   let destPortfolio;
-  if(destSelectVal==='__new__'){
+  const toFutures=destSelectVal==='__futures__';
+  if(toFutures){
+    if(!BINANCE_QUOTE_ASSET_SET.has((sourceCoin.ticker||'').toUpperCase())){showToast('Only a stablecoin (USDT, USDC…) can be moved to Futures as margin.');return;}
+    destPortfolio={id:'__futures__',name:'Futures',kind:'spot'};
+  } else if(destSelectVal==='__new__'){
     const name=document.getElementById('tr-new-name').value.trim();
     const kind=document.getElementById('tr-new-kind').value;
     if(!name){showToast('Enter a name for the new portfolio.');return;}
@@ -4957,7 +4962,15 @@ async function confirmTransfer(){
 
   // Destination side: find/create the matching coin there, weighted-average
   // its cost basis with whatever it already holds, capital up.
-  const destCoin=await ensureCoinInPortfolio(destPortfolio.id,destPortfolio.kind,{name:sourceCoin.name,ticker:sourceCoin.ticker,coingecko_id:sourceCoin.coingecko_id});
+  if(toFutures){
+    // Futures isn't a portfolio: moving margin there raises "Capital deployed".
+    await loadFuturesSyncSettings();
+    const newCap=(futuresCapitalDeployed||0)+amount;
+    const{error:fe}=await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,capital_deployed:newCap},{onConflict:'user_id'});
+    if(fe){showToast('Moved out of '+sourcePortfolio.name+', but could not update Futures capital: '+fe.message);}
+    else futuresCapitalDeployed=newCap;
+  }
+  const destCoin=toFutures?null:await ensureCoinInPortfolio(destPortfolio.id,destPortfolio.kind,{name:sourceCoin.name,ticker:sourceCoin.ticker,coingecko_id:sourceCoin.coingecko_id});
   if(destCoin){
     const newDestUnits=(destCoin.units_held||0)+amount;
     const oldDestCostTotal=(destCoin.units_held||0)*(destCoin.avg_cost_usd||0);
@@ -4977,7 +4990,7 @@ async function confirmTransfer(){
   await fetchLivePrices();
   renderAll();
   renderPortfolioSwitcher();
-  showToast(`Moved ${amount} ${sourceCoin.ticker} to ${destPortfolio.name} ✅`);
+  showToast(toFutures?`Moved ${amount} ${sourceCoin.ticker} to Futures — capital deployed is now ${fmtUsd(futuresCapitalDeployed)} ✅`:`Moved ${amount} ${sourceCoin.ticker} to ${destPortfolio.name} ✅`);
 }
 
 // ═══════════════════════════════
