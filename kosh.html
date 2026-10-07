@@ -684,6 +684,7 @@ select option{color:#14181D;background:#fff;}
     <div class="form-group"><label class="form-label">Date of the trade</label><input class="form-input" type="date" id="pt-date"/></div>
     <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="pt-units" step="0.00000001"/></div>
     <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="pt-price" step="0.0001"/></div>
+    <div class="form-group"><label class="form-label">Fee paid (USD) — optional</label><input class="form-input" type="number" id="pt-fee" step="0.0001" min="0"/></div>
     <div class="form-group"><label class="form-label">Your average buy price (USD)</label><input class="form-input" type="number" id="pt-cost" step="0.0001"/>
       <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">Sells only. Used to work out the profit or loss. Leave it empty to record no profit or loss.</div>
     </div>
@@ -707,6 +708,9 @@ select option{color:#14181D;background:#fff;}
     <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="et-price" step="0.0000001"/></div>
     <div class="form-group"><label class="form-label">Realized P&amp;L (USD)</label><input class="form-input" type="number" id="et-pnl" step="0.0001"/>
       <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">Sells only. Leave empty for no profit or loss.</div>
+    </div>
+    <div class="form-group"><label class="form-label">Fee paid (USD)</label><input class="form-input" type="number" id="et-fee" step="0.0001" min="0"/>
+      <div style="font-size:0.68rem;color:var(--ink3);margin-top:4px">Optional. Exchange fee for this trade.</div>
     </div>
     <div style="display:flex;gap:10px;margin-top:6px">
       <button class="btn-outline" style="flex:1" onclick="closeModal('edit-trade-modal')">Cancel</button>
@@ -3587,6 +3591,7 @@ function openEditTrade(id){
   document.getElementById('et-units').value=t.units;
   document.getElementById('et-price').value=t.price_per_unit;
   document.getElementById('et-pnl').value=t.realized_pnl!=null?t.realized_pnl:'';
+  document.getElementById('et-fee').value=t.fee_usd!=null?t.fee_usd:'';
   openModal('edit-trade-modal');
 }
 async function confirmEditTrade(){
@@ -3599,6 +3604,11 @@ async function confirmEditTrade(){
   const dateStr=document.getElementById('et-date').value;
   if(!(units>0)||isNaN(price)||price<0||!dateStr){showToast('Enter valid units, price and date.');return;}
   const upd={action:document.getElementById('et-action').value,units,price_per_unit:price,total_usd:units*price,realized_pnl:pnlRaw===''?null:parseFloat(pnlRaw)};
+  const feeRaw=document.getElementById('et-fee').value;
+  if(feeRaw!==''||t.fee_usd!=null){
+    if(!(await spotFeeColsAvailable())){showToast('Run migration-spot-fees.sql in Supabase first to save fees.');return;}
+    upd.fee_usd=feeRaw===''?null:Math.max(0,parseFloat(feeRaw)||0);
+  }
   if(dateStr!==new Date(t.trade_date).toLocaleDateString('en-CA')){
     upd.trade_date=new Date(dateStr+'T12:00:00').toISOString();
     upd.inr_rate=await getHistoricalInrRate(dateStr);
@@ -3653,7 +3663,7 @@ function openPastTradeModal(){
   if(!cp){showToast('Select a portfolio first.');return;}
   document.getElementById('past-trade-note').textContent='Recorded in: '+cp.name+'. This only adds a line to the Journal. It does not change your holdings or your '+reserveTickerFor(cp.kind)+' balance. To record it in a different portfolio, select that portfolio first.';
   document.getElementById('pt-coin').innerHTML='<option value="">Other (type it below)</option>'+(cp.id===currentPortfolioId?coins:[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.ticker||'')})</option>`).join('');
-  ['pt-name','pt-ticker','pt-units','pt-price','pt-cost'].forEach(id=>{document.getElementById(id).value='';});
+  ['pt-name','pt-ticker','pt-units','pt-price','pt-cost','pt-fee'].forEach(id=>{document.getElementById(id).value='';});
   document.getElementById('pt-action').value='sell';
   document.getElementById('pt-date').value=new Date().toISOString().slice(0,10);
   openModal('past-trade-modal');
@@ -3677,7 +3687,10 @@ async function confirmPastTrade(){
   if(!cp||(!name&&!ticker)||!dateStr||!(units>0)||!(price>0)){showToast('Fill in the coin, date, units and price.');return;}
   const inrRate=await getHistoricalInrRate(dateStr);
   const realized=(action==='sell'&&cost>0)?(price-cost)*units:null;
+  const ptFee=parseFloat(document.getElementById('pt-fee').value);
+  if(ptFee>0&&!(await spotFeeColsAvailable())){showToast('Run migration-spot-fees.sql in Supabase first to save fees.');return;}
   const r=await sb.from('trades').insert({
+    ...(ptFee>0?{fee_usd:ptFee}:{}),
     user_id:currentUser.id,portfolio_id:cp.id,coin_id:document.getElementById('pt-coin').value||null,
     coin_name:name||ticker,coin_ticker:ticker||name,action,units,price_per_unit:price,total_usd:units*price,
     realized_pnl:realized,inr_rate:inrRate,notes:'Added manually (past trade)',
@@ -3801,7 +3814,7 @@ function groupJournalTrades(list){
 // Shared by the initial render and renderJournalTableBody (re-renders on
 // filter/sort/group-toggle without re-fetching from the database).
 function journalTableBodyHtml(filtered){
-  if(!filtered.length)return`<tr><td colspan="12" style="padding:16px;text-align:center;color:var(--ink3)">No trades match the current filter.</td></tr>`;
+  if(!filtered.length)return`<tr><td colspan="14" style="padding:16px;text-align:center;color:var(--ink3)">No trades match the current filter.</td></tr>`;
   if(!journalGroupRows)return filtered.map((t,i)=>journalRowHtml(t,i)).join('');
   const groups=groupJournalTrades(filtered);
   return groups.map((g,i)=>journalGroupRowHtml(g,i)).join('');
@@ -3843,6 +3856,7 @@ function journalGroupRowHtml(g,i){
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${totalInr!=null?'₹'+totalInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${g.realized_pnl==null?'var(--ink3)':(g.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${g.realized_pnl!=null?(g.realized_pnl>=0?'+':'')+fmtUsd(g.realized_pnl):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    ${journalFeeCellsHtml(g.fills)}
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${g.inr_rate!=null?g.inr_rate.toFixed(2):'—'}</td>
     ${journalActionsHtml(g.fills.map(f=>f.id),multi?null:g.fills[0].id)}
   </tr>`;
@@ -3896,6 +3910,7 @@ async function renderJournal(){
   }
   const rawTrades=await loadAllTradesForJournal();
   const stockPortfolioIds=new Set(portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id));
+  spotNetMap=buildSpotNetMap(rawTrades);
   allJournalTrades=rawTrades.filter(t=>(journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id))&&(!journalPortfolioId||t.portfolio_id===journalPortfolioId));
 
   const addPastBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
@@ -3910,6 +3925,7 @@ async function renderJournal(){
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
   </div>`;
   html+=addPastBtn;
+  if(journalViewMode==='crypto'&&allJournalTrades.some(t=>t.binance_trade_id!=null&&t.fee_usd==null))html+=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="backfillSpotFees()">💸 Fill in missing fees for synced trades</button>`;
   html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalExcel()">📊 Export Excel</button>
     <button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="exportJournalPDF()">📄 Export PDF</button>
@@ -3938,6 +3954,8 @@ async function renderJournal(){
         <th style="padding:8px 10px;text-align:right">Total (INR)</th>
         <th style="padding:8px 10px;text-align:right">P&amp;L (USD)</th>
         <th style="padding:8px 10px;text-align:right">P&amp;L (INR)</th>
+        <th style="padding:8px 10px;text-align:right" title="Trading fee of this fill, in USD">Fee (USD)</th>
+        <th style="padding:8px 10px;text-align:right" title="Realized P&amp;L minus fees (sells only)">Net P&amp;L</th>
         <th style="padding:8px 10px;text-align:right">FX Rate</th>
         <th style="padding:8px 10px"></th>
       </tr></thead>
@@ -3958,6 +3976,34 @@ function transferBadgeHtml(action){
   const[label,bg,fg]=map[action]||['—','var(--card2)','var(--ink2)'];
   return`<span style="background:${bg};color:${fg};padding:2px 7px;border-radius:6px;font-weight:600">${label}</span>`;
 }
+// Net P&L per sell = realized P&L − this sell's fee − an estimated share of
+// the buy fees (average buy fee per unit for that coin × units sold).
+let spotNetMap=new Map();
+function buildSpotNetMap(trades){
+  const m=new Map(),buys={};
+  trades.forEach(t=>{
+    if(t.action!=='buy'||t.fee_usd==null||!(t.units>0))return;
+    const k=t.portfolio_id+'|'+(t.coin_id||t.coin_ticker);
+    const b=buys[k]||(buys[k]={fee:0,units:0});b.fee+=t.fee_usd;b.units+=t.units;
+  });
+  trades.forEach(t=>{
+    if(t.action!=='sell'||t.realized_pnl==null||t.fee_usd==null)return;
+    const b=buys[t.portfolio_id+'|'+(t.coin_id||t.coin_ticker)];
+    const buyShare=b&&b.units>0?(b.fee/b.units)*(t.units||0):0;
+    m.set(t.id,t.realized_pnl-t.fee_usd-buyShare);
+  });
+  return m;
+}
+function journalFeeCellsHtml(fills){
+  const td='padding:7px 10px;text-align:right';
+  let fee=0,hasFee=false,net=0,hasNet=false;
+  fills.forEach(t=>{
+    if(t.fee_usd!=null){fee+=t.fee_usd;hasFee=true;}
+    if(spotNetMap.has(t.id)){net+=spotNetMap.get(t.id);hasNet=true;}
+  });
+  return`<td style="${td};color:${hasFee?'var(--red)':'var(--ink3)'}" class="hide-figure">${hasFee?(fee>0?'-':'')+fmtUsd(fee):'—'}</td>
+    <td style="${td};color:${hasNet?(net>=0?'var(--green)':'var(--red)'):'var(--ink3)'};font-weight:600" class="hide-figure" title="Realized P&amp;L minus this sell's fee and an estimated share of the buy fees">${hasNet?(net>=0?'+':'-')+fmtUsd(Math.abs(net)):'—'}</td>`;
+}
 function journalRowHtml(t,i){
   const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'});
   const priceInr=t.inr_rate!=null?t.price_per_unit*t.inr_rate:null;
@@ -3975,6 +4021,7 @@ function journalRowHtml(t,i){
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${totalInr!=null?'₹'+totalInr.toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${pnlInr==null?'var(--ink3)':(pnlInr>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${pnlInr!=null?(pnlInr>=0?'+':'-')+'₹'+Math.abs(pnlInr).toLocaleString('en-IN',{maximumFractionDigits:2}):'—'}</td>
+    ${journalFeeCellsHtml([t])}
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)">${t.inr_rate!=null?t.inr_rate.toFixed(2):'—'}</td>
     ${journalActionsHtml([t.id],t.id)}
   </tr>`;
@@ -3995,7 +4042,7 @@ async function backfillMissingInrRates(){
     }
   }
 }
-const JOURNAL_COLUMNS=['Date','Coin','Qty','Type','Price (USD)','Price (INR)','Total (USD)','Total (INR)','P&L (USD)','P&L (INR)','FX Rate'];
+const JOURNAL_COLUMNS=['Date','Coin','Qty','Type','Price (USD)','Price (INR)','Total (USD)','Total (INR)','P&L (USD)','P&L (INR)','Fee (USD)','Net P&L (USD)','FX Rate'];
 function journalExportRows(){
   return journalDateFiltered(allJournalTrades).map(t=>{
     const date=new Date(t.trade_date).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
@@ -4005,7 +4052,8 @@ function journalExportRows(){
     const typeLabel={buy:'Buy',sell:'Sell',transfer_out:'Transfer out',transfer_in:'Transfer in'}[t.action]||t.action;
     return[date,t.coin_ticker||t.coin_name||'',t.units,typeLabel,
       t.price_per_unit,priceInr!=null?priceInr:'',t.total_usd,totalInr!=null?totalInr:'',
-      t.realized_pnl!=null?t.realized_pnl:'',pnlInr!=null?pnlInr:'',t.inr_rate!=null?t.inr_rate:''];
+      t.realized_pnl!=null?t.realized_pnl:'',pnlInr!=null?pnlInr:'',
+      t.fee_usd!=null?+t.fee_usd.toFixed(4):'',spotNetMap.has(t.id)?+spotNetMap.get(t.id).toFixed(4):'',t.inr_rate!=null?t.inr_rate:''];
   });
 }
 function exportJournalExcel(){
@@ -5135,6 +5183,81 @@ async function moveAllLeadTradingDataToAlpha(){
 // since sync writes into whichever portfolio a symbol is mapped to, not
 // necessarily the one currently open in the UI.
 // (ensureCoinInPortfolio is defined above, in the Transfer section.)
+// ---- Spot fees. A fill's fee is stored on the trades row in USD (fee_usd) plus
+// the raw amount/asset. Fees paid in BNB are valued at BNB's price on the
+// trade day (daily open from Binance's public klines, cached).
+let _spotFeeCols=null;
+async function spotFeeColsAvailable(){
+  if(_spotFeeCols!==null)return _spotFeeCols;
+  try{const{error}=await sb.from('trades').select('fee_usd').limit(1);_spotFeeCols=!error;}catch(e){_spotFeeCols=false;}
+  return _spotFeeCols;
+}
+const _bnbDayCache={};
+async function bnbUsdOnDay(ms){
+  const day=new Date(ms).toISOString().slice(0,10);
+  if(_bnbDayCache[day]!==undefined)return _bnbDayCache[day];
+  let v=null;
+  try{
+    const start=new Date(day+'T00:00:00Z').getTime();
+    const r=await binanceFetch('public',{path:'/api/v3/klines',symbol:'BNBUSDT',interval:'1d',startTime:String(start),limit:'1'},'main');
+    if(r&&r.ok){const j=await r.json();if(Array.isArray(j)&&j[0])v=parseFloat(j[0][1])||null;}
+  }catch(e){}
+  _bnbDayCache[day]=v;
+  return v;
+}
+async function spotFeeUsd(commission,asset,baseAsset,quoteAsset,price,ms){
+  const c=parseFloat(commission)||0;
+  asset=(asset||'').toUpperCase();
+  if(!c)return 0;
+  if(asset==='BNB'){const px=await bnbUsdOnDay(ms);return px?c*px:null;}
+  if(!BINANCE_QUOTE_ASSET_SET.has((quoteAsset||'').toUpperCase()))return null;
+  if(asset===(quoteAsset||'').toUpperCase())return c;
+  if(asset===(baseAsset||'').toUpperCase())return c*price;
+  return null;
+}
+// Fills in fee_usd for already-synced trades by re-reading their fills from
+// Binance (matched by symbol + trade id). Only touches the fee columns.
+async function backfillSpotFees(){
+  if(!(await spotFeeColsAvailable())){showToast('Run migration-spot-fees.sql in Supabase first, then reload.');return;}
+  showToast('Filling in past fees from Binance…');
+  let rows=[];
+  for(let from=0;from<50000;from+=1000){
+    const{data,error}=await sb.from('trades').select('id,portfolio_id,binance_symbol,binance_trade_id').eq('user_id',currentUser.id).not('binance_trade_id','is',null).is('fee_usd',null).range(from,from+999);
+    if(error||!data)break;
+    rows=rows.concat(data);
+    if(data.length<1000)break;
+  }
+  if(!rows.length){showToast('All synced trades already have their fees ✅');return;}
+  const want=new Map(rows.map(r=>[r.portfolio_id+'|'+r.binance_symbol+'|'+r.binance_trade_id,r.id]));
+  const pairs=[...new Set(rows.map(r=>r.portfolio_id+'|'+r.binance_symbol))];
+  let updated=0;
+  for(const pair of pairs){
+    const[pid,sym]=pair.split('|');
+    const pf=portfolios.find(p=>p.id===pid);
+    const m=binanceSymbolMap.find(x=>x.portfolio_id===pid&&x.symbol===sym);
+    if(!pf||!m)continue;
+    const keyset=keysetForPortfolio(pf);
+    let fromId=0;
+    for(let page=0;page<50;page++){
+      const res=await binanceFetch('myTrades',{symbol:sym,fromId:String(fromId)},keyset);
+      if(!res||!res.ok)break;
+      const fills=await res.json();
+      if(!Array.isArray(fills)||!fills.length)break;
+      for(const f of fills){
+        const id=want.get(pid+'|'+sym+'|'+f.id);
+        fromId=Math.max(fromId,f.id+1);
+        if(!id)continue;
+        const fee=await spotFeeUsd(f.commission,f.commissionAsset,m.base_asset,m.quote_asset,parseFloat(f.price),f.time);
+        const{error}=await sb.from('trades').update({fee_amount:parseFloat(f.commission||0),fee_asset:f.commissionAsset||null,fee_usd:fee}).eq('id',id);
+        if(!error&&fee!=null)updated++;
+      }
+      if(fills.length<1000)break;
+      await new Promise(r=>setTimeout(r,300));
+    }
+  }
+  await renderJournal();
+  showToast(`Filled in fees for ${updated} trade${updated===1?'':'s'} ✅`);
+}
 async function applySyncedFill(portfolioId,portfolioKind,fill){
   const{baseAsset,quoteAsset,isBuy,qty,price,quoteQty,commission,commissionAsset,tradeTime,binanceSymbol,binanceTradeId}=fill;
   const resolvedBaseId=await resolveCoingeckoId(baseAsset);
@@ -5176,12 +5299,17 @@ async function applySyncedFill(portfolioId,portfolioKind,fill){
   const quoteAvgCost=BINANCE_QUOTE_ASSET_SET.has(quoteAsset.toUpperCase())?1:quoteCoin.avg_cost_usd;
   await sb.from('coins').update({units_held:newQuoteUnits,avg_cost_usd:quoteAvgCost}).eq('id',quoteCoin.id);
   quoteCoin.units_held=newQuoteUnits;quoteCoin.avg_cost_usd=quoteAvgCost;
-  await logTrade({
+  const tradeRow={
     user_id:currentUser.id,portfolio_id:portfolioId,coin_id:baseCoin.id,coin_name:baseCoin.name,coin_ticker:baseCoin.ticker,
     action:isBuy?'buy':'sell',units:qty,price_per_unit:price,total_usd:quoteQty,realized_pnl:realizedPnl,
     inr_rate:null,notes:'Synced from Binance',trade_date:tradeTime,
     binance_symbol:binanceSymbol,binance_trade_id:binanceTradeId
-  });
+  };
+  if(await spotFeeColsAvailable()){
+    tradeRow.fee_amount=commission||0;tradeRow.fee_asset=commissionAsset||null;
+    tradeRow.fee_usd=await spotFeeUsd(commission,commissionAsset,baseAsset,quoteAsset,price,new Date(tradeTime).getTime());
+  }
+  await logTrade(tradeRow);
   return true;
 }
 async function syncSymbolMapping(mapping){
