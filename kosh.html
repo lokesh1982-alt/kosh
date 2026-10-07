@@ -4045,6 +4045,99 @@ function exportJournalPDF(){
 // same reason: a single Lead order fills across many small pieces, which
 // otherwise reads as a wall of near-identical rows. Display-only — export
 // and the underlying futures_trades stay at full fidelity.
+// ---- Futures costs: trading fees (own commission, converted to USD) and
+// funding fees (from Binance's income feed). Funding isn't tied to any one
+// fill, so each cost is credited to the NEXT closing fill of that symbol at or
+// after it — i.e. everything paid while a trade was open (opening fees,
+// funding, closing fee) lands on the fill that closed it.
+let futuresIncomeRows=[];
+let futuresBnbPrice=null;
+let futuresCostMap=new Map();
+let futuresIncomeMissing=false;
+function futuresFeeUsd(t){
+  const a=(t.commission_asset||'').toUpperCase(),c=t.commission||0;
+  if(!c)return 0;
+  if(a==='USDT'||a==='USDC'||a==='BUSD'||a==='FDUSD')return c;
+  if(a==='BNB')return futuresBnbPrice?c*futuresBnbPrice:0;
+  return 0;
+}
+function buildFuturesCostMap(){
+  const m=new Map(),bySym={};
+  futuresTrades.forEach(t=>(bySym[t.symbol]=bySym[t.symbol]||[]).push(t));
+  const fundBySym={};
+  futuresIncomeRows.forEach(r=>(fundBySym[r.symbol]=fundBySym[r.symbol]||[]).push(r));
+  Object.keys(bySym).forEach(sym=>{
+    const ev=[];
+    bySym[sym].forEach(t=>ev.push({ms:new Date(t.trade_time).getTime(),kind:1,t}));
+    (fundBySym[sym]||[]).forEach(r=>ev.push({ms:new Date(r.income_time).getTime(),kind:0,amt:parseFloat(r.income)||0}));
+    ev.sort((a,b)=>a.ms-b.ms||a.kind-b.kind);
+    let pf=0,pg=0;
+    ev.forEach(e=>{
+      if(e.kind===0){pg+=e.amt;return;}
+      pf+=futuresFeeUsd(e.t);
+      if(e.t.realized_pnl!=null&&e.t.realized_pnl!==0){m.set(e.t.id,{fee:pf,funding:pg});pf=0;pg=0;}
+    });
+  });
+  return m;
+}
+async function loadFuturesIncome(){
+  futuresIncomeRows=[];
+  try{
+    for(let from=0;from<20000;from+=1000){
+      const{data,error}=await sb.from('futures_income').select('symbol,income,income_time').eq('user_id',currentUser.id).eq('income_type','FUNDING_FEE').order('income_time',{ascending:true}).range(from,from+999);
+      if(error){futuresIncomeMissing=true;break;}
+      futuresIncomeRows=futuresIncomeRows.concat(data||[]);
+      if(!data||data.length<1000)break;
+    }
+  }catch(e){}
+  if(!futuresBnbPrice&&futuresTrades.some(t=>(t.commission_asset||'').toUpperCase()==='BNB')){
+    try{
+      const r=await binanceFetch('public',{path:'/api/v3/ticker/price',symbol:'BNBUSDT'},'main');
+      if(r&&r.ok){const j=await r.json();const v=parseFloat(j.price);if(v>0)futuresBnbPrice=v;}
+    }catch(e){}
+  }
+  futuresCostMap=buildFuturesCostMap();
+}
+async function syncFuturesFunding(){
+  try{
+    const{data:last,error:le}=await sb.from('futures_income').select('income_time').eq('user_id',currentUser.id).order('income_time',{ascending:false}).limit(1);
+    if(le){futuresIncomeMissing=true;return-1;}
+    const now=Date.now(),day=86400000,maxBack=89*day;
+    let start=last&&last.length?new Date(last[0].income_time).getTime()+1:now-maxBack;
+    start=Math.max(start,now-maxBack);
+    let added=0;
+    for(let ws=start;ws<now;ws+=7*day){
+      const we=Math.min(ws+7*day-1,now);
+      let from=ws;
+      for(let page=0;page<20;page++){
+        const res=await binanceFetch('futuresIncome',{incomeType:'FUNDING_FEE',startTime:String(from),endTime:String(we),limit:'1000'},'futures');
+        if(!res||!res.ok)return added;
+        const rows=await res.json();
+        if(!Array.isArray(rows)||!rows.length)break;
+        const payload=rows.filter(r=>r.symbol).map(r=>({user_id:currentUser.id,symbol:r.symbol,income_type:r.incomeType||'FUNDING_FEE',income:parseFloat(r.income),asset:r.asset||null,income_time:new Date(r.time).toISOString(),tran_id:String(r.tranId)}));
+        if(payload.length){
+          const{error}=await sb.from('futures_income').upsert(payload,{onConflict:'user_id,income_type,tran_id,symbol',ignoreDuplicates:true});
+          if(error){futuresIncomeMissing=true;return-1;}
+          added+=payload.length;
+        }
+        if(rows.length<1000)break;
+        from=Math.max(...rows.map(r=>r.time))+1;
+      }
+    }
+    return added;
+  }catch(e){return 0;}
+}
+function futuresCostCellsHtml(fills){
+  let fee=0,fund=0,pnl=0,has=false;
+  fills.forEach(t=>{const c=futuresCostMap.get(t.id);if(c){has=true;fee+=c.fee;fund+=c.funding;pnl+=t.realized_pnl||0;}});
+  const td='padding:7px 10px;text-align:right';
+  if(!has)return`<td style="${td};color:var(--ink3)">—</td><td style="${td};color:var(--ink3)">—</td><td style="${td};color:var(--ink3)">—</td>`;
+  const net=pnl-fee+fund;
+  const sg=v=>(v>=0?'+':'-')+fmtUsd(Math.abs(v));
+  return`<td style="${td};color:var(--red)" class="hide-figure">${fee>0?'-'+fmtUsd(fee):fmtUsd(0)}</td>
+    <td style="${td};color:${fund<0?'var(--red)':(fund>0?'var(--green)':'var(--ink3)')}" class="hide-figure">${fund===0?fmtUsd(0):sg(fund)}</td>
+    <td style="${td};color:${net>=0?'var(--green)':'var(--red)'};font-weight:600" class="hide-figure">${sg(net)}</td>`;
+}
 let futuresJournalGroupRows=true;
 function groupFuturesTrades(list){
   const groups={};
@@ -4117,6 +4210,7 @@ function futuresJournalGroupRowHtml(g,i){
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(g.price)}${multi?'<span style="color:var(--ink3)"> avg</span>':''}</td>
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)" class="hide-figure">${g.commission!=null?g.commission.toFixed(6)+' '+(g.commission_asset||''):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${g.realized_pnl==null?'var(--ink3)':(g.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${g.realized_pnl!=null?(g.realized_pnl>=0?'+':'')+fmtUsd(g.realized_pnl):'—'}</td>
+    ${futuresCostCellsHtml(g.fills)}
   </tr>`;
   if(!multi)return head;
   const subrows=g.fills.map((t,j)=>{
@@ -4136,6 +4230,7 @@ function futuresJournalRowHtml(t,i){
     <td style="padding:7px 10px;text-align:right" class="hide-figure">${fmtUsd(t.price)}</td>
     <td style="padding:7px 10px;text-align:right;color:var(--ink3)" class="hide-figure">${t.commission!=null?t.commission+' '+(t.commission_asset||''):'—'}</td>
     <td style="padding:7px 10px;text-align:right;color:${t.realized_pnl==null?'var(--ink3)':(t.realized_pnl>=0?'var(--green)':'var(--red)')};font-weight:600" class="hide-figure">${t.realized_pnl!=null?(t.realized_pnl>=0?'+':'')+fmtUsd(t.realized_pnl):'—'}</td>
+    ${futuresCostCellsHtml([t])}
   </tr>`;
 }
 async function renderFuturesJournal(el,toggleHtml){
@@ -4170,18 +4265,23 @@ async function renderFuturesJournal(el,toggleHtml){
         <th style="padding:8px 10px;text-align:right">Price</th>
         <th style="padding:8px 10px;text-align:right">Commission</th>
         <th style="padding:8px 10px;text-align:right">Realized P&amp;L</th>
+        <th style="padding:8px 10px;text-align:right" title="Opening + closing trading fees of the trade, in USD">Fees</th>
+        <th style="padding:8px 10px;text-align:right" title="Funding paid (-) or received (+) while the trade was open">Funding</th>
+        <th style="padding:8px 10px;text-align:right" title="Realized P&amp;L minus fees, plus/minus funding">Net P&amp;L</th>
       </tr></thead>
-      <tbody id="futures-journal-table-body">${fList.length?futuresJournalTableBodyHtml(fList):'<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--ink3)">No trades in this date range.</td></tr>'}</tbody>
+      <tbody id="futures-journal-table-body">${fList.length?futuresJournalTableBodyHtml(fList):'<tr><td colspan="10" style="padding:16px;text-align:center;color:var(--ink3)">No trades in this date range.</td></tr>'}</tbody>
     </table>
   </div>`;
+  html+=`<div style="font-size:0.66rem;color:var(--ink3);margin-top:8px;line-height:1.5">Fees, Funding and Net P&amp;L appear on the closing fill of each trade and cover everything paid while it was open (opening fee, funding, closing fee).${futuresIncomeMissing?' <b style="color:var(--red)">Funding data not available yet — run migration-futures-income.sql, then press Sync Futures.</b>':(futuresIncomeRows.length?'':' No funding records synced yet — press Sync Futures.')}${futuresBnbPrice?' BNB-paid fees are converted at today\'s BNB price.':''}</div>`;
   el.innerHTML=html;
 }
-const FUTURES_JOURNAL_COLUMNS=['Date','Symbol','Position Side','Side','Qty','Price','Commission','Commission Asset','Realized P&L'];
+const FUTURES_JOURNAL_COLUMNS=['Date','Symbol','Position Side','Side','Qty','Price','Commission','Commission Asset','Realized P&L','Fees (USD)','Funding (USD)','Net P&L (USD)'];
 function futuresJournalExportRows(){
   return futuresDateFiltered(futuresTrades).map(t=>{
     const date=new Date(t.trade_time).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'});
     return[date,t.symbol,t.position_side||'',t.side==='buy'?'Buy':'Sell',t.qty,t.price,
-      t.commission!=null?t.commission:'',t.commission_asset||'',t.realized_pnl!=null?t.realized_pnl:''];
+      t.commission!=null?t.commission:'',t.commission_asset||'',t.realized_pnl!=null?t.realized_pnl:'',
+      ...(()=>{const c=futuresCostMap.get(t.id);return c?[+c.fee.toFixed(4),+c.funding.toFixed(4),+((t.realized_pnl||0)-c.fee+c.funding).toFixed(4)]:['','',''];})()];
   });
 }
 function exportFuturesJournalExcel(){
@@ -5912,6 +6012,7 @@ async function saveFuturesCapitalDeployed(){
 async function loadFuturesTrades(){
   const{data}=await sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false});
   futuresTrades=data||[];
+  await loadFuturesIncome();
 }
 function renderFuturesSettingsCard(){
   Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings()]).then(()=>{
@@ -6029,6 +6130,8 @@ async function syncFuturesNow(){
   if(futuresSymbols.length){
     for(const s of futuresSymbols)total+=await syncFuturesSymbol(s.symbol);
   }
+  const fundingAdded=await syncFuturesFunding();
+  if(fundingAdded<0)showToast('Funding fees not saved — run migration-futures-income.sql in Supabase first.');
   await loadFuturesPositions();
   await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,last_synced_at:new Date().toISOString()},{onConflict:'user_id'});
   await loadFuturesSyncSettings();
