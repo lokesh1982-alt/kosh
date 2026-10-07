@@ -6232,6 +6232,36 @@ async function discoverFuturesSymbols(){
   return newSymbols;
 }
 let futuresPositionsError=null;
+let futuresOpenOrders=[];
+let futuresOrdersNote=null;
+// Open orders = regular orders (limit, and — on older accounts — stop/take-profit)
+// plus Binance's newer "algo" conditional orders (stop-loss / take-profit
+// triggers). Each source is optional: a failure just leaves that source empty.
+async function loadFuturesOpenOrders(){
+  futuresOpenOrders=[];futuresOrdersNote=null;
+  const norm=(o,algo)=>({
+    symbol:o.symbol,positionSide:o.positionSide||'BOTH',side:o.side,
+    type:String(o.type||o.orderType||'').toUpperCase(),
+    price:parseFloat(o.price||0),
+    stopPrice:parseFloat(o.stopPrice||o.triggerPrice||0),
+    qty:parseFloat(o.origQty||o.quantity||0),
+    reduceOnly:!!(o.reduceOnly||o.closePosition),closePosition:!!o.closePosition,algo
+  });
+  try{
+    const r=await binanceFetch('futuresOpenOrders',{},'futures');
+    if(r&&r.ok){const j=await r.json();if(Array.isArray(j))futuresOpenOrders=futuresOpenOrders.concat(j.map(o=>norm(o,false)));}
+    else if(r){const b=await r.text();futuresOrdersNote='Could not read open orders ('+b.slice(0,100)+') — redeploy the binance-proxy Edge Function.';}
+  }catch(e){}
+  try{
+    const r=await binanceFetch('futuresOpenAlgoOrders',{},'futures');
+    if(r&&r.ok){const j=await r.json();const arr=Array.isArray(j)?j:(j&&Array.isArray(j.orders)?j.orders:[]);futuresOpenOrders=futuresOpenOrders.concat(arr.map(o=>norm(o,true)));}
+  }catch(e){}
+}
+function fmtPx(v){
+  if(v==null||isNaN(v))return'—';
+  const a=Math.abs(v);
+  return'$'+v.toLocaleString('en-US',{minimumFractionDigits:a>=1?2:4,maximumFractionDigits:a>=1?2:(a>=0.01?4:6)});
+}
 // Open positions come straight from Binance's positionRisk endpoint and are
 // account-wide — unlike closed-trade history, they need NO symbol tracked
 // in futures_symbols to show up. Errors are captured instead of swallowed
@@ -6273,19 +6303,52 @@ async function syncFuturesNow(){
 function futuresPositionRowHtml(p){
   const amt=parseFloat(p.positionAmt||0);
   const side=amt>0?'LONG':'SHORT';
+  const qty=Math.abs(amt);
   const uPnl=parseFloat(p.unRealizedProfit||0);
   const entry=parseFloat(p.entryPrice||0);
   const mark=parseFloat(p.markPrice||0);
-  const lev=p.leverage||'—';
+  const lev=parseFloat(p.leverage||0)||null;
+  const liq=parseFloat(p.liquidationPrice||0);
+  const notional=Math.abs(parseFloat(p.notional||0))||qty*mark;
+  const isolated=String(p.marginType||'').toLowerCase()==='isolated';
+  let margin=isolated?parseFloat(p.isolatedMargin||p.isolatedWallet||0):0;
+  if(!(margin>0))margin=parseFloat(p.positionInitialMargin||0)>0?parseFloat(p.positionInitialMargin):(lev?notional/lev:0);
+  const roe=margin>0?uPnl/margin*100:null;
+  // Match this position's open orders (hedge mode: same position side).
+  const mine=futuresOpenOrders.filter(o=>o.symbol===p.symbol&&(o.positionSide==='BOTH'||!p.positionSide||p.positionSide==='BOTH'||o.positionSide===p.positionSide));
+  const isExit=o=>o.reduceOnly||o.closePosition;
+  const sl=mine.filter(o=>o.type.startsWith('STOP')&&isExit(o)||o.type==='TRAILING_STOP_MARKET');
+  const tp=mine.filter(o=>o.type.startsWith('TAKE_PROFIT')&&isExit(o));
+  const others=mine.filter(o=>!sl.includes(o)&&!tp.includes(o));
+  const trig=o=>o.stopPrice>0?o.stopPrice:o.price;
+  const exitLine=(label,list,col)=>list.length?list.map(o=>{
+    const px=trig(o);
+    const dist=entry>0?(px-entry)/entry*100:null;
+    const est=(o.closePosition||!(o.qty>0)?qty:Math.min(o.qty,qty))*(side==='LONG'?px-entry:entry-px);
+    return`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;margin-top:4px"><span style="color:${col};font-weight:700">${label}</span><span class="hide-figure">${fmtPx(px)}${dist!=null?` <span style="color:var(--ink3)">(${dist>=0?'+':''}${dist.toFixed(1)}%)</span>`:''} · <span style="color:${est>=0?'var(--green)':'var(--red)'}">${est>=0?'+':'-'}${fmtUsd(Math.abs(est))}</span></span></div>`;
+  }).join(''):`<div style="display:flex;justify-content:space-between;font-size:0.72rem;margin-top:4px"><span style="color:${col};font-weight:700">${label}</span><span style="color:var(--ink3)">not set</span></div>`;
+  const otherLines=others.map(o=>{
+    const kind=o.type==='LIMIT'?(isExit(o)?'Limit (exit)':'Limit'):o.type.replace(/_/g,' ').toLowerCase().replace(/^./,c=>c.toUpperCase());
+    const px=o.type==='LIMIT'?o.price:trig(o);
+    return`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;margin-top:4px"><span style="color:var(--ink2)">${escapeHtml(kind)} · <span style="text-transform:capitalize">${String(o.side||'').toLowerCase()}</span></span><span class="hide-figure">${o.qty||'—'} @ ${fmtPx(px)}</span></div>`;
+  }).join('');
+  const cell=(l,v,extra)=>`<div><div style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">${l}</div><div class="hide-figure" style="font-weight:600;font-size:0.8rem;${extra||''}">${v}</div></div>`;
   return`<div class="card" style="margin-bottom:8px">
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><b>${escapeHtml(p.symbol)}</b> <span style="font-size:0.7rem;color:${side==='LONG'?'var(--green)':'var(--red)'};font-weight:700">${side}</span> <span style="font-size:0.68rem;color:var(--ink3)">${lev}x</span></div>
-      <div style="font-weight:700;color:${uPnl>=0?'var(--green)':'var(--red)'}">${uPnl>=0?'+':''}${fmtUsd(uPnl)}</div>
+      <div><b>${escapeHtml(p.symbol)}</b> <span style="font-size:0.7rem;color:${side==='LONG'?'var(--green)':'var(--red)'};font-weight:700">${side}</span> <span style="font-size:0.68rem;color:var(--ink3)">${lev||'—'}x ${isolated?'isolated':'cross'}</span></div>
+      <div style="text-align:right"><div class="hide-figure" style="font-weight:700;color:${uPnl>=0?'var(--green)':'var(--red)'}">${uPnl>=0?'+':''}${fmtUsd(uPnl)}</div>${roe!=null?`<div style="font-size:0.66rem;color:${roe>=0?'var(--green)':'var(--red)'}">${roe>=0?'+':''}${roe.toFixed(1)}% on margin</div>`:''}</div>
     </div>
-    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--ink3);margin-top:6px">
-      <span>Qty: ${Math.abs(amt)}</span>
-      <span>Entry: ${fmtUsd(entry)}</span>
-      <span>Mark: ${fmtUsd(mark)}</span>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:10px">
+      ${cell('Margin',margin>0?fmtUsd(margin):'—')}
+      ${cell('Size',qty+' <span style="color:var(--ink3);font-weight:500">('+fmtUsd(notional)+')</span>')}
+      ${cell('Entry',fmtPx(entry))}
+      ${cell('Current',fmtPx(mark))}
+      ${liq>0?cell('Liquidation',fmtPx(liq),'color:var(--red)'):''}
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:6px">
+      ${exitLine('Stop loss',sl,'var(--red)')}
+      ${exitLine('Take profit',tp,'var(--green)')}
+      ${otherLines}
     </div>
   </div>`;
 }
@@ -6304,11 +6367,14 @@ async function renderFutures(){
   const el=document.getElementById('futures-content');
   if(!el)return;
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
-  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions()]);
+  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders()]);
   const closed=futuresTrades.filter(t=>t.realized_pnl!=null&&t.realized_pnl!==0); // opening fills report 0 PnL — not a closed trade
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
+  let costFees=0,costFunding=0;futuresCostMap.forEach(c=>{costFees+=c.fee;costFunding+=c.funding;});
+  const currentCapital=futuresCapitalDeployed+totalRealized;
+  const afterCosts=currentCapital-costFees+costFunding;
   const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
   const totalPnl=totalRealized+totalUnrealized;
   const netRoi=futuresCapitalDeployed>0?(totalPnl/futuresCapitalDeployed)*100:null;
@@ -6316,7 +6382,7 @@ async function renderFutures(){
   const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
   const trackingNote=futuresSymbols.length
     ?`Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')} (for closed-trade history)`
-    :`No symbols added yet — add one in Settings to sync closed-trade history. Open positions below don't need one.`;
+    :`No traded pairs yet — press Sync Binance and they are picked up automatically.`;
   const errorBanner=futuresPositionsError
     ?`<div style="background:var(--red-bg);color:var(--red);font-size:0.76rem;padding:10px 12px;border-radius:8px;margin-bottom:12px">⚠️ Could not load positions: ${escapeHtml(futuresPositionsError)}</div>`
     :'';
@@ -6328,6 +6394,11 @@ async function renderFutures(){
         <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
         <span class="hide-figure" style="font-size:0.9rem;font-weight:700">${futuresCapitalDeployed>0?fmtUsd(futuresCapitalDeployed):'No capital set'}</span>
       </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current capital <span style="text-transform:none">(deployed + realized)</span></span>
+        <span class="hide-figure" style="font-size:0.9rem;font-weight:700;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${futuresCapitalDeployed>0?fmtUsd(currentCapital):'—'}</span>
+      </div>
+      ${futuresCapitalDeployed>0&&(costFees||costFunding)?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">${fmtUsd(afterCosts)} after fees ${fmtUsd(costFees)} &amp; funding ${costFunding>=0?'+':'-'}${fmtUsd(Math.abs(costFunding))}</div>`:''}
       <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
         <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
         <span style="font-size:0.9rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
@@ -6341,6 +6412,7 @@ async function renderFutures(){
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Closed trades</div><div style="font-weight:700;font-size:1.05rem">${closed.length}</div></div>
     </div>
     <div class="dash-section"><h3>Open positions</h3></div>
+    ${futuresOrdersNote?`<div style="font-size:0.7rem;color:var(--ink3);margin-bottom:8px">${escapeHtml(futuresOrdersNote)}</div>`:''}
     ${futuresPositions.length?futuresPositions.map(futuresPositionRowHtml).join(''):'<div class="empty-state" style="padding:12px 0"><div>No open positions.</div></div>'}
     <div style="text-align:center;margin-top:14px">
       <button class="link-btn" onclick="switchTab('journal');setJournalViewMode('futures')">📒 View closed trades in Journal →</button>
