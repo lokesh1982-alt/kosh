@@ -688,7 +688,7 @@ select option{color:#14181D;background:#fff;}
     <div class="form-group"><label class="form-label">Action</label>
       <select class="form-select" id="pt-action"><option value="sell">Sell</option><option value="buy">Buy</option></select>
     </div>
-    <div class="form-group"><label class="form-label">Date of the trade</label><input class="form-input" type="date" id="pt-date"/></div>
+    <div class="form-group"><label class="form-label">Date of the trade</label><input class="form-input" type="date" id="pt-date" onclick="try{this.showPicker()}catch(e){}"/></div>
     <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="pt-units" step="0.00000001"/></div>
     <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="pt-price" step="0.0001"/></div>
     <div class="form-group"><label class="form-label">Fee paid (USD) — optional</label><input class="form-input" type="number" id="pt-fee" step="0.0001" min="0"/></div>
@@ -710,7 +710,7 @@ select option{color:#14181D;background:#fff;}
     <div class="form-group"><label class="form-label">Type</label>
       <select class="form-select" id="et-action"><option value="buy">Buy</option><option value="sell">Sell</option><option value="transfer_in">Transfer in</option><option value="transfer_out">Transfer out</option></select>
     </div>
-    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="et-date"/></div>
+    <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="et-date" onclick="try{this.showPicker()}catch(e){}"/></div>
     <div class="form-group"><label class="form-label">Units</label><input class="form-input" type="number" id="et-units" step="0.00000001"/></div>
     <div class="form-group"><label class="form-label">Price per unit (USD)</label><input class="form-input" type="number" id="et-price" step="0.0000001"/></div>
     <div class="form-group"><label class="form-label">Realized P&amp;L (USD)</label><input class="form-input" type="number" id="et-pnl" step="0.0001"/>
@@ -1447,7 +1447,7 @@ async function loadAllData(){
   // coin_id — a coin can be deleted later while its trade history should stay
   // visible in this portfolio's Journal, and coin_id alone can't do that once
   // it's been set to NULL.
-  const tradesRes=await sb.from('trades').select('*').eq('portfolio_id',currentPortfolioId).order('trade_date',{ascending:false});
+  const tradesRes=await sbFetchAll(()=>sb.from('trades').select('*').eq('portfolio_id',currentPortfolioId).order('trade_date',{ascending:false}).order('id'));
   trades=tradesRes.data||[];
   // US-Stocks: make sure the USD cash holding exists in the reserve tier, so the
   // cash balance can be entered with "Correct" and sale proceeds have somewhere to go.
@@ -2277,7 +2277,7 @@ async function computeCombinedDashboardData(){
   ]);
   // Trades are read straight from the table (not via coin_id) so sales of deleted coins still count.
   const[tradesRes,settingsRes]=await Promise.all([
-    sb.from('trades').select('portfolio_id,realized_pnl').eq('user_id',currentUser.id),
+    sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,id').eq('user_id',currentUser.id).order('id')),
     sb.from('kosh_settings').select('*')
   ]);
   Object.keys(realizedStore).forEach(k=>{delete realizedStore[k];});
@@ -3718,7 +3718,7 @@ async function confirmPastTrade(){
 let journalPortfolioId=''; // '' = all portfolios in the current crypto/stocks mode
 let journalViewMode='crypto'; // 'crypto' | 'stocks' | 'futures' — separate journals per the user's request
 async function loadAllTradesForJournal(){
-  const{data}=await sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false});
+  const{data}=await sbFetchAll(()=>sb.from('trades').select('*').eq('user_id',currentUser.id).order('trade_date',{ascending:false}).order('id'));
   return data||[];
 }
 function setJournalScope(v){
@@ -3749,14 +3749,28 @@ function journalInDateRange(dateVal){
 function journalDateFiltered(list){return list.filter(t=>journalInDateRange(t.trade_date));}
 function futuresDateFiltered(list){return list.filter(t=>journalInDateRange(t.trade_time));}
 function setJournalDateRange(from,to){journalDateFrom=from||'';journalDateTo=to||'';renderJournal();}
+// Typing a year digit-by-digit makes the browser fire "change" with years like
+// 0002 or 0020, which re-rendered the page mid-typing. Ignore implausible years
+// and wait a moment so only the finished date applies.
+let _jdTimer=null;
+function journalDateChanged(handler){
+  clearTimeout(_jdTimer);
+  _jdTimer=setTimeout(()=>{
+    const f=document.getElementById('journal-date-from'),t=document.getElementById('journal-date-to');
+    const fv=f?f.value:'',tv=t?t.value:'';
+    const ok=v=>!v||/^(19|20)\d\d-/.test(v);
+    if(!ok(fv)||!ok(tv))return;
+    window[handler](fv,tv);
+  },600);
+}
 function journalDateRangeHtml(handler){
   handler=handler||'setJournalDateRange';
   const inp='padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);font-size:0.74rem;min-width:0;flex:1';
   return`<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
     <span style="font-size:0.72rem;color:var(--ink3)">From</span>
-    <input type="date" id="journal-date-from" value="${journalDateFrom}" max="${journalDateTo||''}" onchange="${handler}(this.value,document.getElementById('journal-date-to').value)" style="${inp}">
+    <input type="date" id="journal-date-from" value="${journalDateFrom}" max="${journalDateTo||''}" onclick="try{this.showPicker()}catch(e){}" onchange="journalDateChanged('${handler}')" style="${inp}">
     <span style="font-size:0.72rem;color:var(--ink3)">To</span>
-    <input type="date" id="journal-date-to" value="${journalDateTo}" min="${journalDateFrom||''}" onchange="${handler}(document.getElementById('journal-date-from').value,this.value)" style="${inp}">
+    <input type="date" id="journal-date-to" value="${journalDateTo}" min="${journalDateFrom||''}" onclick="try{this.showPicker()}catch(e){}" onchange="journalDateChanged('${handler}')" style="${inp}">
     ${(journalDateFrom||journalDateTo)?`<button class="link-btn" style="font-size:0.72rem" onclick="${handler}('','')">Clear</button>`:''}
   </div>`;
 }
@@ -6227,8 +6241,20 @@ async function saveFuturesCapitalDeployed(){
   showToast('Futures capital deployed saved ✅');
   if(document.getElementById('sec-futures')?.classList.contains('active'))renderFutures();
 }
+// Supabase returns at most 1000 rows per request, silently. Anything that must
+// see ALL rows (totals, the Journal) pages through with this.
+async function sbFetchAll(build){
+  let out=[];
+  for(let from=0;from<200000;from+=1000){
+    const{data,error}=await build().range(from,from+999);
+    if(error)return{data:out,error};
+    out=out.concat(data||[]);
+    if(!data||data.length<1000)break;
+  }
+  return{data:out,error:null};
+}
 async function loadFuturesTrades(){
-  const{data}=await sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false});
+  const{data}=await sbFetchAll(()=>sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false}).order('id'));
   futuresTrades=data||[];
   await loadFuturesIncome();
 }
