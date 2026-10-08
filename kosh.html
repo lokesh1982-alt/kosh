@@ -4296,7 +4296,7 @@ function futuresJournalRowHtml(t,i){
 }
 async function renderFuturesJournal(el,toggleHtml){
   try{await loadFuturesTrades();}catch(e){console.error('loadFuturesTrades failed:',e);futuresTrades=[];}
-  const syncBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="syncFuturesNow().then(renderJournal)">🔄 Sync Futures</button>`;
+  const syncBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="syncFuturesNow().then(renderJournal)">🔄 Sync Futures</button><button class="btn-outline" style="width:100%;font-size:0.72rem;margin:-6px 0 12px;color:var(--ink3)" onclick="backfillFuturesHistory()">⏪ Load older history (up to 6 months)</button>`;
   if(!futuresTrades.length){
     el.innerHTML=toggleHtml+syncBtn+`<div class="empty-state"><div class="ic">📒</div><div>No futures trades synced yet.</div></div>`;
     return;
@@ -6394,6 +6394,45 @@ async function loadFuturesPositions(){
   futuresPositionsError=null;
   const rows=await res.json();
   futuresPositions=(Array.isArray(rows)?rows:[]).filter(p=>Math.abs(parseFloat(p.positionAmt||0))>0);
+}
+// One-off: pull older Futures fills. userTrades with no fromId only returns the
+// last 7 days, so anything older than your first sync was never saved. This walks
+// back in 7-day windows (Binance's max per call, ~6 months of history available)
+// for every tracked symbol. Duplicates are ignored, so it is safe to repeat.
+async function backfillFuturesHistory(){
+  if(!futuresSymbols.length){showToast('Press Sync Futures first so pairs are discovered.');return;}
+  if(!confirm('Load up to 6 months of older Futures trades for '+futuresSymbols.length+' pairs? This can take a few minutes.'))return;
+  const WEEK=7*24*3600*1000,now=Date.now(),WEEKS=26;
+  let added=0,done=0;
+  for(const s of futuresSymbols){
+    done++;
+    showToast('Loading history '+done+'/'+futuresSymbols.length+' ('+s.symbol+')…');
+    for(let w=0;w<WEEKS;w++){
+      const end=now-w*WEEK,start=end-WEEK+1;
+      let res;
+      try{res=await binanceFetch('futuresTrades',{symbol:s.symbol,startTime:String(start),endTime:String(end)},'futures');}catch(e){break;}
+      if(!res)break;
+      if(!res.ok){const b=await res.text();showToast('History error '+s.symbol+': '+b.slice(0,100));break;}
+      const fills=await res.json();
+      if(!Array.isArray(fills)||!fills.length){await new Promise(r=>setTimeout(r,120));continue;}
+      const rows=fills.map(f=>({
+        user_id:currentUser.id,symbol:s.symbol,side:f.side==='BUY'?'buy':'sell',position_side:f.positionSide||null,
+        qty:parseFloat(f.qty),price:parseFloat(f.price),quote_qty:parseFloat(f.quoteQty||(f.qty*f.price)),
+        commission:parseFloat(f.commission||0),commission_asset:f.commissionAsset||null,
+        realized_pnl:f.realizedPnl!=null?parseFloat(f.realizedPnl):null,
+        trade_time:new Date(f.time).toISOString(),binance_trade_id:f.id
+      }));
+      for(let i=0;i<rows.length;i+=200){
+        const{data,error}=await sb.from('futures_trades').upsert(rows.slice(i,i+200),{onConflict:'user_id,symbol,binance_trade_id',ignoreDuplicates:true}).select('id');
+        if(!error)added+=(data||[]).length;
+      }
+      await new Promise(r=>setTimeout(r,150));
+    }
+  }
+  await loadFuturesTrades();
+  renderFutures();
+  if(typeof renderJournal==='function')try{renderJournal();}catch(e){}
+  showToast(added?('Added '+added+' older Futures fills ✅'):'No older fills found ✅');
 }
 async function syncFuturesNow(){
   showToast('Syncing Futures...');
