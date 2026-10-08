@@ -2341,11 +2341,12 @@ async function renderDashboard(){
     // exactly the figure its own card and the Allocation donut show.
     // Guarded: if Futures can't be loaded, the headline just excludes it.
     try{
-      await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades()]);
+      await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades(),loadFuturesAccount()]);
       if(futuresCapitalDeployed>0||futuresPositions.length>0){
-        const fReal=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((a,t)=>a+t.realized_pnl,0);
         const fUnreal=futuresPositions.reduce((a,p)=>a+parseFloat(p.unRealizedProfit||0),0);
-        combined.combinedTotal+=futuresCapitalDeployed+fReal+fUnreal;
+        const fVal=futuresValueNow();
+        const fReal=fVal-futuresCapitalDeployed-fUnreal;
+        combined.combinedTotal+=fVal;
         combined.totalCapital+=futuresCapitalDeployed;
         combined.combinedUnrealized+=fUnreal;
         combined.combinedRealized+=fReal;
@@ -2453,8 +2454,8 @@ async function renderDashboard(){
       const closedF=futuresTrades.filter(t=>t.realized_pnl!=null);
       const totalRealizedF=closedF.reduce((s,t)=>s+t.realized_pnl,0);
       const totalUnrealizedF=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
-      const futGain=totalRealizedF+totalUnrealizedF;
-      const futValue=futuresCapitalDeployed+futGain;
+      const futValue=futuresValueNow();
+      const futGain=futValue-futuresCapitalDeployed;
       const futVsCap=futuresCapitalDeployed>0?(futGain/futuresCapitalDeployed)*100:null;
       const futCol=futVsCap==null?'var(--ink3)':futVsCap>=0?'var(--green)':'var(--red)';
       const futItems=futuresPositions.map(p=>({label:p.symbol,value:Math.abs(parseFloat(p.positionAmt||0))*parseFloat(p.markPrice||0)}));
@@ -2496,9 +2497,7 @@ async function renderDashboard(){
     // capital deployed + realized/unrealized P&L — the same figure its card shows.
     const donutRows=combined.perPortfolio.filter(x=>x.value>0).map(x=>({name:x.portfolio.name,value:x.value}));
     if(futuresCapitalDeployed>0||futuresPositions.length>0){
-      const fv=futuresCapitalDeployed
-        +futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0)
-        +futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+      const fv=futuresValueNow();
       if(fv>0)donutRows.push({name:'Futures',value:fv});
     }
     const allocTotal=donutRows.reduce((s,x)=>s+x.value,0);
@@ -6348,6 +6347,30 @@ async function loadFuturesOpenOrders(){
     if(r&&r.ok){const j=await r.json();const arr=Array.isArray(j)?j:(j&&Array.isArray(j.orders)?j.orders:[]);futuresOpenOrders=futuresOpenOrders.concat(arr.map(o=>norm(o,true)));}
   }catch(e){}
 }
+// The real Binance Futures account balance. This is the source of truth for
+// "how much do I have": it already includes every realized P&L, fee, funding
+// payment, and transfer — things the trade-history sum can miss when older
+// trades were never synced. wallet = excludes open P&L; margin = wallet + open P&L.
+let futuresAccount=null;
+async function loadFuturesAccount(){
+  futuresAccount=null;
+  try{
+    const r=await binanceFetch('futuresAccount',{},'futures');
+    if(r&&r.ok){
+      const j=await r.json();
+      const w=parseFloat(j.totalWalletBalance),m=parseFloat(j.totalMarginBalance);
+      if(!isNaN(w)&&!isNaN(m))futuresAccount={wallet:w,margin:m,unrealized:parseFloat(j.totalUnrealizedProfit||0),available:parseFloat(j.availableBalance||0)};
+    }
+  }catch(e){}
+}
+// Current value of the Futures account: real Binance margin balance when it can
+// be read, otherwise the estimate from deployed capital + trade history.
+function futuresValueNow(){
+  if(futuresAccount)return futuresAccount.margin;
+  return futuresCapitalDeployed
+    +futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0)
+    +futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+}
 function fmtPx(v){
   if(v==null||isNaN(v))return'—';
   const a=Math.abs(v);
@@ -6662,16 +6685,21 @@ async function renderFutures(){
   const el=document.getElementById('futures-content');
   if(!el)return;
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
-  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders()]);
+  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders(),loadFuturesAccount()]);
   const closed=futuresTrades.filter(t=>t.realized_pnl!=null&&t.realized_pnl!==0); // opening fills report 0 PnL — not a closed trade
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
   let costFees=0,costFunding=0;futuresCostMap.forEach(c=>{costFees+=c.fee;costFunding+=c.funding;});
-  const currentCapital=futuresCapitalDeployed+totalRealized;
-  const afterCosts=currentCapital-costFees+costFunding;
   const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
-  const totalPnl=totalRealized+totalUnrealized;
+  // Real Binance wallet balance (already net of fees, funding, transfers) wins
+  // over the trade-history estimate; the history sum is shown as a cross-check.
+  const histCapital=futuresCapitalDeployed+totalRealized;
+  const currentCapital=futuresAccount?futuresAccount.wallet:histCapital;
+  const afterCosts=histCapital-costFees+costFunding;
+  const realizedShown=futuresAccount?futuresAccount.wallet-futuresCapitalDeployed:totalRealized;
+  const totalPnl=futuresAccount?futuresAccount.margin-futuresCapitalDeployed:totalRealized+totalUnrealized;
+  const histGap=futuresAccount?futuresAccount.wallet-histCapital:0;
   const netRoi=futuresCapitalDeployed>0?(totalPnl/futuresCapitalDeployed)*100:null;
   const roiCol=netRoi==null?'var(--ink3)':(netRoi>=0?'var(--green)':'var(--red)');
   const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
@@ -6690,10 +6718,13 @@ async function renderFutures(){
         <span class="hide-figure" style="font-size:0.9rem;font-weight:700">${futuresCapitalDeployed>0?fmtUsd(futuresCapitalDeployed):'No capital set'}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
-        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current capital <span style="text-transform:none">(deployed + realized)</span></span>
-        <span class="hide-figure" style="font-size:0.9rem;font-weight:700;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${futuresCapitalDeployed>0?fmtUsd(currentCapital):'—'}</span>
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current capital <span style="text-transform:none">(${futuresAccount?'Binance wallet balance':'deployed + realized'})</span></span>
+        <span class="hide-figure" style="font-size:0.9rem;font-weight:700;color:${realizedShown>=0?'var(--green)':'var(--red)'}">${futuresAccount||futuresCapitalDeployed>0?fmtUsd(currentCapital):'—'}</span>
       </div>
-      ${futuresCapitalDeployed>0&&(costFees||costFunding)?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">${fmtUsd(afterCosts)} after fees ${fmtUsd(costFees)} &amp; funding ${costFunding>=0?'+':'-'}${fmtUsd(Math.abs(costFunding))}</div>`:''}
+      ${futuresAccount&&Math.abs(histGap)>5?`<div style="font-size:0.66rem;color:var(--ink3);margin-top:4px;line-height:1.4">Binance's real balance is ${fmtUsd(Math.abs(histGap))} ${histGap>0?'higher':'lower'} than your synced trade history (${fmtUsd(histCapital)}). Usual cause: older trades were never synced, or money moved in/out since "Capital deployed" was set. The figures above use the real Binance balance.</div>`:''}
+      ${futuresAccount?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">Incl. open P&amp;L: ${fmtUsd(futuresAccount.margin)} · available ${fmtUsd(futuresAccount.available)}</div>`:''}
+      ${!futuresAccount?`<div style="font-size:0.66rem;color:var(--ink3);margin-top:4px">Couldn't read the live Binance balance — redeploy the binance-proxy function. Showing an estimate from synced trades.</div>`:''}
+      ${!futuresAccount&&futuresCapitalDeployed>0&&(costFees||costFunding)?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">${fmtUsd(afterCosts)} after fees ${fmtUsd(costFees)} &amp; funding ${costFunding>=0?'+':'-'}${fmtUsd(Math.abs(costFunding))}</div>`:''}
       <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
         <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
         <span style="font-size:0.9rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
@@ -6701,7 +6732,7 @@ async function renderFutures(){
       ${futuresCapitalDeployed===0?`<div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">Set this in Settings → Futures → Capital deployed.</div>`:''}
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
-      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div></div>
+      <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L${futuresAccount?' (net)':''}</div><div style="font-weight:700;font-size:1.05rem;color:${realizedShown>=0?'var(--green)':'var(--red)'}">${realizedShown>=0?'+':''}${fmtUsd(realizedShown)}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Unrealized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalUnrealized>=0?'var(--green)':'var(--red)'}">${totalUnrealized>=0?'+':''}${fmtUsd(totalUnrealized)}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Win rate</div><div style="font-weight:700;font-size:1.05rem">${winRate!=null?winRate.toFixed(1)+'%':'—'}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Closed trades</div><div style="font-weight:700;font-size:1.05rem">${closed.length}</div></div>
