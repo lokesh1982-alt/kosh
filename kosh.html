@@ -5120,6 +5120,30 @@ function openTransferModal(){
   transferSourceChanged();
   openModal('transfer-modal');
 }
+// Before a transfer, re-read the REAL Binance balance of the source wallet so
+// Kosh never refuses (or allows) a move based on a stale figure. Kosh's own
+// number is only as fresh as the last sync; Binance is the authority.
+async function refreshReserveFromBinance(p){
+  if(!p)return null;
+  try{
+    if(p.name==='Funding Wallet'){await syncFundingWallet();return'ok';}
+    if(!binanceSymbolMap.length){try{await loadBinanceSymbolMap();}catch(e){}}
+    if(!binanceSymbolMap.some(m=>m.portfolio_id===p.id))return null; // not a Binance-synced portfolio
+    const res=await binanceFetch('account',{},keysetForPortfolio(p));
+    if(!res||!res.ok)return null;
+    const data=await res.json();
+    for(const bal of (data&&data.balances)||[]){
+      const asset=(bal.asset||'').toUpperCase();
+      if(!BINANCE_QUOTE_ASSET_SET.has(asset))continue;
+      const real=parseFloat(bal.free||0)+parseFloat(bal.locked||0);
+      const coin=await ensureCoinInPortfolio(p.id,p.kind,{name:asset,ticker:asset,coingecko_id:asset==='USDT'?'tether':asset.toLowerCase()});
+      if(!coin)continue;
+      await sb.from('coins').update({units_held:real,avg_cost_usd:1}).eq('id',coin.id);
+      const live=coins.find(c=>c.id===coin.id);if(live){live.units_held=real;live.avg_cost_usd=1;}
+    }
+    return'ok';
+  }catch(e){console.warn('Could not refresh from Binance',e);return null;}
+}
 async function transferSourceChanged(){
   const sourceId=document.getElementById('tr-from-select').value;
   const sourcePortfolio=portfolios.find(p=>p.id===sourceId);
@@ -5127,12 +5151,15 @@ async function transferSourceChanged(){
   coinSel.innerHTML=`<option>Loading…</option>`;
   if(sourceId==='__futures__'){
     // Futures has no coins — its "balance" is capital deployed + realized profit, in USDT.
-    try{await Promise.all([loadFuturesSyncSettings(),loadFuturesTrades()]);}catch(e){}
+    try{await Promise.all([loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesAccount()]);}catch(e){}
     const realized=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((a,t)=>a+t.realized_pnl,0);
-    const bal=Math.max(0,+(futuresCapitalDeployed+realized).toFixed(2));
-    _trSourceCoins=[{id:'__fut__',name:'Tether',ticker:'USDT',coingecko_id:'tether',units_held:bal,avg_cost_usd:1,isFutures:true}];
+    // Real Binance Futures balance wins; only the part NOT locked as margin in open positions can leave.
+    const bal=futuresAccount?Math.max(0,+futuresAccount.available.toFixed(2)):Math.max(0,+(futuresCapitalDeployed+realized).toFixed(2));
+    _trSourceCoins=[{id:'__fut__',name:'Tether',ticker:'USDT',coingecko_id:'tether',units_held:bal,avg_cost_usd:1,isFutures:true,wallet:futuresAccount?futuresAccount.wallet:null,live:!!futuresAccount}];
   } else {
+    const refreshed=await refreshReserveFromBinance(sourcePortfolio);
     _trSourceCoins=(sourceId===currentPortfolioId?coins:await getPortfolioCoins(sourceId)).filter(c=>(c.units_held||0)>1e-8);
+    _trSourceCoins.forEach(c=>{c.liveFromBinance=!!refreshed&&BINANCE_QUOTE_ASSET_SET.has((c.ticker||'').toUpperCase());});
   }
   if(!_trSourceCoins.length){
     coinSel.innerHTML=`<option value="">No coins with units held</option>`;
@@ -5156,7 +5183,9 @@ async function transferSourceChanged(){
 function transferCoinChanged(){
   const coin=_trSourceCoins.find(c=>c.id===document.getElementById('tr-coin-select').value);
   const sub=document.getElementById('tr-coin-sub');
-  sub.textContent=coin&&coin.isFutures?`${fmtUsd(coin.units_held||0)} available in Futures (capital deployed + realized profit)`:coin?`${coin.units_held||0} ${coin.ticker} held${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
+  sub.textContent=coin&&coin.isFutures
+    ?(coin.live?`${fmtUsd(coin.units_held||0)} available to move (live from Binance Futures · wallet ${fmtUsd(coin.wallet||0)}; the rest is locked as margin in open positions)`:`${fmtUsd(coin.units_held||0)} available in Futures (estimate — Binance balance could not be read)`)
+    :coin?`${coin.units_held||0} ${coin.ticker} held${coin.liveFromBinance?' (live from Binance)':''}${coin.avg_cost_usd!=null?` · avg cost ${fmtUsd(coin.avg_cost_usd)}`:''}`:'';
 }
 function transferDestChanged(){
   const isNew=document.getElementById('tr-dest-select').value==='__new__';
@@ -5211,7 +5240,7 @@ async function confirmTransferFromFutures(){
   const amount=parseFloat(document.getElementById('tr-amount').value);
   if(!amount||amount<=0){showToast('Enter a valid amount.');return;}
   const max=(_trSourceCoins[0]||{}).units_held||0;
-  if(amount>max+0.005&&!confirm(`That is more than your Futures capital (${fmtUsd(max)}). Continue anyway?`))return;
+  if(amount>max+0.005&&!confirm(`That is more than the ${fmtUsd(max)} available to move out of Futures. Continue anyway?`))return;
   const destSelectVal=document.getElementById('tr-dest-select').value;
   let destPortfolio;
   if(destSelectVal==='__new__'){
