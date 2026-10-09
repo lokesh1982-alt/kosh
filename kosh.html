@@ -2276,12 +2276,15 @@ async function computeCombinedDashboardData(){
     stockCoins.length?fetchFinnhubPricesForCoins(stockCoins):Promise.resolve()
   ]);
   // Trades are read straight from the table (not via coin_id) so sales of deleted coins still count.
-  const[tradesRes,settingsRes]=await Promise.all([
-    sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,id').eq('user_id',currentUser.id).order('id')),
+  let[tradesRes,settingsRes]=await Promise.all([
+    sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,fee_usd,id').eq('user_id',currentUser.id).order('id')),
     sb.from('kosh_settings').select('*')
   ]);
+  // older databases without the fee column: read again without it
+  if(tradesRes.error)tradesRes=await sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,id').eq('user_id',currentUser.id).order('id'));
   Object.keys(realizedStore).forEach(k=>{delete realizedStore[k];});
-  (tradesRes.data||[]).forEach(t=>{realizedStore[t.portfolio_id]=(realizedStore[t.portfolio_id]||0)+(t.realized_pnl||0);});
+  const feeByPf={};
+  (tradesRes.data||[]).forEach(t=>{realizedStore[t.portfolio_id]=(realizedStore[t.portfolio_id]||0)+(t.realized_pnl||0);feeByPf[t.portfolio_id]=(feeByPf[t.portfolio_id]||0)+(t.fee_usd||0);});
   (settingsRes.data||[]).forEach(r=>{capitalStore[r.portfolio_id]=r.total_capital||0;if(r.ladder)bandStore[r.portfolio_id]=r.ladder;});
   // Every portfolio (crypto and US-Stocks) counts towards the combined figures, all in USD.
   const perPortfolio=portfolios.map(p=>{
@@ -2293,7 +2296,12 @@ async function computeCombinedDashboardData(){
       if(c.avg_cost_usd==null||v==null)return;
       priced++;unrealized+=(v-c.avg_cost_usd)*(c.units_held||0);
     });
-    return{portfolio:p,tiers:pTiers,coins:pCoins,value:portfolioValue(pCoins),unrealized,priced,realized:realizedStore[p.id]||0,capital:capitalStore[p.id]||0};
+    // Lead Trading needs no hand-entered capital: profit = trades after fees + open P&L,
+    // and starting capital is implied = current value − that profit.
+    const val=portfolioValue(pCoins);
+    let cap=capitalStore[p.id]||0,auto=false;
+    if(p.name==='Lead Trading'&&pCoins.length){cap=Math.max(0,val-((realizedStore[p.id]||0)-(feeByPf[p.id]||0)+unrealized));auto=true;}
+    return{portfolio:p,tiers:pTiers,coins:pCoins,value:val,unrealized,priced,realized:realizedStore[p.id]||0,capital:cap,autoCapital:auto};
   });
   const sum=f=>perPortfolio.reduce((a,x)=>a+f(x),0);
   return{allTiers,allCoins,perPortfolio,combinedTotal:sum(x=>x.value),combinedUnrealized:sum(x=>x.unrealized),pricedCount:sum(x=>x.priced),combinedRealized:sum(x=>x.realized),totalCapital:sum(x=>x.capital)};
@@ -2342,12 +2350,11 @@ async function renderDashboard(){
     // Guarded: if Futures can't be loaded, the headline just excludes it.
     try{
       await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesPositions(),loadFuturesTrades(),loadFuturesAccount()]);
-      if(futuresCapitalDeployed>0||futuresPositions.length>0){
-        const fUnreal=futuresPositions.reduce((a,p)=>a+parseFloat(p.unRealizedProfit||0),0);
-        const fVal=futuresValueNow();
-        const fReal=fVal-futuresCapitalDeployed-fUnreal;
+      if(futuresAccount||futuresCapitalDeployed>0||futuresPositions.length>0){
+        const fp=futuresProfit();
+        const fUnreal=fp.unreal,fVal=fp.value,fReal=fp.realizedNet;
         combined.combinedTotal+=fVal;
-        combined.totalCapital+=futuresCapitalDeployed;
+        combined.totalCapital+=fp.implied;
         combined.combinedUnrealized+=fUnreal;
         combined.combinedRealized+=fReal;
         combined.pricedCount+=1;
@@ -2433,7 +2440,7 @@ async function renderDashboard(){
         <div class="hide-figure" style="font-size:1.15rem;font-weight:700">${fmtDisplay(pp.value)}</div>
         <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${col};margin-top:2px">${vsCap==null?'No capital set':signedDisplay(gainPf)+' ('+(vsCap>=0?'+':'')+vsCap.toFixed(1)+'%)'}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid var(--border)">
-          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">${pp.autoCapital?'Starting capital':'Capital deployed'}</span>
           <span class="hide-figure" style="font-size:0.74rem;font-weight:600">${fmtDisplay(pp.capital||0)}</span>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:2px">
@@ -2449,14 +2456,15 @@ async function renderDashboard(){
         <button class="link-btn" style="margin-top:8px;font-size:0.7rem" onclick="setDashViewMode('${p.id}')">Open →</button>
       </div>`;
     });
-    if(futuresCapitalDeployed>0||futuresPositions.length>0||futuresSymbols.length>0){
+    if(futuresAccount||futuresCapitalDeployed>0||futuresPositions.length>0||futuresSymbols.length>0){
       const futColor=pfPalette[combined.perPortfolio.length%pfPalette.length];
       const closedF=futuresTrades.filter(t=>t.realized_pnl!=null);
       const totalRealizedF=closedF.reduce((s,t)=>s+t.realized_pnl,0);
       const totalUnrealizedF=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
-      const futValue=futuresValueNow();
-      const futGain=futValue-futuresCapitalDeployed;
-      const futVsCap=futuresCapitalDeployed>0?(futGain/futuresCapitalDeployed)*100:null;
+      const fpC=futuresProfit();
+      const futValue=fpC.value;
+      const futGain=fpC.total;
+      const futVsCap=fpC.roi;
       const futCol=futVsCap==null?'var(--ink3)':futVsCap>=0?'var(--green)':'var(--red)';
       const futItems=futuresPositions.map(p=>({label:p.symbol,value:Math.abs(parseFloat(p.positionAmt||0))*parseFloat(p.markPrice||0)}));
       const futDonut=donutFromValues(futItems,futItems.reduce((s,x)=>s+x.value,0),pfPalette);
@@ -2469,10 +2477,10 @@ async function renderDashboard(){
           </div>
         </div>
         <div class="hide-figure" style="font-size:1.15rem;font-weight:700">${fmtDisplay(futValue)}</div>
-        <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${futCol};margin-top:2px">${futVsCap==null?'No capital set':signedDisplay(futGain)+' ('+(futVsCap>=0?'+':'')+futVsCap.toFixed(1)+'%)'}</div>
+        <div class="hide-figure" style="font-size:0.72rem;font-weight:600;color:${futCol};margin-top:2px">${futVsCap==null?'—':signedDisplay(futGain)+' ('+(futVsCap>=0?'+':'')+futVsCap.toFixed(1)+'%)'}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid var(--border)">
-          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
-          <span class="hide-figure" style="font-size:0.74rem;font-weight:600">${fmtDisplay(futuresCapitalDeployed||0)}</span>
+          <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Starting capital</span>
+          <span class="hide-figure" style="font-size:0.74rem;font-weight:600">${fmtDisplay(Math.max(0,fpC.implied))}</span>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:2px">
           <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
@@ -2496,7 +2504,7 @@ async function renderDashboard(){
     // but it IS a place the money sits, so it gets its own slice here, sized by
     // capital deployed + realized/unrealized P&L — the same figure its card shows.
     const donutRows=combined.perPortfolio.filter(x=>x.value>0).map(x=>({name:x.portfolio.name,value:x.value}));
-    if(futuresCapitalDeployed>0||futuresPositions.length>0){
+    if(futuresAccount||futuresCapitalDeployed>0||futuresPositions.length>0){
       const fv=futuresValueNow();
       if(fv>0)donutRows.push({name:'Futures',value:fv});
     }
@@ -2651,7 +2659,13 @@ async function renderDashboard(){
     }
     html+=backBar;
     const total=totalActualValue();
-    const capital=settings.total_capital||0;
+    let capital=settings.total_capital||0;
+    const autoCap=!!(cp&&cp.name==='Lead Trading');
+    if(autoCap){
+      let unr=0;coins.forEach(c=>{const pr=livePrices[c.coingecko_id];if(c.avg_cost_usd!=null&&pr!=null)unr+=(pr-c.avg_cost_usd)*(c.units_held||0);});
+      const rz=trades.reduce((x,t)=>x+(t.realized_pnl||0),0),fe=trades.reduce((x,t)=>x+(t.fee_usd||0),0);
+      capital=Math.max(0,total-(rz-fe+unr));
+    }
     const gainLoss=total-capital;
     const gainLossPct=capital>0?(gainLoss/capital)*100:0;
     const tierStats=calcTierStats();
@@ -2676,11 +2690,11 @@ async function renderDashboard(){
         <div style="display:flex;gap:6px">${currencySelectorHtml()}</div>
       </div>
       <div class="hero-val hide-figure">${fmtDisplay(total)}</div>
-      <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs capital deployed (${fmtDisplay(capital)})</div>
+      <div class="hero-sub">${gainLoss>=0?'▲':'▼'} ${Math.abs(gainLossPct).toFixed(1)}% vs ${autoCap?'starting capital':'capital deployed'} (${fmtDisplay(capital)})</div>
       <div style="display:flex;gap:16px;margin-top:14px">
         <div><div style="font-size:10px;opacity:0.6">Unrealized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${pricedCount?(unrealized>=0?'#7FE0D4':'#F4A6A6'):'#8B93A1'}">${pricedCount?(unrealized>=0?'+':'')+fmtDisplay(unrealized):'—'}</div></div>
         <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${realized>=0?'#7FE0D4':'#F4A6A6'}">${realized>=0?'+':''}${fmtDisplay(realized)}</div></div>
-        <div><div style="font-size:10px;opacity:0.6">Capital in</div><div style="font-size:0.86rem;font-weight:600">${fmtDisplay(capital)}</div></div>
+        <div><div style="font-size:10px;opacity:0.6">${autoCap?'Starting capital':'Capital in'}</div><div style="font-size:0.86rem;font-weight:600">${fmtDisplay(capital)}</div></div>
       </div>
     </div>`;
 
@@ -6501,6 +6515,39 @@ async function loadFuturesSyncSettings(){
 // Futures has no portfolio row/units_held to derive "capital deployed" from
 // the way Spot does, so it's just one number set directly here — bump it by
 // whatever you actually move into the Futures wallet on Binance.
+// "Capital deployed" is the baseline Net ROI is measured against, and Binance
+// transfers made outside Kosh never update it. This reads the real transfers
+// into/out of the Futures wallet (last ~89 days — Binance's limit) so the
+// number can be corrected in one step instead of guessing.
+async function reviewFuturesCapital(){
+  showToast('Reading your Futures transfers from Binance…');
+  const day=86400000,now=Date.now();
+  const rows=[];
+  try{
+    for(let ws=now-89*day;ws<now;ws+=7*day){
+      const we=Math.min(ws+7*day-1,now);
+      const res=await binanceFetch('futuresIncome',{incomeType:'TRANSFER',startTime:String(ws),endTime:String(we),limit:'1000'},'futures');
+      if(!res||!res.ok){showToast('Could not read transfers — redeploy the binance-proxy function.');return;}
+      const r=await res.json();
+      if(Array.isArray(r))r.forEach(x=>{if((x.asset||'USDT').toUpperCase()==='USDT'||(x.asset||'').toUpperCase()==='USDC')rows.push({t:x.time,v:parseFloat(x.income)||0});});
+    }
+  }catch(e){showToast('Could not read transfers: '+(e.message||e));return;}
+  rows.sort((a,b)=>a.t-b.t);
+  const net=rows.reduce((s,r)=>s+r.v,0);
+  const cur=futuresCapitalDeployed||0;
+  const list=rows.length?rows.map(r=>new Date(r.t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'})+'  '+(r.v>=0?'+':'−')+'$'+Math.abs(r.v).toFixed(2)).join('\n'):'(no transfers in the last 89 days)';
+  const wallet=futuresAccount?futuresAccount.wallet:null;
+  const msg=`Transfers into (+) / out of (−) your Futures wallet, last 89 days:\n\n${list}\n\nNet: ${net>=0?'+':'−'}$${Math.abs(net).toFixed(2)}\nCapital deployed now: $${cur.toFixed(2)}${wallet!=null?`\nBinance wallet balance: $${wallet.toFixed(2)}`:''}\n\nEnter the total money you have put into Futures (net of withdrawals).\nSuggestion = current + net transfers. If some of these transfers are already counted in your current figure, lower it:`;
+  const ans=prompt(msg,(cur+net).toFixed(2));
+  if(ans==null)return;
+  const val=parseFloat(ans);
+  if(isNaN(val)||val<0){showToast('Enter a valid amount.');return;}
+  const{error}=await sb.from('futures_sync_settings').upsert({user_id:currentUser.id,capital_deployed:val},{onConflict:'user_id'});
+  if(error){showToast('Could not save: '+error.message);return;}
+  futuresCapitalDeployed=val;
+  renderFutures();
+  showToast('Capital deployed updated to '+fmtUsd(val)+' ✅');
+}
 async function saveFuturesCapitalDeployed(){
   const input=document.getElementById('futures-capital-input');
   const amount=parseFloat(input.value);
@@ -6670,6 +6717,19 @@ function futuresValueNow(){
   return futuresCapitalDeployed
     +futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0)
     +futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+}
+// Profit without any manually-entered capital. Net profit = closed trades (from the
+// Journal) after fees and funding + open P&L. The "starting capital" is then implied:
+// what the account is worth now minus what it has earned. ROI = profit ÷ that.
+function futuresProfit(){
+  const realizedGross=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0);
+  let fees=0,fund=0;futuresCostMap.forEach(c=>{fees+=c.fee;fund+=c.funding;});
+  const unreal=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
+  const realizedNet=realizedGross-fees+fund;
+  const total=realizedNet+unreal;
+  const value=futuresAccount?futuresAccount.margin:(futuresCapitalDeployed+realizedGross+unreal);
+  const implied=value-total;
+  return{realizedGross,fees,fund,realizedNet,unreal,total,value,implied,roi:implied>0?total/implied*100:null};
 }
 function fmtPx(v){
   if(v==null||isNaN(v))return'—';
@@ -7031,16 +7091,15 @@ async function renderFutures(){
   const totalRealized=closed.reduce((s,t)=>s+t.realized_pnl,0);
   let costFees=0,costFunding=0;futuresCostMap.forEach(c=>{costFees+=c.fee;costFunding+=c.funding;});
   const totalUnrealized=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
-  // Real Binance wallet balance (already net of fees, funding, transfers) wins
-  // over the trade-history estimate; the history sum is shown as a cross-check.
-  const histCapital=futuresCapitalDeployed+totalRealized;
-  const currentCapital=futuresAccount?futuresAccount.wallet:histCapital;
-  const afterCosts=histCapital-costFees+costFunding;
-  const realizedShown=futuresAccount?futuresAccount.wallet-futuresCapitalDeployed:totalRealized;
-  const totalPnl=futuresAccount?futuresAccount.margin-futuresCapitalDeployed:totalRealized+totalUnrealized;
-  const histGap=futuresAccount?futuresAccount.wallet-histCapital:0;
-  const netRoi=futuresCapitalDeployed>0?(totalPnl/futuresCapitalDeployed)*100:null;
+  // No manually-entered capital: profit comes from the closed trades in the Journal
+  // (after fees & funding) plus open P&L; the balance comes straight from Binance.
+  const fp=futuresProfit();
+  const currentCapital=futuresAccount?futuresAccount.wallet:fp.value;
+  const realizedShown=fp.realizedNet;
+  const totalPnl=fp.total;
+  const netRoi=fp.roi;
   const roiCol=netRoi==null?'var(--ink3)':(netRoi>=0?'var(--green)':'var(--red)');
+  const pnlCol=totalPnl>=0?'var(--green)':'var(--red)';
   const lastSync=futuresLastSyncedAt?new Date(futuresLastSyncedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'never';
   const trackingNote=futuresSymbols.length
     ?`Tracking: ${futuresSymbols.map(s=>escapeHtml(s.symbol)).join(', ')} (for closed-trade history)`
@@ -7053,22 +7112,20 @@ async function renderFutures(){
     <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">Last synced: ${lastSync} · ${trackingNote}</div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Capital deployed</span>
-        <span class="hide-figure" style="font-size:0.9rem;font-weight:700">${futuresCapitalDeployed>0?fmtUsd(futuresCapitalDeployed):'No capital set'}</span>
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current capital <span style="text-transform:none">(${futuresAccount?'Binance wallet balance':'estimate'})</span></span>
+        <span class="hide-figure" style="font-size:0.95rem;font-weight:700">${fmtUsd(currentCapital)}</span>
       </div>
+      ${futuresAccount?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">Incl. open P&amp;L: ${fmtUsd(futuresAccount.margin)} · available to move ${fmtUsd(futuresAccount.available)}</div>`:`<div style="font-size:0.66rem;color:var(--ink3);margin-top:4px">Couldn't read the live Binance balance — redeploy the binance-proxy function.</div>`}
       <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
-        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current capital <span style="text-transform:none">(${futuresAccount?'Binance wallet balance':'deployed + realized'})</span></span>
-        <span class="hide-figure" style="font-size:0.9rem;font-weight:700;color:${realizedShown>=0?'var(--green)':'var(--red)'}">${futuresAccount||futuresCapitalDeployed>0?fmtUsd(currentCapital):'—'}</span>
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net profit <span style="text-transform:none">(closed trades after fees &amp; funding + open)</span></span>
+        <span class="hide-figure" style="font-size:0.95rem;font-weight:700;color:${pnlCol}">${totalPnl>=0?'+':'−'}${fmtUsd(Math.abs(totalPnl))}</span>
       </div>
-      ${futuresAccount&&Math.abs(histGap)>5?`<div style="font-size:0.66rem;color:var(--ink3);margin-top:4px;line-height:1.4">Binance's real balance is ${fmtUsd(Math.abs(histGap))} ${histGap>0?'higher':'lower'} than your synced trade history (${fmtUsd(histCapital)}). Usual cause: older trades were never synced, or money moved in/out since "Capital deployed" was set. The figures above use the real Binance balance.</div>`:''}
-      ${futuresAccount?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">Incl. open P&amp;L: ${fmtUsd(futuresAccount.margin)} · available ${fmtUsd(futuresAccount.available)}</div>`:''}
-      ${!futuresAccount?`<div style="font-size:0.66rem;color:var(--ink3);margin-top:4px">Couldn't read the live Binance balance — redeploy the binance-proxy function. Showing an estimate from synced trades.</div>`:''}
-      ${!futuresAccount&&futuresCapitalDeployed>0&&(costFees||costFunding)?`<div style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px" class="hide-figure">${fmtUsd(afterCosts)} after fees ${fmtUsd(costFees)} &amp; funding ${costFunding>=0?'+':'-'}${fmtUsd(Math.abs(costFunding))}</div>`:''}
+      <div class="hide-figure" style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px">Trades ${fp.realizedGross>=0?'+':'−'}${fmtUsd(Math.abs(fp.realizedGross))} · fees −${fmtUsd(fp.fees)} · funding ${fp.fund>=0?'+':'−'}${fmtUsd(Math.abs(fp.fund))} · open ${fp.unreal>=0?'+':'−'}${fmtUsd(Math.abs(fp.unreal))}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
-        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI</span>
-        <span style="font-size:0.9rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
+        <span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI <span style="text-transform:none">(on starting capital ${fmtUsd(Math.max(0,fp.implied))})</span></span>
+        <span style="font-size:0.95rem;font-weight:700;color:${roiCol}">${netRoi==null?'—':(netRoi>=0?'+':'')+netRoi.toFixed(1)+'%'}</span>
       </div>
-      ${futuresCapitalDeployed===0?`<div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">Set this in Settings → Futures → Capital deployed.</div>`:''}
+      <div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.4">Starting capital = Binance balance minus net profit, so nothing needs to be entered by hand. It is only as complete as your synced history — use "Load older history" in the Journal for older trades.</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L${futuresAccount?' (net)':''}</div><div style="font-weight:700;font-size:1.05rem;color:${realizedShown>=0?'var(--green)':'var(--red)'}">${realizedShown>=0?'+':''}${fmtUsd(realizedShown)}</div></div>
