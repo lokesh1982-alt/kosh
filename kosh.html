@@ -3947,21 +3947,33 @@ async function renderJournal(){
     return;
   }
   const totalRealized=journalDateFiltered(allJournalTrades).reduce((s,t)=>s+(t.realized_pnl||0),0);
+  _vSum=null;const vEvHtml=journalViewMode==='stocks'?await vestedEventsHtml():'';
   let html=toggleHtml;
   html+=`<div class="card" style="text-align:center">
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalPortfolioId?escapeHtml((portfolios.find(p=>p.id===journalPortfolioId)||{}).name||'portfolio'):(journalViewMode==='stocks'?'all US-Stocks':'all crypto portfolios')})</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
     ${journalViewMode==='stocks'?(()=>{
       const fl=journalDateFiltered(allJournalTrades).filter(t=>t.fee_usd!=null&&t.fee_usd>0);
-      if(!fl.length)return'';
       const fee=fl.reduce((x,t)=>x+t.fee_usd,0),traded=fl.reduce((x,t)=>x+(t.total_usd||0),0);
-      const ts=fl.map(t=>new Date(t.trade_date).getTime()),months=Math.max(1,(Math.max(...ts)-Math.min(...ts))/2629800000);
-      const after=totalRealized-fee;
-      return`<div style="display:flex;justify-content:space-around;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div><div style="font-size:0.66rem;color:var(--ink3)">Commissions paid</div><div class="hide-figure" style="font-weight:700;font-size:1rem;color:var(--red)">−${fmtUsd(fee)}</div><div class="hide-figure" style="font-size:0.64rem;color:var(--ink3)">${traded>0?(fee/traded*100).toFixed(2)+'% of '+fmtUsd(traded)+' traded':''}</div></div>
-        <div><div style="font-size:0.66rem;color:var(--ink3)">Average per month</div><div class="hide-figure" style="font-weight:700;font-size:1rem">${fmtUsd(fee/months)}</div><div style="font-size:0.64rem;color:var(--ink3)">${fl.length} trades</div></div>
-        <div><div style="font-size:0.66rem;color:var(--ink3)">Realized after commissions</div><div class="hide-figure" style="font-weight:700;font-size:1rem;color:${after>=0?'var(--green)':'var(--red)'}">${after>=0?'+':'−'}${fmtUsd(Math.abs(after))}</div></div>
-      </div>`;})():''}
+      const ts=fl.map(t=>new Date(t.trade_date).getTime()),months=fl.length?Math.max(1,(Math.max(...ts)-Math.min(...ts))/2629800000):1;
+      const after=totalRealized-fee,v=_vSum;
+      const sg=x=>(x>=0?'+':'−')+fmtUsd(Math.abs(x));
+      const tile=(l,val,col,sub)=>`<div style="background:var(--card2);border-radius:10px;padding:10px 6px"><div style="font-size:0.64rem;color:var(--ink3)">${l}</div><div class="hide-figure" style="font-weight:700;font-size:0.95rem;color:${col||'var(--ink)'}">${val}</div>${sub?`<div class="hide-figure" style="font-size:0.58rem;color:var(--ink3)">${sub}</div>`:''}</div>`;
+      let t='';
+      if(fl.length){
+        t+=tile('Commissions paid','−'+fmtUsd(fee),'var(--red)',traded>0?(fee/traded*100).toFixed(2)+'% of '+fmtUsd(traded):'');
+        t+=tile('Commissions / month',fmtUsd(fee/months),'',fl.length+' trades');
+        t+=tile('Realized after commissions',sg(after),after>=0?'var(--green)':'var(--red)');
+      }
+      if(v){
+        t+=tile('Dividends (after tax)',sg(v.div+v.tax),'var(--green)');
+        t+=tile('Interest',sg(v.intr),'var(--green)');
+        t+=tile('Other fees',v.fee?sg(v.fee):'—',v.fee?'var(--red)':'var(--ink3)');
+        t+=tile('Deposited',fmtUsd(v.dep));
+        t+=tile('Withdrawn',fmtUsd(Math.abs(v.wd)));
+      }
+      return t?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">${t}</div>`:'';
+    })():''}
   </div>`;
   html+=addPastBtn;
   if(journalViewMode==='crypto'&&allJournalTrades.some(t=>t.binance_trade_id!=null&&t.fee_usd==null))html+=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="backfillSpotFees()">💸 Fill in missing fees for synced trades</button>`;
@@ -4002,7 +4014,7 @@ async function renderJournal(){
     </table>
   </div>
   <div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">FX Rate is the USD→INR rate on the trading day (ECB reference rate). Older trades without a stored rate are backfilled automatically as you view this screen.</div>`;
-  if(journalViewMode==='stocks')html+=await vestedEventsHtml();
+  html+=vEvHtml;
   el.innerHTML=html;
   backfillMissingInrRates();
 }
@@ -4205,28 +4217,19 @@ async function importVestedFile(file){
   }finally{_vestedBusy=false;}
 }
 let _stockEventsOpen=false;
+let _vSum=null;
 async function vestedEventsHtml(){
+  _vSum=null;
   const pids=journalPortfolioId?[journalPortfolioId]:portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id);
   if(!pids.length)return'';
   const{data,error}=await sbFetchAll(()=>sb.from('stock_cash_events').select('*').eq('user_id',currentUser.id).in('portfolio_id',pids).order('event_time',{ascending:false}).order('id'));
   if(error||!data||!data.length)return'';
   const rows=data.filter(e=>journalInDateRange(e.event_time));
   const sum=t=>rows.filter(e=>e.event_type===t).reduce((s,e)=>s+e.amount,0);
-  const div=sum('dividend'),tax=sum('dividend_tax'),intr=sum('interest'),fee=sum('fee'),dep=sum('deposit'),wd=sum('withdrawal');
-  let comm=0;allJournalTrades.forEach(t=>{if(journalInDateRange(t.trade_date)&&t.fee_usd)comm+=t.fee_usd;});
-  const tile=(l,v,col)=>`<div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">${l}</div><div class="hide-figure" style="font-weight:700;font-size:1.0rem;color:${col||'var(--ink)'}">${v}</div></div>`;
+  _vSum={div:sum('dividend'),tax:sum('dividend_tax'),intr:sum('interest'),fee:sum('fee'),dep:sum('deposit'),wd:sum('withdrawal')};
   const sgn=v=>(v>=0?'+':'−')+fmtUsd(Math.abs(v));
   const label={deposit:'Deposit',withdrawal:'Withdrawal',dividend:'Dividend',dividend_tax:'Dividend tax',interest:'Interest',fee:'Fee',other:'Other'};
-  let h=`<div class="dash-section" style="margin-top:18px"><h3>Income, fees &amp; cash movements</h3></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px">
-      ${tile('Dividends (after tax)',sgn(div+tax),'var(--green)')}
-      ${tile('Interest',sgn(intr),'var(--green)')}
-      ${tile('Trading commissions','−'+fmtUsd(comm),'var(--red)')}
-      ${tile('Other fees',fee?sgn(fee):'—',fee?'var(--red)':'var(--ink3)')}
-      ${tile('Deposited',fmtUsd(dep))}
-      ${tile('Withdrawn',fmtUsd(Math.abs(wd)))}
-    </div>
-    <button class="link-btn" style="font-size:0.72rem;margin-bottom:8px" onclick="_stockEventsOpen=!_stockEventsOpen;renderJournal()">${_stockEventsOpen?'Hide':'Show'} all ${rows.length} entries</button>`;
+  let h=`<button class="link-btn" style="font-size:0.72rem;margin:14px 0 8px" onclick="_stockEventsOpen=!_stockEventsOpen;renderJournal()">${_stockEventsOpen?'Hide':'Show'} all ${rows.length} dividend / interest / deposit entries</button>`;
   if(_stockEventsOpen){
     h+=`<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
       <thead><tr style="background:var(--ink-accent);color:#F1F3F5"><th style="padding:8px 10px;text-align:left">Date</th><th style="padding:8px 10px;text-align:left">Type</th><th style="padding:8px 10px;text-align:left">Stock</th><th style="padding:8px 10px;text-align:right">Amount (USD)</th></tr></thead><tbody>`
