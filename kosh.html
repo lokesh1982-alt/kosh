@@ -3951,6 +3951,17 @@ async function renderJournal(){
   html+=`<div class="card" style="text-align:center">
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalPortfolioId?escapeHtml((portfolios.find(p=>p.id===journalPortfolioId)||{}).name||'portfolio'):(journalViewMode==='stocks'?'all US-Stocks':'all crypto portfolios')})</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
+    ${journalViewMode==='stocks'?(()=>{
+      const fl=journalDateFiltered(allJournalTrades).filter(t=>t.fee_usd!=null&&t.fee_usd>0);
+      if(!fl.length)return'';
+      const fee=fl.reduce((x,t)=>x+t.fee_usd,0),traded=fl.reduce((x,t)=>x+(t.total_usd||0),0);
+      const ts=fl.map(t=>new Date(t.trade_date).getTime()),months=Math.max(1,(Math.max(...ts)-Math.min(...ts))/2629800000);
+      const after=totalRealized-fee;
+      return`<div style="display:flex;justify-content:space-around;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div><div style="font-size:0.66rem;color:var(--ink3)">Commissions paid</div><div class="hide-figure" style="font-weight:700;font-size:1rem;color:var(--red)">−${fmtUsd(fee)}</div><div class="hide-figure" style="font-size:0.64rem;color:var(--ink3)">${traded>0?(fee/traded*100).toFixed(2)+'% of '+fmtUsd(traded)+' traded':''}</div></div>
+        <div><div style="font-size:0.66rem;color:var(--ink3)">Average per month</div><div class="hide-figure" style="font-weight:700;font-size:1rem">${fmtUsd(fee/months)}</div><div style="font-size:0.64rem;color:var(--ink3)">${fl.length} trades</div></div>
+        <div><div style="font-size:0.66rem;color:var(--ink3)">Realized after commissions</div><div class="hide-figure" style="font-weight:700;font-size:1rem;color:${after>=0?'var(--green)':'var(--red)'}">${after>=0?'+':'−'}${fmtUsd(Math.abs(after))}</div></div>
+      </div>`;})():''}
   </div>`;
   html+=addPastBtn;
   if(journalViewMode==='crypto'&&allJournalTrades.some(t=>t.binance_trade_id!=null&&t.fee_usd==null))html+=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="backfillSpotFees()">💸 Fill in missing fees for synced trades</button>`;
