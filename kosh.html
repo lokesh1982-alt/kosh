@@ -3940,7 +3940,8 @@ async function renderJournal(){
   spotNetMap=buildSpotNetMap(rawTrades);
   allJournalTrades=rawTrades.filter(t=>(journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id))&&(!journalPortfolioId||t.portfolio_id===journalPortfolioId));
 
-  const addPastBtn=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
+  const vestedBtn=journalViewMode==='stocks'?`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:6px" onclick="openVestedImport()">⬆️ Import Vested file (.xlsx)</button><input type="file" id="vested-file" accept=".xlsx,.xls" style="display:none" onchange="importVestedFile(this.files[0])"><div style="font-size:0.66rem;color:var(--ink3);margin-bottom:12px">Upload the whole file you download from Vested — Kosh reads the Trades, Transfers and Income sheets. Uploading the same file again only adds what's new.</div>`:'';
+  const addPastBtn=vestedBtn+`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
   if(!allJournalTrades.length){
     el.innerHTML=toggleHtml+addPastBtn+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
@@ -3990,8 +3991,238 @@ async function renderJournal(){
     </table>
   </div>
   <div style="font-size:0.68rem;color:var(--ink3);margin-top:8px">FX Rate is the USD→INR rate on the trading day (ECB reference rate). Older trades without a stored rate are backfilled automatically as you view this screen.</div>`;
+  if(journalViewMode==='stocks')html+=await vestedEventsHtml();
   el.innerHTML=html;
   backfillMissingInrRates();
+}
+// ═══════════════════════════════
+//  VESTED IMPORT (US-Stocks)
+// ═══════════════════════════════
+// Upload the .xlsx exported from Vested (whole file — no need to pick a sheet).
+// Kosh reads: Trades (buys/sells + commission), Transfers (deposits/withdrawals),
+// Income (dividends, dividend tax, interest) and the newest cash balance from
+// All Transactions. The file is cumulative, so uploading it again only adds
+// what's new (every row has a unique key). Holdings, average cost, realized
+// P&L and the USD cash balance are rebuilt from the full history each time.
+let _vestedBusy=false;
+const _vNum=v=>{const n=parseFloat(String(v==null?'':v).replace(/,/g,''));return isNaN(n)?0:n;};
+function _vDay(v){
+  if(v instanceof Date)return v.getFullYear()+'-'+String(v.getMonth()+1).padStart(2,'0')+'-'+String(v.getDate()).padStart(2,'0');
+  const s=String(v||'').trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);
+  const m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  return m?`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`:'';
+}
+function _vIso(day,time){
+  let h=0,mi=0,se=0;
+  const m=String(time||'').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  if(m){h=+m[1];mi=+m[2];se=+(m[3]||0);const ap=(m[4]||'').toUpperCase();if(ap==='PM'&&h<12)h+=12;if(ap==='AM'&&h===12)h=0;}
+  return `${day}T${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(se).padStart(2,'0')}Z`;
+}
+function vestedTargetPortfolio(){
+  const sel=journalPortfolioId?portfolios.find(p=>p.id===journalPortfolioId):null;
+  if(sel&&isStockKind(sel.kind))return sel;
+  const cp=currentPortfolio();
+  if(cp&&isStockKind(cp.kind))return cp;
+  const all=portfolios.filter(p=>isStockKind(p.kind));
+  return all.length===1?all[0]:null;
+}
+function openVestedImport(){
+  if(!vestedTargetPortfolio()){showToast('Pick your US-Stocks portfolio first (Journal dropdown).');return;}
+  const inp=document.getElementById('vested-file');
+  if(inp){inp.value='';inp.click();}
+}
+function parseVestedWorkbook(buf){
+  const wb=XLSX.read(buf,{type:'array',cellDates:false});
+  const sheet=name=>{const k=wb.SheetNames.find(n=>n.trim().toLowerCase()===name);return k?XLSX.utils.sheet_to_json(wb.Sheets[k],{defval:null,raw:true}):null;};
+  const trades=sheet('trades'),transfers=sheet('transfers'),income=sheet('income'),all=sheet('all transactions');
+  if(!trades&&!transfers&&!income)throw new Error('This does not look like a Vested export (no Trades / Transfers / Income sheet).');
+  const seen={};const uniq=k=>{seen[k]=(seen[k]||0)+1;return seen[k]>1?k+'#'+seen[k]:k;};
+  const tr=[];
+  (trades||[]).forEach(r=>{
+    const day=_vDay(r['Date']);const tk=String(r['Ticker']||'').trim().toUpperCase();
+    const act=String(r['Activity']||'').trim().toLowerCase();
+    if(!day||!tk||(act!=='buy'&&act!=='sell'))return;
+    const qty=_vNum(r['Quantity']),px=_vNum(r['Price Per Share (in USD)']),cash=_vNum(r['Cash Amount (in USD)']),fee=_vNum(r['Commission Charges (in USD)']);
+    const time=r['Time (in UTC)'];
+    tr.push({key:uniq(['T',day,time,tk,act,qty,cash].join('|')),iso:_vIso(day,time),ticker:tk,name:String(r['Name']||tk).trim(),action:act,qty,price:px,cash,fee});
+  });
+  const ev=[];const addEv=(type,day,time,tk,desc,amount,keyBase)=>{if(!day)return;ev.push({key:uniq(keyBase),iso:_vIso(day,time),type,ticker:tk||null,desc,amount});};
+  (transfers||[]).forEach(r=>{
+    const a=String(r['Activity']||'').trim().toLowerCase();const amt=Math.abs(_vNum(r['Cash Amount (in USD)']));const day=_vDay(r['Date']);
+    if(a==='deposit')addEv('deposit',day,r['Time (in UTC)'],null,'Deposit',amt,['E','dep',day,r['Time (in UTC)'],amt].join('|'));
+    else if(a==='withdrawal')addEv('withdrawal',day,r['Time (in UTC)'],null,'Withdrawal',-amt,['E','wd',day,r['Time (in UTC)'],amt].join('|'));
+  });
+  (income||[]).forEach(r=>{
+    const a=String(r['Activity']||'').trim().toLowerCase();const amt=_vNum(r['Gross Cash Amount (in USD)']);const day=_vDay(r['Date']);
+    const tk=String(r['Ticker']||'').trim().toUpperCase();const time=r['Time (in UTC)'];
+    const type=a==='dividend'?'dividend':a==='tax'?'dividend_tax':a==='interest'?'interest':'other';
+    addEv(type,day,time,tk,String(r['Activity']||''),amt,['E',a,day,time,tk,amt].join('|'));
+  });
+  const warn={};let balance=null;
+  (all||[]).forEach((r,i)=>{
+    const ty=String(r['Type']||'').trim().toUpperCase();
+    if(i===0&&r['Account Balance (in USD)']!=null)balance=_vNum(r['Account Balance (in USD)']);
+    if(ty==='FEE')addEv('fee',_vDay(r['Date']),r['Time (in UTC)'],null,String(r['Comment']||'Fee'),_vNum(r['Amount (in USD)']),['E','fee',_vDay(r['Date']),r['Time (in UTC)'],_vNum(r['Amount (in USD)'])].join('|'));
+    else if(!['SPUR','SSAL','INT','DIV','DIVTAX','CSR','CSD','ORDER'].includes(ty)&&ty)warn[ty]=(warn[ty]||0)+1;
+  });
+  return{trades:tr,events:ev,balance,warn};
+}
+// Replays trades in time order with average cost. Returns per-row realized P&L
+// (gross of commission, same convention as the rest of Kosh) and final holdings.
+function vestedReplay(rows){
+  const h={},out=new Map();let over=0;
+  rows.slice().sort((a,b)=>a.iso<b.iso?-1:a.iso>b.iso?1:0).forEach(r=>{
+    const s=h[r.ticker]||(h[r.ticker]={units:0,avg:0,name:r.name});
+    if(r.action==='buy'){const nu=s.units+r.qty;s.avg=nu>0?(s.avg*s.units+r.qty*r.price)/nu:r.price;s.units=nu;out.set(r.key,null);}
+    else{const q=Math.min(r.qty,s.units);if(r.qty>s.units+1e-6)over++;out.set(r.key,(r.price-s.avg)*q);s.units=Math.max(0,s.units-r.qty);}
+  });
+  return{holdings:h,realized:out,over};
+}
+async function importVestedFile(file){
+  if(!file||_vestedBusy)return;
+  const pf=vestedTargetPortfolio();
+  if(!pf){showToast('Pick your US-Stocks portfolio first.');return;}
+  _vestedBusy=true;
+  try{
+    // Needs the new columns/table from migration-vested-import.sql
+    const probe=await sb.from('trades').select('import_key').limit(1);
+    const probe2=await sb.from('stock_cash_events').select('id').limit(1);
+    if(probe.error||probe2.error){showToast('Run migration-vested-import.sql in Supabase first, then reload Kosh.');return;}
+    showToast('Reading Vested file…');
+    let parsed;
+    try{parsed=parseVestedWorkbook(await file.arrayBuffer());}catch(e){showToast(e.message||'Could not read this file.');return;}
+    const[exT,exE,manual]=await Promise.all([
+      sbFetchAll(()=>sb.from('trades').select('id,import_key,coin_ticker,action,units,price_per_unit,trade_date,realized_pnl').eq('user_id',currentUser.id).eq('portfolio_id',pf.id).not('import_key','is',null).order('id')),
+      sbFetchAll(()=>sb.from('stock_cash_events').select('import_key,event_type,amount').eq('user_id',currentUser.id).eq('portfolio_id',pf.id).order('id')),
+      sb.from('trades').select('id',{count:'exact',head:true}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id).is('import_key',null)
+    ]);
+    const haveT=new Set((exT.data||[]).map(r=>r.import_key)),haveE=new Set((exE.data||[]).map(r=>r.import_key));
+    const newT=parsed.trades.filter(r=>!haveT.has(r.key)),newE=parsed.events.filter(r=>!haveE.has(r.key));
+    const manualCount=manual.count||0;
+    // Full history = already-imported rows + new rows
+    const histRows=(exT.data||[]).map(r=>({key:r.import_key,iso:new Date(r.trade_date).toISOString().replace('.000Z','Z'),ticker:(r.coin_ticker||'').toUpperCase(),action:r.action,qty:r.units,price:r.price_per_unit,name:r.coin_ticker})).concat(newT);
+    const rp=vestedReplay(histRows);
+    const allEv=(exE.data||[]).map(r=>({type:r.event_type,amount:r.amount})).concat(newE);
+    const dep=allEv.filter(e=>e.type==='deposit').reduce((s,e)=>s+e.amount,0),wd=allEv.filter(e=>e.type==='withdrawal').reduce((s,e)=>s+e.amount,0);
+    const netCapital=dep+wd;
+    const held=Object.entries(rp.holdings).filter(([,s])=>s.units>1e-9);
+    if(!newT.length&&!newE.length&&!manualCount){showToast('Already up to date — nothing new in this file ✅');return;}
+    const warnTxt=Object.keys(parsed.warn).length?'\n\n⚠️ This file also has entries Kosh does not handle yet: '+Object.entries(parsed.warn).map(([k,v])=>k+' ×'+v).join(', ')+'. Cash will still match Vested, but check these holdings.':'';
+    const msg=`Import into "${pf.name}"?\n\n• ${newT.length} new trade(s) (buys/sells with commission)\n• ${newE.length} new deposit / dividend / interest entr${newE.length===1?'y':'ies'}\n`
+      +(manualCount?`• DELETE ${manualCount} manual entr${manualCount===1?'y':'ies'} you logged by hand (Vested replaces them)\n`:'')
+      +`\nAfter import:\n• Holdings: ${held.length?held.map(([t,s])=>t+' '+(+s.units.toFixed(4))).join(', '):'none'}\n`
+      +(parsed.balance!=null?`• USD cash = $${parsed.balance.toFixed(2)} (Vested's latest balance)\n`:'')
+      +`• Capital = $${netCapital.toFixed(2)} (deposits − withdrawals)`
+      +(rp.over?`\n\n⚠️ ${rp.over} sell(s) were larger than the shares on record — older history may be missing.`:'')+warnTxt;
+    if(!confirm(msg))return;
+    let n=0;
+    // 1) Remove hand-logged entries (and their effect) — Vested is the source of truth
+    if(manualCount){
+      const{error}=await sb.from('trades').delete().eq('user_id',currentUser.id).eq('portfolio_id',pf.id).is('import_key',null);
+      if(error){showToast('Could not delete manual entries: '+error.message);return;}
+    }
+    // 2) Tiers & coins of the target portfolio (read directly — it may not be the open one)
+    const{data:tierRows}=await sb.from('tiers').select('*').eq('portfolio_id',pf.id).order('sort_order');
+    let tl=tierRows||[];
+    const tierIds=tl.map(t=>t.id);
+    const{data:coinRows}=tierIds.length?await sb.from('coins').select('*').in('tier_id',tierIds):{data:[]};
+    let cl=coinRows||[];
+    const isReserve=t=>/stable|reserve|cash/i.test(t.name);
+    let stockTier=tl.find(t=>!isReserve(t));
+    if(!stockTier&&held.length){
+      const{data}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:pf.id,name:'Holdings',target_pct:1,sort_order:0}).select().single();
+      if(data){stockTier=data;tl.push(data);}
+    }
+    const cashTier=tl.find(isReserve)||stockTier||tl[0];
+    // 3) Insert new trades with realized P&L from the replay
+    showToast('Saving trades…');
+    const coinByTicker=t=>cl.find(c=>(c.ticker||'').toUpperCase()===t);
+    const mkRow=r=>{const c=coinByTicker(r.ticker);return{
+      user_id:currentUser.id,portfolio_id:pf.id,coin_id:c?c.id:null,coin_name:r.name,coin_ticker:r.ticker,action:r.action,
+      units:r.qty,price_per_unit:r.price,total_usd:+(r.qty*r.price).toFixed(6),realized_pnl:rp.realized.get(r.key),
+      trade_date:r.iso,notes:'Vested import',fee_usd:r.fee,fee_amount:r.fee,fee_asset:'USD',import_key:r.key};};
+    const rowsOut=newT.map(mkRow);
+    for(let i=0;i<rowsOut.length;i+=200){
+      const{error}=await sb.from('trades').insert(rowsOut.slice(i,i+200));
+      if(error){showToast('Trade import failed: '+error.message);return;}
+      n+=Math.min(200,rowsOut.length-i);
+    }
+    // existing rows whose realized P&L changed because older history arrived
+    for(const r of (exT.data||[])){
+      if(r.action!=='sell')continue;
+      const want=rp.realized.get(r.import_key);
+      if(want!=null&&Math.abs((r.realized_pnl||0)-want)>0.005)await sb.from('trades').update({realized_pnl:want}).eq('id',r.id);
+    }
+    // 4) Cash events
+    const evRows=newE.map(e=>({user_id:currentUser.id,portfolio_id:pf.id,event_type:e.type,ticker:e.ticker,description:e.desc,amount:e.amount,event_time:e.iso,import_key:e.key}));
+    for(let i=0;i<evRows.length;i+=200){
+      const{error}=await sb.from('stock_cash_events').insert(evRows.slice(i,i+200));
+      if(error){showToast('Income import failed: '+error.message);return;}
+    }
+    // 5) Rebuild holdings from the full history
+    showToast('Updating holdings…');
+    const heldSet=new Set(held.map(([t])=>t));
+    for(const c of cl){
+      const tk=(c.ticker||'').toUpperCase();if(tk==='USD')continue;
+      if(!heldSet.has(tk)&&(c.units_held||0)!==0)await sb.from('coins').update({units_held:0}).eq('id',c.id);
+    }
+    for(const[tk,s]of held){
+      let c=coinByTicker(tk);
+      if(c)await sb.from('coins').update({units_held:s.units,avg_cost_usd:s.avg}).eq('id',c.id);
+      else if(stockTier){
+        const{data}=await sb.from('coins').insert({user_id:currentUser.id,tier_id:stockTier.id,name:s.name||tk,ticker:tk,coingecko_id:tk,weight_in_tier:0,exchanges:'',rationale:'',units_held:s.units,avg_cost_usd:s.avg,sort_order:cl.length}).select().single();
+        if(data){cl.push(data);c=data;}
+      }
+    }
+    // link this import's trades to their coins (sold-out stocks stay unlinked)
+    for(const[tk]of held){const c=coinByTicker(tk);if(c)await sb.from('trades').update({coin_id:c.id}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id).eq('coin_ticker',tk).is('coin_id',null);}
+    // USD cash = Vested's latest balance (falls back to nothing if the file lacks it)
+    if(parsed.balance!=null&&cashTier){
+      let usd=coinByTicker('USD');
+      if(usd)await sb.from('coins').update({units_held:parsed.balance,avg_cost_usd:1}).eq('id',usd.id);
+      else await sb.from('coins').insert({user_id:currentUser.id,tier_id:cashTier.id,name:'US Dollar',ticker:'USD',coingecko_id:'USD',weight_in_tier:0,exchanges:'',rationale:'',units_held:parsed.balance,avg_cost_usd:1,sort_order:cl.length});
+    }
+    // 6) Capital = net deposits
+    await sb.from('kosh_settings').upsert({user_id:currentUser.id,portfolio_id:pf.id,total_capital:Math.max(0,netCapital),updated_at:new Date().toISOString()},{onConflict:'user_id,portfolio_id'});
+    try{await loadAllData();}catch(e){}
+    try{renderAll();}catch(e){}
+    await renderJournal();
+    showToast(`Imported ${n} trade(s) and ${evRows.length} income/cash entr${evRows.length===1?'y':'ies'} ✅`);
+  }catch(e){
+    console.error('Vested import failed',e);showToast('Import failed: '+(e.message||e));
+  }finally{_vestedBusy=false;}
+}
+let _stockEventsOpen=false;
+async function vestedEventsHtml(){
+  const pids=journalPortfolioId?[journalPortfolioId]:portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id);
+  if(!pids.length)return'';
+  const{data,error}=await sbFetchAll(()=>sb.from('stock_cash_events').select('*').eq('user_id',currentUser.id).in('portfolio_id',pids).order('event_time',{ascending:false}).order('id'));
+  if(error||!data||!data.length)return'';
+  const rows=data.filter(e=>journalInDateRange(e.event_time));
+  const sum=t=>rows.filter(e=>e.event_type===t).reduce((s,e)=>s+e.amount,0);
+  const div=sum('dividend'),tax=sum('dividend_tax'),intr=sum('interest'),fee=sum('fee'),dep=sum('deposit'),wd=sum('withdrawal');
+  let comm=0;allJournalTrades.forEach(t=>{if(journalInDateRange(t.trade_date)&&t.fee_usd)comm+=t.fee_usd;});
+  const tile=(l,v,col)=>`<div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">${l}</div><div class="hide-figure" style="font-weight:700;font-size:1.0rem;color:${col||'var(--ink)'}">${v}</div></div>`;
+  const sgn=v=>(v>=0?'+':'−')+fmtUsd(Math.abs(v));
+  const label={deposit:'Deposit',withdrawal:'Withdrawal',dividend:'Dividend',dividend_tax:'Dividend tax',interest:'Interest',fee:'Fee',other:'Other'};
+  let h=`<div class="dash-section" style="margin-top:18px"><h3>Income, fees &amp; cash movements</h3></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px">
+      ${tile('Dividends (after tax)',sgn(div+tax),'var(--green)')}
+      ${tile('Interest',sgn(intr),'var(--green)')}
+      ${tile('Trading commissions','−'+fmtUsd(comm),'var(--red)')}
+      ${tile('Other fees',fee?sgn(fee):'—',fee?'var(--red)':'var(--ink3)')}
+      ${tile('Deposited',fmtUsd(dep))}
+      ${tile('Withdrawn',fmtUsd(Math.abs(wd)))}
+    </div>
+    <button class="link-btn" style="font-size:0.72rem;margin-bottom:8px" onclick="_stockEventsOpen=!_stockEventsOpen;renderJournal()">${_stockEventsOpen?'Hide':'Show'} all ${rows.length} entries</button>`;
+  if(_stockEventsOpen){
+    h+=`<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.7rem;white-space:nowrap">
+      <thead><tr style="background:var(--ink-accent);color:#F1F3F5"><th style="padding:8px 10px;text-align:left">Date</th><th style="padding:8px 10px;text-align:left">Type</th><th style="padding:8px 10px;text-align:left">Stock</th><th style="padding:8px 10px;text-align:right">Amount (USD)</th></tr></thead><tbody>`
+      +rows.map((e,i)=>`<tr style="border-bottom:1px solid var(--border);${i%2?'background:var(--card2)':''}"><td style="padding:7px 10px;color:var(--ink2)">${new Date(e.event_time).toLocaleDateString('en-US',{day:'numeric',month:'short',year:'2-digit'})}</td><td style="padding:7px 10px">${label[e.event_type]||e.event_type}</td><td style="padding:7px 10px;font-weight:600">${escapeHtml(e.ticker||'')}</td><td style="padding:7px 10px;text-align:right;color:${e.amount>=0?'var(--green)':'var(--red)'}" class="hide-figure">${sgn(e.amount)}</td></tr>`).join('')
+      +`</tbody></table></div>`;
+  }
+  return h;
 }
 function transferBadgeHtml(action){
   const map={
