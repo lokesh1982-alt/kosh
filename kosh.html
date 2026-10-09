@@ -3966,7 +3966,7 @@ async function renderJournal(){
   html+=`<div class="card" style="text-align:center">
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (${journalPortfolioId?escapeHtml((portfolios.find(p=>p.id===journalPortfolioId)||{}).name||'portfolio'):(journalViewMode==='stocks'?'all US-Stocks':'all crypto portfolios')})</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
-    ${journalViewMode==='stocks'?(()=>{
+    ${(()=>{
       const fl=journalDateFiltered(allJournalTrades).filter(t=>t.fee_usd!=null&&t.fee_usd>0);
       const fee=fl.reduce((x,t)=>x+t.fee_usd,0),traded=fl.reduce((x,t)=>x+(t.total_usd||0),0);
       const ts=fl.map(t=>new Date(t.trade_date).getTime()),months=fl.length?Math.max(1,(Math.max(...ts)-Math.min(...ts))/2629800000):1;
@@ -3987,7 +3987,7 @@ async function renderJournal(){
         t+=tile('Withdrawn',fmtUsd(Math.abs(v.wd)));
       }
       return t?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">${t}</div>`:'';
-    })():''}
+    })()}
   </div>`;
   html+=addPastBtn;
   if(journalViewMode==='crypto'&&allJournalTrades.some(t=>t.binance_trade_id!=null&&t.fee_usd==null))html+=`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="backfillSpotFees()">💸 Fill in missing fees for synced trades</button>`;
@@ -4581,6 +4581,25 @@ async function renderFuturesJournal(el,toggleHtml){
   html+=`<div class="card" style="text-align:center">
     <div class="card-title" style="margin-bottom:4px">Total realized P&amp;L (Futures)</div>
     <div class="serif hide-figure" style="font-size:1.4rem;font-weight:600;color:${totalRealized>=0?'var(--green)':'var(--red)'}">${totalRealized>=0?'+':''}${fmtUsd(totalRealized)}</div>
+    ${(()=>{
+      const inR=r=>journalInDateRange(r.income_time);
+      const fee=fList.reduce((x,t)=>x+futuresFeeUsd(t),0);
+      const fund=futuresIncomeRows.filter(inR).reduce((x,r)=>x+(parseFloat(r.income)||0),0);
+      const traded=fList.reduce((x,t)=>x+(t.quote_qty||t.qty*t.price||0),0);
+      const ts=fList.map(t=>new Date(t.trade_time).getTime());
+      const months=ts.length?Math.max(1,(Math.max(...ts)-Math.min(...ts))/2629800000):1;
+      const after=totalRealized-fee+fund;
+      const real=closed.filter(t=>t.realized_pnl!==0),wins=real.filter(t=>t.realized_pnl>0);
+      const sg=x=>(x>=0?'+':'−')+fmtUsd(Math.abs(x));
+      const tile=(l,v,c,sub)=>`<div style="background:var(--card2);border-radius:10px;padding:10px 6px"><div style="font-size:0.64rem;color:var(--ink3)">${l}</div><div class="hide-figure" style="font-weight:700;font-size:0.95rem;color:${c||'var(--ink)'}">${v}</div>${sub?`<div class="hide-figure" style="font-size:0.58rem;color:var(--ink3)">${sub}</div>`:''}</div>`;
+      return`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">`
+        +tile('Commissions paid','−'+fmtUsd(fee),'var(--red)',traded>0?(fee/traded*100).toFixed(3)+'% of '+fmtUsd(traded)+' traded':'')
+        +tile('Commissions / month',fmtUsd(fee/months),'',fList.length+' fills')
+        +tile('Funding fees',futuresIncomeRows.length?sg(fund):'—',fund>=0?'var(--green)':'var(--red)','paid (−) / received (+)')
+        +tile('Realized after fees & funding',sg(after),after>=0?'var(--green)':'var(--red)')
+        +tile('Closed trades',String(real.length),'',real.length?(wins.length/real.length*100).toFixed(1)+'% win rate':'')
+        +`</div>`;
+    })()}
   </div>`;
   html+=syncBtn;
   html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
@@ -6723,7 +6742,8 @@ function futuresValueNow(){
 // what the account is worth now minus what it has earned. ROI = profit ÷ that.
 function futuresProfit(){
   const realizedGross=futuresTrades.filter(t=>t.realized_pnl!=null).reduce((s,t)=>s+t.realized_pnl,0);
-  let fees=0,fund=0;futuresCostMap.forEach(c=>{fees+=c.fee;fund+=c.funding;});
+  const fees=futuresTrades.reduce((x,t)=>x+futuresFeeUsd(t),0);
+  const fund=futuresIncomeRows.reduce((x,r)=>x+(parseFloat(r.income)||0),0);
   const unreal=futuresPositions.reduce((s,p)=>s+parseFloat(p.unRealizedProfit||0),0);
   const realizedNet=realizedGross-fees+fund;
   const total=realizedNet+unreal;
