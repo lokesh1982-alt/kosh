@@ -309,6 +309,7 @@ select option{color:#14181D;background:#fff;}
       <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
       <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watchlist</div></button>
       <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
+      <button class="menu-tile" data-tab="lead" onclick="switchTab('lead')"><div class="ic">🪙</div><div class="lbl">Lead Trading</div></button>
       <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
       <button class="menu-tile" data-tab="analysis" onclick="switchTab('analysis')"><div class="ic">🔍</div><div class="lbl">Analysis</div></button>
       <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
@@ -379,6 +380,15 @@ select option{color:#14181D;background:#fff;}
         <button class="btn-outline" style="padding:5px 11px;font-size:0.72rem" onclick="syncFuturesNow()">🔄 Sync Futures</button>
       </div>
       <div id="futures-content"></div>
+    </div>
+
+    <!-- LEAD TRADING (Binance Spot copy trading wallet) -->
+    <div class="section" id="sec-lead">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <div class="card-title" style="margin:0">🪙 Lead Trading (Binance Spot)</div>
+        <button class="btn-outline" style="padding:5px 11px;font-size:0.72rem" onclick="syncLeadNow()">🔄 Sync Binance</button>
+      </div>
+      <div id="lead-content"></div>
     </div>
 
     <!-- TIERS & COINS -->
@@ -489,7 +499,8 @@ select option{color:#14181D;background:#fff;}
     <button class="menu-tile" data-tab="journal" onclick="switchTab('journal')"><div class="ic">📒</div><div class="lbl">Journal</div></button>
     <button class="menu-tile" data-tab="watchlist" onclick="switchTab('watchlist')"><div class="ic">⭐</div><div class="lbl">Watch</div></button>
     <button class="menu-tile" data-tab="news" onclick="switchTab('news')"><div class="ic">📰</div><div class="lbl">News</div></button>
-    <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
+    <button class="menu-tile" data-tab="lead" onclick="switchTab('lead')"><div class="ic">🪙</div><div class="lbl">Lead Trading</div></button>
+      <button class="menu-tile" data-tab="futures" onclick="switchTab('futures')"><div class="ic">🧮</div><div class="lbl">Futures</div></button>
       <button class="menu-tile" data-tab="analysis" onclick="switchTab('analysis')"><div class="ic">🔍</div><div class="lbl">Analysis</div></button>
     <button class="menu-tile" data-tab="settings" onclick="switchTab('settings')"><div class="ic">⚙️</div><div class="lbl">Settings</div></button>
   </div>
@@ -1062,6 +1073,7 @@ function switchTab(name){
   if(name==='watchlist')renderWatchlist();
   if(name==='news')renderNews();
   if(name==='futures')renderFutures();
+  if(name==='lead')renderLead();
   if(name==='analysis')renderAnalysis();
   if(name==='settings')refreshSettingsPanel();
 }
@@ -7404,17 +7416,20 @@ async function scanCopyIncome(){
       return`<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.76rem;padding:3px 0;${isC?'background:var(--green-bg,rgba(40,160,90,.12));border-radius:6px;padding:3px 6px;':''}"><span>${escapeHtml(KNOWN_INCOME[k]||k)} <span style="color:var(--ink3)">(${totals[k].n})</span>${isC?' <b style="color:var(--green)">← possible profit share / rebate</b>':''}</span><span class="hide-figure" style="color:${v>=0?'var(--green)':'var(--red)'};font-weight:600">${v>=0?'+':'−'}${fmtUsd(Math.abs(v))}</span></div>`;}).join('')+
     `<div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.5">${found.length?'Binance reports these as income types of their own — they are real earnings credited to your Futures wallet.':'No separate profit-sharing record appears in the data Binance gives to API keys. If you receive profit share, log it below (copy it from Binance → Copy Trading → Profit Sharing).'}</div>`;
 }
-function copyShareTotals(){
+function copyShareTotals(rowsIn){
+  const rowsX=rowsIn||copyShareRows;
   const now=Date.now(),d30=now-30*86400000;
-  const tot=copyShareRows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
-  const l30=copyShareRows.filter(r=>new Date(r.share_date).getTime()>=d30).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const tot=rowsX.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const l30=rowsX.filter(r=>new Date(r.share_date).getTime()>=d30).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   return{tot,l30};
 }
-function copyEarningsHtml(){
+function copyEarningsHtml(src){
+  src=src||'futures';
+  const myRows=copyShareRows.filter(r=>(r.source||'futures')===src);
   if(copyShareMissing)return`<div class="card" style="margin-bottom:14px"><div style="font-weight:700;font-size:0.86rem">Copy-trading earnings</div><div style="font-size:0.74rem;color:var(--red);margin-top:6px">Run <b>migration-copy-profit-share.sql</b> in Supabase to enable the profit-share log, then reload.</div></div>`;
-  const t=copyShareTotals();
+  const t=copyShareTotals(myRows);
   const today=new Date().toISOString().slice(0,10);
-  const byMonth={};copyShareRows.forEach(r=>{const k=String(r.share_date).slice(0,7);byMonth[k]=(byMonth[k]||0)+(parseFloat(r.amount)||0);});
+  const byMonth={};myRows.forEach(r=>{const k=String(r.share_date).slice(0,7);byMonth[k]=(byMonth[k]||0)+(parseFloat(r.amount)||0);});
   const months=Object.keys(byMonth).sort().reverse().slice(0,6);
   const inp='padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font-size:0.78rem;min-width:0';
   return`<div class="card" style="margin-bottom:14px">
@@ -7429,16 +7444,16 @@ function copyEarningsHtml(){
       <div style="display:flex;flex-wrap:wrap;gap:6px">
         <input id="cs-date" type="date" value="${today}" style="${inp}" onclick="try{this.showPicker()}catch(e){}">
         <input id="cs-amt" type="number" step="any" inputmode="decimal" placeholder="USDT" style="${inp};width:90px">
-        <select id="cs-src" style="${inp}"><option value="futures">Futures copy trading</option><option value="spot">Spot copy trading</option></select>
+        <input id="cs-src" type="hidden" value="${src}">
         <input id="cs-note" type="text" placeholder="Note (optional)" style="${inp};flex:1;min-width:110px">
         <button class="btn-primary" style="padding:7px 14px" onclick="addCopyShare()">Add</button>
       </div>
-      ${copyShareRows.length?`<div style="margin-top:8px;max-height:150px;overflow:auto">${copyShareRows.slice(0,12).map(r=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;padding:3px 0;border-top:1px solid var(--border)"><span style="color:var(--ink2)">${String(r.share_date).slice(0,10)} · ${r.source==='spot'?'Spot':'Futures'}${r.note?' · '+escapeHtml(r.note):''}</span><span><b class="hide-figure" style="color:var(--green)">+${fmtUsd(parseFloat(r.amount))}</b> <button class="link-btn" style="color:var(--red)" onclick="deleteCopyShare('${r.id}')">✕</button></span></div>`).join('')}</div>`:''}
+      ${myRows.length?`<div style="margin-top:8px;max-height:150px;overflow:auto">${myRows.slice(0,12).map(r=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;padding:3px 0;border-top:1px solid var(--border)"><span style="color:var(--ink2)">${String(r.share_date).slice(0,10)}${r.note?' · '+escapeHtml(r.note):''}</span><span><b class="hide-figure" style="color:var(--green)">+${fmtUsd(parseFloat(r.amount))}</b> <button class="link-btn" style="color:var(--red)" onclick="deleteCopyShare('${r.id}')">✕</button></span></div>`).join('')}</div>`:''}
     </div>
-    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px">
+    ${src==='futures'?`<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px">
       <button class="link-btn" onclick="scanCopyIncome()">🔎 Scan Binance for profit-share records</button>
       <div id="copy-scan" style="margin-top:6px"></div>
-    </div>
+    </div>`:''}
     <div style="font-size:0.64rem;color:var(--ink3);margin-top:8px;line-height:1.5">Profit share lands in your wallet, so it is already inside the Binance balance above; Kosh shows it here so you can see what part of your growth is earned from followers rather than from your own trades.</div>
   </div>`;
 }
@@ -7448,13 +7463,13 @@ async function addCopyShare(){
   if(!(amt>0)||!/^\d{4}-\d{2}-\d{2}$/.test(date)){showToast('Enter a date and an amount.');return;}
   const{error}=await sb.from('copy_profit_share').insert({user_id:currentUser.id,share_date:date,amount:amt,source:document.getElementById('cs-src').value,note:document.getElementById('cs-note').value.trim()||null});
   if(error){showToast('Error: '+error.message);return;}
-  showToast('Profit share added ✅');renderFutures();
+  showToast('Profit share added ✅');if(document.getElementById('sec-lead')?.classList.contains('active'))renderLead();else renderFutures();
 }
 async function deleteCopyShare(id){
   if(!confirm('Delete this entry?'))return;
   const{error}=await sb.from('copy_profit_share').delete().eq('id',id);
   if(error){showToast('Error: '+error.message);return;}
-  renderFutures();
+  if(document.getElementById('sec-lead')?.classList.contains('active'))renderLead();else renderFutures();
 }
 function fundingSectionsHtml(){
   const inp='padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font-size:0.78rem;min-width:0;width:100%;box-sizing:border-box';
@@ -7481,6 +7496,317 @@ function fundingSectionsHtml(){
     <div style="margin-top:10px"><button class="btn-primary" onclick="runCarryCheck()">Check</button></div>
     <div id="cc-out" style="margin-top:10px"></div>
   </div>`;
+}
+
+// ═══════════════════════════════
+//  LEAD TRADING TAB (Spot copy trading — Binance "lead" wallet)
+// ═══════════════════════════════
+async function renderLead(){
+  const el=document.getElementById('lead-content');
+  if(!el)return;
+  el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
+  const lead=portfolios.find(p=>p.name==='Lead Trading');
+  if(!lead){el.innerHTML='<div class="empty-state"><div class="ic">🪙</div><div>No portfolio named "Lead Trading" yet.</div><div style="font-size:0.72rem;margin-top:6px">Create it in Settings → Binance sync, then it appears here.</div></div>';return;}
+  try{await Promise.all([loadBinanceDefaultPortfolio(),loadCopyShares(),loadWalletFlows()]);}catch(e){}
+  try{await refreshReserveFromBinance(lead);}catch(e){}   // live USDT from the Lead wallet
+  const tiersR=await sb.from('tiers').select('id').eq('portfolio_id',lead.id);
+  const tids=(tiersR.data||[]).map(t=>t.id);
+  const lcoins=tids.length?((await sb.from('coins').select('*').in('tier_id',tids)).data||[]):[];
+  if(lcoins.length){try{await fetchCryptoPricesForCoins(lcoins);}catch(e){}}
+  let tr=await sbFetchAll(()=>sb.from('trades').select('*').eq('portfolio_id',lead.id).eq('user_id',currentUser.id).order('trade_date',{ascending:false}).order('id'));
+  const lt=tr.data||[];
+  const px=c=>livePrices[c.coingecko_id];
+  const open=lcoins.filter(c=>Math.abs(c.units_held||0)>1e-8);
+  const valueOf=c=>{const v=px(c);return v!=null?(c.units_held||0)*v:0;};
+  const value=open.reduce((s,c)=>s+valueOf(c),0);
+  let unreal=0,priced=0;
+  open.forEach(c=>{const v=px(c);if(c.avg_cost_usd==null||v==null)return;priced++;unreal+=(v-c.avg_cost_usd)*(c.units_held||0);});
+  const gross=lt.reduce((s,t)=>s+(t.realized_pnl||0),0);
+  const fees=lt.reduce((s,t)=>s+(t.fee_usd||0),0);
+  const realizedNet=gross-fees;
+  const total=realizedNet+unreal;
+  const implied=Math.max(0,value-total);
+  const roi=implied>0?total/implied*100:null;
+  const closed=lt.filter(t=>t.realized_pnl!=null&&t.action==='sell');
+  const wins=closed.filter(t=>t.realized_pnl>0),losses=closed.filter(t=>t.realized_pnl<0);
+  const winRate=closed.length?wins.length/closed.length*100:null;
+  const avgW=wins.length?wins.reduce((s,t)=>s+t.realized_pnl,0)/wins.length:0;
+  const avgL=losses.length?-losses.reduce((s,t)=>s+t.realized_pnl,0)/losses.length:0;
+  const traded=lt.filter(t=>t.action==='buy'||t.action==='sell').reduce((s,t)=>s+(t.total_usd||0),0);
+  const dates=lt.map(t=>new Date(t.trade_date).getTime()).filter(x=>isFinite(x));
+  const months=dates.length?Math.max(1,(Math.max(...dates)-Math.min(...dates))/(30.44*86400000)):1;
+  // Binance method: PnL = realized after commissions + open profit; base balance = starting balance + net deposits
+  const flowEv=[];
+  lt.forEach(t=>{if(t.action==='transfer_in')flowEv.push({ms:new Date(t.trade_date).getTime(),amt:t.total_usd||0});else if(t.action==='transfer_out')flowEv.push({ms:new Date(t.trade_date).getTime(),amt:-(t.total_usd||0)});});
+  walletFlowRows.forEach(r=>flowEv.push({ms:new Date(r.flow_date+'T12:00:00').getTime(),amt:parseFloat(r.amount)||0}));
+  const flowSum=flowEv.reduce((s,e)=>s+e.amt,0);
+  const leadBase0=Math.max(0,value-total-flowSum);
+  const leadPts=trendRoiSeries(lt.filter(t=>t.realized_pnl!=null||t.fee_usd>0).map(t=>({ms:new Date(t.trade_date).getTime(),amt:(t.realized_pnl||0)-(t.fee_usd||0)})),flowEv,leadBase0,total);
+  const col=v=>v>=0?'var(--green)':'var(--red)';
+  const sg=v=>(v>=0?'+':'−')+fmtUsd(Math.abs(v));
+  const tile=(l,v,c,s)=>`<div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">${l}</div><div class="hide-figure" style="font-weight:700;font-size:1.05rem;${c?'color:'+c:''}">${v}</div>${s?`<div style="font-size:0.6rem;color:var(--ink3);margin-top:2px">${s}</div>`:''}</div>`;
+  const lastSync=binanceLastSyncedAt?'Last synced '+timeAgo(binanceLastSyncedAt):'Not synced yet';
+  const {shown,dust}=splitDust(open);
+  shown.sort((a,b)=>valueOf(b)-valueOf(a));
+  const row=c=>{
+    const v=px(c),val=valueOf(c);
+    const g=(c.avg_cost_usd!=null&&v!=null)?(v-c.avg_cost_usd)*(c.units_held||0):null;
+    const gp=(g!=null&&c.avg_cost_usd>0)?(v-c.avg_cost_usd)/c.avg_cost_usd*100:null;
+    const share=value>0?val/value*100:0;
+    return`<div style="padding:9px 0;border-bottom:1px solid var(--border)"><div class="coin-row" style="border:none;padding:0">
+      <div><div class="coin-name">${escapeHtml(c.name)} <span style="color:var(--ink3);font-weight:400">${escapeHtml(c.ticker)}</span> <span style="font-size:0.62rem;color:var(--ink3)">${share.toFixed(0)}%</span></div>
+      <div class="coin-sub hide-figure">${(c.units_held||0)} units${v!=null?` · now ${fmtPx(v)}`:' · price unavailable'}${c.avg_cost_usd?` · avg buy ${fmtPx(c.avg_cost_usd)}`:''}</div></div>
+      <div style="text-align:right"><div class="coin-val hide-figure">${v!=null?fmtUsd(val):'—'}</div>${g!=null?`<div class="coin-drift hide-figure" style="color:${col(g)}">${g>=0?'+':'−'}${fmtUsd(Math.abs(g))} (${gp>=0?'+':''}${gp.toFixed(1)}%)</div>`:''}</div>
+    </div></div>`;};
+  // monthly net result (realized − fees) for a quick consistency view
+  const byM={};
+  lt.forEach(t=>{if(t.realized_pnl==null&&!(t.fee_usd>0))return;const k=String(t.trade_date).slice(0,7);byM[k]=(byM[k]||0)+(t.realized_pnl||0)-(t.fee_usd||0);});
+  const mKeys=Object.keys(byM).sort().slice(-6);
+  const mMax=Math.max(1e-9,...mKeys.map(k=>Math.abs(byM[k])));
+  const monthly=mKeys.length?`<div class="card" style="margin-bottom:14px"><div style="font-weight:700;font-size:0.86rem;margin-bottom:8px">Net result per month <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">closed trades after commissions</span></div>
+    ${mKeys.map(k=>`<div style="display:flex;align-items:center;gap:8px;font-size:0.74rem;margin-bottom:4px"><span style="width:58px;color:var(--ink3)">${k}</span><div style="flex:1;height:8px;background:var(--card2);border-radius:4px;position:relative"><div style="position:absolute;height:8px;border-radius:4px;left:${byM[k]>=0?50:50-Math.abs(byM[k])/mMax*50}%;width:${Math.abs(byM[k])/mMax*50}%;background:${col(byM[k])}"></div></div><span class="hide-figure" style="width:78px;text-align:right;font-weight:600;color:${col(byM[k])}">${sg(byM[k])}</span></div>`).join('')}</div>`:'';
+  el.innerHTML=`
+    <div style="font-size:0.68rem;color:var(--ink3);margin-bottom:10px">${lastSync} · USDT balance read live from your Lead wallet</div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Current value</span><span class="hide-figure" style="font-size:0.95rem;font-weight:700">${fmtUsd(value)}</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)"><span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net profit <span style="text-transform:none">(closed trades after commissions + open)</span></span><span class="hide-figure" style="font-size:0.95rem;font-weight:700;color:${col(total)}">${sg(total)}</span></div>
+      <div class="hide-figure" style="font-size:0.66rem;color:var(--ink3);text-align:right;margin-top:2px">Trades ${sg(gross)} · commissions −${fmtUsd(fees)} · open ${sg(unreal)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)"><span style="font-size:0.62rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em">Net ROI <span style="text-transform:none">(on starting capital ${fmtUsd(implied)})</span></span><span style="font-size:0.95rem;font-weight:700;color:${roi==null?'var(--ink3)':col(roi)}">${roi==null?'—':(roi>=0?'+':'')+roi.toFixed(1)+'%'}</span></div>
+      <div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.4">Starting capital = current value minus net profit, so nothing is entered by hand. Money you move in or out of this wallet is not tracked separately, so treat it as an estimate.</div>
+    </div>
+    ${trendCardHtml('lead',leadPts,implied,'Profit & ROI trend',{exact:true,note:'History starts at your first synced trade.'})}
+    ${walletFlowsHtml()}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
+      ${tile('Realized (net)',sg(realizedNet),col(realizedNet))}
+      ${tile('Unrealized',priced?sg(unreal):'—',priced?col(unreal):'')}
+      ${tile('Win rate',winRate!=null?winRate.toFixed(1)+'%':'—','',closed.length?wins.length+' wins · '+losses.length+' losses':'')}
+      ${tile('Closed trades',String(closed.length),'',avgW>0&&avgL>0?'avg win '+fmtUsd(avgW)+' · avg loss '+fmtUsd(avgL):'')}
+      ${tile('Commissions paid','−'+fmtUsd(fees),'var(--red)',traded>0?(fees/traded*100).toFixed(2)+'% of '+fmtUsd(traded)+' traded':'')}
+      ${tile('Commissions / month','−'+fmtUsd(fees/months),'var(--red)')}
+    </div>
+    ${monthly}
+    ${copyEarningsHtml('spot')}
+    <div class="dash-section"><h3>Positions</h3></div>
+    <div class="card">${shown.length?shown.map(row).join(''):'<div class="empty-state" style="padding:12px 0"><div>No open positions.</div></div>'}</div>
+    ${dust.length?`<div style="font-size:0.7rem;color:var(--ink3);margin:-4px 0 12px">${dust.length} tiny balance${dust.length===1?'':'s'} under $1 hidden.</div>`:''}
+    <div style="text-align:center;margin-top:14px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
+      <button class="link-btn" onclick="switchTab('journal');setJournalScope('${lead.id}')">📒 View trades in Journal →</button>
+      <button class="link-btn" onclick="analysisScope='${lead.id}';try{localStorage.setItem('kosh-analysis-scope','${lead.id}')}catch(e){};switchTab('analysis')">🔍 Analyse these trades →</button>
+    </div>`;
+}
+async function syncLeadNow(){
+  try{await syncBinanceNow();}catch(e){}
+  renderLead();
+}
+
+// ═══════════════════════════════
+//  PROFIT / ROI TREND — Binance copy-trading method
+//  Binance (lead portfolio): PnL = realized (after fees & funding) + unrealized − deposits + withdrawals
+//                            ROI = PnL ÷ MaxBaseBalance, BaseBalance = initial deposit + net deposits
+//  Futures & Lead Trading tabs.
+// ═══════════════════════════════
+window._trend=window._trend||{};
+function trendDayKey(ms){return new Date(ms).toLocaleDateString('en-CA');}
+// events [{ms,amt}] = profit/loss only (no deposits). flows [{ms,amt}] = money in (+) / out (−).
+// Returns daily points {ms, pnl (cumulative), base (cumulative base balance)}; last point is "now" incl. open profit.
+function trendRoiSeries(events,flows,base0,nowPnl){
+  const by={};
+  const day=ms=>trendDayKey(ms);
+  events.forEach(e=>{if(!isFinite(e.ms))return;const k=day(e.ms);(by[k]=by[k]||{p:0,f:0}).p+=e.amt;});
+  flows.forEach(e=>{if(!isFinite(e.ms))return;const k=day(e.ms);(by[k]=by[k]||{p:0,f:0}).f+=e.amt;});
+  const days=Object.keys(by).sort();
+  const pts=[];let pnl=0,base=Math.max(0,base0||0);
+  if(days.length)pts.push({ms:new Date(days[0]+'T00:00:00').getTime()-43200000,pnl:0,base});
+  days.forEach(k=>{pnl+=by[k].p;base+=by[k].f;pts.push({ms:new Date(k+'T12:00:00').getTime(),pnl,base:Math.max(0,base)});});
+  if(nowPnl!=null){
+    const t=Date.now(),last=pts[pts.length-1];
+    if(last&&day(last.ms)===day(t))pts[pts.length-1]={ms:t,pnl:nowPnl,base:last.base};
+    else pts.push({ms:t,pnl:nowPnl,base:last?last.base:Math.max(0,base0||0)});
+  }
+  return pts;
+}
+// Fallback (no deposit data): simple cumulative profit, ROI on an estimated starting capital.
+function trendSeries(events,nowCum){
+  return trendRoiSeries(events,[],0,nowCum).map(p=>({ms:p.ms,pnl:p.pnl,base:null}));
+}
+function trendCardHtml(id,pts,implied,title,opts){
+  const prev=window._trend[id]||{};
+  const st=window._trend[id]=Object.assign({metric:'profit',range:'all'},prev,{pts,implied,title,exact:!!(opts&&opts.exact),fut:!!(opts&&opts.fut),note:(opts&&opts.note)||''});
+  return`<div class="card" style="margin-bottom:14px" id="trend-${id}">${trendInner(id)}</div>`;
+}
+function trendUpdate(id,pts,exact,note){
+  const st=window._trend[id];if(!st)return;
+  st.pts=pts;st.exact=exact;st.note=note||st.note;
+  const el=document.getElementById('trend-'+id);if(el)el.innerHTML=trendInner(id);
+}
+// → [{ms, v (profit in period), r (ROI % or null)}]
+function trendWindow(st){
+  let pts=st.pts||[];if(!pts.length)return[];
+  const days={'7d':7,'30d':30,'90d':90}[st.range];
+  let base0=pts[0],from=null,use=pts;
+  if(days){
+    from=Date.now()-days*86400000;
+    const before=pts.filter(p=>p.ms<from);
+    base0=before.length?before[before.length-1]:{ms:from,pnl:0,base:pts[0].base};
+    use=pts.filter(p=>p.ms>=from);
+    if(!use.length)return[];
+    use=[{ms:from,pnl:base0.pnl,base:base0.base},...use];
+  }
+  let maxBase=0;
+  return use.map(p=>{
+    const v=p.pnl-(days?base0.pnl:0);
+    let r=null;
+    if(p.base!=null){maxBase=Math.max(maxBase,p.base);r=maxBase>0?v/maxBase*100:null;}
+    else if(st.implied>0)r=v/st.implied*100;
+    return{ms:p.ms,v,r};
+  });
+}
+function trendInner(id){
+  const st=window._trend[id];if(!st)return'';
+  const w=trendWindow(st);
+  const hasRoi=w.some(p=>p.r!=null);
+  const metric=(st.metric==='roi'&&hasRoi)?'roi':'profit';
+  st._metric=metric;
+  const val=p=>metric==='roi'?(p.r==null?0:p.r):p.v;
+  const fmt=v=>metric==='roi'?(v>=0?'+':'')+v.toFixed(2)+'%':(v>=0?'+':'−')+fmtUsd(Math.abs(v));
+  const pill=(cur,v,l,fn)=>`<button class="an-pill ${cur===v?'on':''}" onclick="${fn}">${l}</button>`;
+  let chart='',head='';
+  if(w.length<2){
+    chart=`<div style="padding:26px 0;text-align:center;font-size:0.76rem;color:var(--ink3)">${st.loading?'Loading balance history from Binance…':'Not enough history yet.'}</div>`;
+  }else{
+    const vals=w.map(val);const last=vals[vals.length-1];
+    let lo=Math.min(0,...vals),hi=Math.max(0,...vals);if(hi-lo<1e-9){hi+=1;lo-=1;}
+    const pad=(hi-lo)*0.08;lo-=pad;hi+=pad;
+    const t0=w[0].ms,t1=w[w.length-1].ms,W=600,H=170;
+    const X=ms=>t1>t0?(ms-t0)/(t1-t0)*W:W;
+    const Y=v=>H-(v-lo)/(hi-lo)*H;
+    const line=w.map((p,i)=>(i?'L':'M')+X(p.ms).toFixed(1)+' '+Y(val(p)).toFixed(1)).join(' ');
+    const area=line+` L${X(t1).toFixed(1)} ${Y(0).toFixed(1)} L${X(t0).toFixed(1)} ${Y(0).toFixed(1)} Z`;
+    const c=last>=0?'var(--green)':'var(--red)',hex=last>=0?'#34D399':'#F0665F';
+    st._w=w;st._val=vals;st._geom={t0,t1,W};
+    head=`<div id="trend-${id}-read" class="hide-figure" style="font-size:1.25rem;font-weight:700;color:${c}">${fmt(last)}</div><div id="trend-${id}-date" style="font-size:0.66rem;color:var(--ink3);margin-bottom:6px">${st.range==='all'?'Whole history':'Last '+st.range.replace('d',' days')} · today</div>`;
+    chart=`<div style="position:relative;touch-action:pan-y" onpointermove="trendHover('${id}',event,this)" onpointerleave="trendLeave('${id}')">
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
+        <defs><linearGradient id="tg-${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hex}" stop-opacity=".30"/><stop offset="1" stop-color="${hex}" stop-opacity="0"/></linearGradient></defs>
+        <line x1="0" x2="${W}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--border)" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+        <path d="${area}" fill="url(#tg-${id})"/>
+        <path d="${line}" fill="none" stroke="${hex}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+        <line id="trend-${id}-cur" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--ink3)" stroke-width="1" vector-effect="non-scaling-stroke" style="display:none"/>
+      </svg></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--ink3);margin-top:2px"><span>${new Date(t0).toLocaleDateString('en-US',{day:'numeric',month:'short'})}</span><span>${new Date(t1).toLocaleDateString('en-US',{day:'numeric',month:'short'})}</span></div>`;
+  }
+  const cap=st.exact
+    ?`Same method as Binance's copy-trading page: ROI = PnL ÷ MaxBaseBalance, where base balance = starting balance + net deposits (highest value so far). PnL ignores deposits and withdrawals. ${st.note||''}`
+    :`Cumulative net profit from closed trades after fees${st.fut?' and funding':''}, plus open profit today. ROI here is estimated on a starting capital derived from your balance, because deposit history could not be read. ${st.note||''}`;
+  return`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <div style="font-weight:700;font-size:0.86rem">${escapeHtml(st.title||'Profit trend')}</div>
+      <div class="an-pills" style="margin:0">${pill(metric,'profit','Profit',`trendSet('${id}',{metric:'profit'})`)}${hasRoi?pill(metric,'roi','ROI',`trendSet('${id}',{metric:'roi'})`):''}</div>
+    </div>${head}${chart}
+    <div class="an-pills" style="margin:8px 0 0">${['7d','30d','90d','all'].map(r=>pill(st.range,r,r==='all'?'All':r.toUpperCase(),`trendSet('${id}',{range:'${r}'})`)).join('')}</div>
+    <div style="font-size:0.62rem;color:var(--ink3);margin-top:6px;line-height:1.45">${cap}</div>`;
+}
+function trendSet(id,patch){
+  const st=window._trend[id];if(!st)return;
+  Object.assign(st,patch);
+  const el=document.getElementById('trend-'+id);if(el)el.innerHTML=trendInner(id);
+}
+function trendHover(id,ev,box){
+  const st=window._trend[id];if(!st||!st._w)return;
+  const r=box.getBoundingClientRect();if(!r.width)return;
+  const f=Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width));
+  const ms=st._geom.t0+f*(st._geom.t1-st._geom.t0);
+  let bi=0,bd=Infinity;st._w.forEach((p,i)=>{const d=Math.abs(p.ms-ms);if(d<bd){bd=d;bi=i;}});
+  const v=st._val[bi],p=st._w[bi];
+  const rd=document.getElementById('trend-'+id+'-read'),dt=document.getElementById('trend-'+id+'-date'),cur=document.getElementById('trend-'+id+'-cur');
+  if(rd)rd.textContent=st._metric==='roi'?(v>=0?'+':'')+v.toFixed(2)+'%':(v>=0?'+':'−')+fmtUsd(Math.abs(v));
+  if(dt)dt.textContent=new Date(p.ms).toLocaleDateString('en-US',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+  if(cur){const x=((p.ms-st._geom.t0)/Math.max(1,st._geom.t1-st._geom.t0)*st._geom.W).toFixed(1);cur.setAttribute('x1',x);cur.setAttribute('x2',x);cur.style.display='';}
+}
+function trendLeave(id){
+  const st=window._trend[id];if(!st)return;
+  const el=document.getElementById('trend-'+id);if(el)el.innerHTML=trendInner(id);
+}
+function futuresTrendEvents(){
+  const ev=[];
+  futuresTrades.forEach(t=>{ev.push({ms:new Date(t.trade_time).getTime(),amt:(t.realized_pnl||0)-futuresFeeUsd(t)});});
+  futuresIncomeRows.forEach(r=>ev.push({ms:new Date(r.income_time).getTime(),amt:parseFloat(r.income)||0}));
+  return ev;
+}
+// ── Futures: full Binance income stream (≈88 days) → exact deposits & PnL ──
+let futuresAllIncome=null,futuresAllIncomeAt=0;
+const FUT_FLOW_TYPES=new Set(['TRANSFER','INTERNAL_TRANSFER','CROSS_COLLATERAL_TRANSFER']);
+async function loadFuturesAllIncome(force){
+  if(!force&&futuresAllIncome&&Date.now()-futuresAllIncomeAt<10*60000)return futuresAllIncome;
+  const DAY=86400000,now=Date.now(),start=now-88*DAY;
+  const windows=[];for(let ws=start;ws<now;ws+=7*DAY)windows.push([ws,Math.min(ws+7*DAY,now)]);
+  const one=async([ws,we])=>{
+    const out=[];let from=ws;
+    for(let g=0;g<30;g++){
+      const r=await binanceFetch('futuresIncome',{startTime:String(from),endTime:String(we),limit:'1000'},'futures');
+      if(!r||!r.ok)throw new Error('income '+(r?r.status:'no session'));
+      const rows=await r.json();if(!Array.isArray(rows)||!rows.length)break;
+      out.push(...rows);
+      if(rows.length<1000)break;
+      from=Math.max(...rows.map(x=>Number(x.time)))+1;
+    }
+    return out;
+  };
+  const res=[];
+  for(let i=0;i<windows.length;i+=4){const part=await Promise.all(windows.slice(i,i+4).map(one));part.forEach(p=>res.push(...p));}
+  // de-duplicate (a record on a window boundary could appear twice)
+  const seen=new Set(),rows=[];
+  res.forEach(x=>{const k=[x.tranId,x.incomeType,x.symbol,x.time,x.income].join('|');if(seen.has(k))return;seen.add(k);rows.push(x);});
+  futuresAllIncome=rows;futuresAllIncomeAt=Date.now();
+  return rows;
+}
+async function refreshFuturesTrend(unreal){
+  const st=window._trend.futures;if(!st)return;
+  st.loading=true;
+  try{
+    const rows=await loadFuturesAllIncome(false);
+    const wallet=futuresAccount?futuresAccount.wallet:null;
+    if(wallet==null||!rows.length){st.loading=false;return;}
+    const ev=[],fl=[];let sumAll=0;
+    rows.forEach(x=>{const a=parseFloat(x.income)||0,ms=Number(x.time);sumAll+=a;(FUT_FLOW_TYPES.has(x.incomeType)?fl:ev).push({ms,amt:a});});
+    const pnlNow=ev.reduce((s,e)=>s+e.amt,0)+unreal;
+    const base0=Math.max(0,wallet-sumAll);       // balance at the start of the window
+    const pts=trendRoiSeries(ev,fl,base0,pnlNow);
+    st.loading=false;
+    trendUpdate('futures',pts,true,'Balance history from Binance covers about the last 3 months.');
+  }catch(e){st.loading=false;const el=document.getElementById('trend-futures');if(el)el.innerHTML=trendInner('futures');}
+}
+// ── Lead Trading: manual deposits/withdrawals made outside Kosh ──
+let walletFlowRows=[],walletFlowsMissing=false;
+async function loadWalletFlows(){
+  walletFlowRows=[];walletFlowsMissing=false;
+  try{
+    const{data,error}=await sb.from('wallet_flows').select('*').eq('wallet','lead').order('flow_date',{ascending:false}).limit(500);
+    if(error){walletFlowsMissing=true;return;}
+    walletFlowRows=data||[];
+  }catch(e){walletFlowsMissing=true;}
+}
+function walletFlowsHtml(){
+  if(walletFlowsMissing)return`<div style="font-size:0.66rem;color:var(--ink3);margin:-6px 0 14px">To count deposits/withdrawals made directly in the Binance app, run <b>migration-wallet-flows.sql</b> in Supabase.</div>`;
+  const inp='padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font-size:0.78rem;min-width:0';
+  const today=new Date().toISOString().slice(0,10);
+  return`<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:700;font-size:0.82rem">Deposits &amp; withdrawals made outside Kosh <span style="font-weight:400;font-size:0.66rem;color:var(--ink3)">(${walletFlowRows.length})</span></summary>
+    <div style="font-size:0.68rem;color:var(--ink3);margin:8px 0;line-height:1.5">Moves you make with Kosh's Transfer button are counted automatically. Binance does not let Kosh read the Lead wallet's deposit history, so if you moved USDT in or out inside the Binance app, add it here (amount in USDT: positive = money in, negative = money out). This is what makes ROI match Binance.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px"><input id="wf-date" type="date" value="${today}" style="${inp}" onclick="try{this.showPicker()}catch(e){}"><input id="wf-amt" type="number" step="any" inputmode="decimal" placeholder="+500 / −200" style="${inp};width:110px"><input id="wf-note" type="text" placeholder="Note (optional)" style="${inp};flex:1;min-width:100px"><button class="btn-primary" style="padding:7px 14px" onclick="addWalletFlow()">Add</button></div>
+    ${walletFlowRows.length?`<div style="margin-top:8px;max-height:150px;overflow:auto">${walletFlowRows.map(r=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;padding:3px 0;border-top:1px solid var(--border)"><span style="color:var(--ink2)">${String(r.flow_date).slice(0,10)}${r.note?' · '+escapeHtml(r.note):''}</span><span><b class="hide-figure" style="color:${r.amount>=0?'var(--green)':'var(--red)'}">${r.amount>=0?'+':'−'}${fmtUsd(Math.abs(r.amount))}</b> <button class="link-btn" style="color:var(--red)" onclick="deleteWalletFlow('${r.id}')">✕</button></span></div>`).join('')}</div>`:''}
+  </details>`;
+}
+async function addWalletFlow(){
+  const amt=parseFloat(document.getElementById('wf-amt').value),date=document.getElementById('wf-date').value;
+  if(!isFinite(amt)||amt===0||!/^\d{4}-\d{2}-\d{2}$/.test(date)){showToast('Enter a date and a non-zero amount.');return;}
+  const{error}=await sb.from('wallet_flows').insert({user_id:currentUser.id,wallet:'lead',flow_date:date,amount:amt,note:document.getElementById('wf-note').value.trim()||null});
+  if(error){showToast('Error: '+error.message);return;}
+  showToast('Saved ✅');renderLead();
+}
+async function deleteWalletFlow(id){
+  if(!confirm('Delete this entry?'))return;
+  const{error}=await sb.from('wallet_flows').delete().eq('id',id);
+  if(error){showToast('Error: '+error.message);return;}
+  renderLead();
 }
 
 function futuresPositionRowHtml(p){
@@ -7599,6 +7925,7 @@ async function renderFutures(){
       </div>
       <div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.4">Starting capital = Binance balance minus net profit, so nothing needs to be entered by hand. It is only as complete as your synced history — use "Load older history" in the Journal for older trades.</div>
     </div>
+    ${trendCardHtml('futures',trendSeries(futuresTrendEvents(),fp.total),fp.implied,'Profit & ROI trend',{fut:true})}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Realized P&amp;L${futuresAccount?' (net)':''}</div><div style="font-weight:700;font-size:1.05rem;color:${realizedShown>=0?'var(--green)':'var(--red)'}">${realizedShown>=0?'+':''}${fmtUsd(realizedShown)}</div></div>
       <div class="card" style="text-align:center;padding:12px"><div style="font-size:0.68rem;color:var(--ink3)">Unrealized P&amp;L</div><div style="font-weight:700;font-size:1.05rem;color:${totalUnrealized>=0?'var(--green)':'var(--red)'}">${totalUnrealized>=0?'+':''}${fmtUsd(totalUnrealized)}</div></div>
@@ -7611,11 +7938,12 @@ async function renderFutures(){
     <div style="text-align:center;margin-top:14px">
       <button class="link-btn" onclick="switchTab('journal');setJournalViewMode('futures')">📒 View closed trades in Journal →</button>
     </div>
-    ${copyEarningsHtml()}
+    ${copyEarningsHtml('futures')}
     ${fundingSectionsHtml()}
   `;
   if(fundMonOpen)renderFundMonitor(false);
   futuresPositions.forEach(p=>{if(futuresChartOpen[p.symbol])drawFuturesChart(p.symbol);});
+  refreshFuturesTrend(fp.unreal);
 }
 
 // ═══════════════════════════════
