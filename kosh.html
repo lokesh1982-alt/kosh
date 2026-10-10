@@ -2038,6 +2038,102 @@ function moversCardHtml(title,withChange){
     </div>
   </div></div>`;
 }
+// ═══════════════════════════════
+//  DASHBOARD INSIGHTS — profit by source, profit per month, allocation vs target, futures risk
+// ═══════════════════════════════
+async function dashInsightsData(combined){
+  const out={rows:[],months:[],alloc:[],risk:null,total:0};
+  try{await loadCopyShares();}catch(e){}
+  const stockPids=portfolios.filter(p=>isStockKind(p.kind)).map(p=>p.id);
+  let ev=[];
+  if(stockPids.length){
+    try{const r=await sbFetchAll(()=>sb.from('stock_cash_events').select('event_type,amount,event_time').eq('user_id',currentUser.id).in('portfolio_id',stockPids).order('id'));if(!r.error)ev=r.data||[];}catch(e){}
+  }
+  const fb=combined.feeByPf||{};
+  const hasFut=!!(futuresAccount||futuresPositions.length||futuresTrades.length);
+  const fp=hasFut?futuresProfit():null;
+  const rows=[];
+  const add=(label,v,hint)=>{if(isFinite(v)&&Math.abs(v)>=0.5)rows.push({label,v,hint:hint||''});};
+  if(fp){add('Futures trades',fp.realizedGross);add('Futures fees',-fp.fees);add('Funding',fp.fund);}
+  combined.perPortfolio.forEach(pp=>{
+    const net=(pp.realized||0)-(fb[pp.portfolio.id]||0);
+    add(pp.portfolio.name+(isStockKind(pp.portfolio.kind)?' trades':' trades'),net,'after commissions');
+  });
+  const evSum=t=>ev.filter(e=>t.includes(e.event_type)).reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
+  add('Dividends & interest',evSum(['dividend','dividend_tax','interest']),'after tax');
+  add('Other broker fees',evSum(['fee']));
+  const unr=combined.perPortfolio.reduce((s,x)=>s+(x.unrealized||0),0)+(fp?fp.unreal:0);
+  add('Open positions',unr,'not yet sold');
+  const cs=copyShareRows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  add('Copy-trading profit share',cs,'from followers');
+  rows.sort((a,b)=>b.v-a.v);
+  out.rows=rows;out.total=rows.reduce((s,r)=>s+r.v,0);
+  // monthly net result
+  const m={};
+  const addM=(ms,a)=>{if(!isFinite(ms)||!isFinite(a))return;const d=new Date(ms),k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');m[k]=(m[k]||0)+a;};
+  (combined.tradeRows||[]).forEach(t=>{if(t.realized_pnl==null&&!(t.fee_usd>0))return;addM(new Date(t.trade_date).getTime(),(t.realized_pnl||0)-(t.fee_usd||0));});
+  futuresTrades.forEach(t=>addM(new Date(t.trade_time).getTime(),(t.realized_pnl||0)-futuresFeeUsd(t)));
+  futuresIncomeRows.forEach(r=>addM(new Date(r.income_time).getTime(),parseFloat(r.income)||0));
+  ev.forEach(e=>{if(['dividend','dividend_tax','interest','fee'].includes(e.event_type))addM(new Date(e.event_time).getTime(),parseFloat(e.amount)||0);});
+  copyShareRows.forEach(r=>addM(new Date(r.share_date+'T12:00:00').getTime(),parseFloat(r.amount)||0));
+  out.months=Object.keys(m).sort().slice(-6).map(k=>({k,v:m[k]}));
+  // allocation vs target for rebalancing portfolios
+  combined.perPortfolio.filter(pp=>pp.portfolio.kind==='rebalance'&&pp.value>0).forEach(pp=>{
+    const tr=pp.tiers.filter(t=>(t.target_pct||0)>0);if(!tr.length)return;
+    const tv=t=>pp.coins.filter(c=>c.tier_id===t.id).reduce((s,c)=>s+(coinValue(c)||0),0);
+    out.alloc.push({name:pp.portfolio.name,value:pp.value,tiers:tr.map(t=>({name:t.name,target:t.target_pct*100,actual:tv(t)/pp.value*100}))});
+  });
+  // futures risk
+  if(fp&&futuresPositions.length){
+    const exposure=futuresPositions.reduce((s,p)=>s+(Math.abs(parseFloat(p.notional||0))||Math.abs(parseFloat(p.positionAmt||0))*parseFloat(p.markPrice||0)),0);
+    let near=null;
+    futuresPositions.forEach(p=>{const l=parseFloat(p.liquidationPrice||0),mk=parseFloat(p.markPrice||0);if(l>0&&mk>0){const d=Math.abs(l-mk)/mk*100;if(!near||d<near.d)near={d,sym:p.symbol};}});
+    out.risk={exposure,value:fp.value,lev:fp.value>0?exposure/fp.value:null,near,free:futuresAccount?futuresAccount.available:null};
+  }
+  return out;
+}
+// Compact list inside the dark hero card
+function heroSourcesHtml(ins){
+  if(!ins.rows.length)return'<div style="font-size:0.68rem;opacity:0.5;margin-top:10px">Profit sources appear once you have trades.</div>';
+  const max=Math.max(1e-9,...ins.rows.map(r=>Math.abs(r.v)));
+  return`<div style="margin-top:6px"><div style="font-size:0.64rem;opacity:0.65;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Where your profit comes from</div>
+    ${ins.rows.map(r=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:0.7rem"><span style="width:118px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0.9" title="${escapeHtml(r.label)}${r.hint?' — '+escapeHtml(r.hint):''}">${escapeHtml(r.label)}</span><span style="flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.1);position:relative"><span style="position:absolute;top:0;bottom:0;border-radius:3px;background:${r.v>=0?'#7FE0D4':'#F4A6A6'};left:${r.v>=0?50:50-Math.abs(r.v)/max*50}%;width:${Math.abs(r.v)/max*50}%"></span></span><span class="hide-figure" style="width:74px;text-align:right;font-weight:600;color:${r.v>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(r.v)}</span></div>`).join('')}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.15);margin-top:6px;padding-top:6px;font-size:0.72rem"><span style="opacity:0.7">Total profit</span><b class="hide-figure" style="color:${ins.total>=0?'#7FE0D4':'#F4A6A6'}">${signedDisplay(ins.total)}</b></div></div>`;
+}
+function dashInsightsCardsHtml(ins){
+  const cards=[];
+  if(ins.months.length){
+    const mx=Math.max(1e-9,...ins.months.map(x=>Math.abs(x.v)));
+    const pos=ins.months.filter(x=>x.v>0).length;
+    cards.push(`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Profit per month</div>
+      ${ins.months.map(x=>`<div style="display:flex;align-items:center;gap:8px;font-size:0.74rem;margin-bottom:6px"><span style="width:56px;color:var(--ink3)">${x.k}</span><div style="flex:1;height:10px;background:var(--card2);border-radius:5px;position:relative"><div style="position:absolute;top:0;bottom:0;border-radius:5px;left:${x.v>=0?50:50-Math.abs(x.v)/mx*50}%;width:${Math.abs(x.v)/mx*50}%;background:${x.v>=0?'var(--green)':'var(--red)'}"></div></div><span class="hide-figure" style="width:84px;text-align:right;font-weight:600;color:${x.v>=0?'var(--green)':'var(--red)'}">${signedDisplay(x.v)}</span></div>`).join('')}
+      <div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.5">${pos} of ${ins.months.length} months positive. All trading, funding, dividends and copy-trading profit share, after fees. Open (unsold) profit is not included.</div></div>`);
+  }
+  ins.alloc.forEach(a=>{
+    cards.push(`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Allocation vs target <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">${escapeHtml(a.name)}</span></div>
+      ${a.tiers.map(t=>{
+        const d=t.actual-t.target,big=Math.abs(d)>=5,c=big?'var(--amber-dark,#B7791F)':'var(--ink3)';
+        const amt=Math.abs(d)/100*a.value;
+        return`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:0.72rem;margin-bottom:3px"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%">${escapeHtml(t.name)}</span><span><b>${t.actual.toFixed(0)}%</b> <span style="color:var(--ink3)">of ${t.target.toFixed(0)}%</span> <span style="color:${c};font-weight:${big?700:400}">${d>=0?'+':'−'}${Math.abs(d).toFixed(1)} pp</span></span></div>
+        <div style="position:relative;height:8px;border-radius:4px;background:var(--card2)"><div style="position:absolute;top:0;bottom:0;left:0;width:${Math.min(100,t.actual)}%;border-radius:4px;background:${big?'var(--amber,#E8A93E)':'var(--teal,#17B6A7)'}"></div><div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(100,t.target)}%;width:2px;background:var(--ink)"></div></div>
+        ${big?`<div class="hide-figure" style="font-size:0.64rem;color:${c};margin-top:2px">${d>0?'Over target — trim about ':'Under target — add about '}${fmtDisplay(amt)}</div>`:''}</div>`;}).join('')}
+      <div style="font-size:0.62rem;color:var(--ink3)">Black tick = your target. Highlighted when 5 or more points away.</div></div>`);
+  });
+  if(ins.risk){
+    const r=ins.risk;
+    const nc=!r.near?'var(--ink3)':r.near.d<10?'var(--red)':r.near.d<20?'var(--amber-dark,#B7791F)':'var(--green)';
+    const lc=r.lev==null?'var(--ink3)':r.lev>5?'var(--red)':r.lev>2?'var(--amber-dark,#B7791F)':'var(--green)';
+    cards.push(`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="card-title">Futures risk <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">right now</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+        <div><div style="font-size:0.62rem;color:var(--ink3)">Exposure</div><div style="font-weight:700;font-size:1.05rem;color:${lc}">${r.lev!=null?r.lev.toFixed(1)+'×':'—'}</div><div class="hide-figure" style="font-size:0.6rem;color:var(--ink3)">${fmtDisplay(r.exposure)} open</div></div>
+        <div><div style="font-size:0.62rem;color:var(--ink3)">Closest liquidation</div><div style="font-weight:700;font-size:1.05rem;color:${nc}">${r.near?r.near.d.toFixed(0)+'%':'—'}</div><div style="font-size:0.6rem;color:var(--ink3)">${r.near?escapeHtml(r.near.sym):'none set'}</div></div>
+        <div><div style="font-size:0.62rem;color:var(--ink3)">Free USDT</div><div class="hide-figure" style="font-weight:700;font-size:1.05rem">${r.free!=null?fmtDisplay(r.free):'—'}</div><div style="font-size:0.6rem;color:var(--ink3)">buffer</div></div>
+      </div>
+      <div style="font-size:0.64rem;color:var(--ink3);margin-top:8px;line-height:1.5">Exposure = total open position size ÷ your Futures balance. Liquidation = how far the price must move against the closest position.</div></div>`);
+  }
+  return cards.length?`<div style="display:flex;flex-wrap:wrap;gap:14px;margin:14px 0">${cards.join('')}</div>`:'';
+}
+
 function trendBlockHtml(){
   const t=lastTrend;
   if(!t||t.snapshots.length<2)return'<div style="font-size:0.68rem;opacity:0.5;margin-top:10px">Trend line will build up as you use the app daily</div>';
@@ -2289,11 +2385,11 @@ async function computeCombinedDashboardData(){
   ]);
   // Trades are read straight from the table (not via coin_id) so sales of deleted coins still count.
   let[tradesRes,settingsRes]=await Promise.all([
-    sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,fee_usd,id').eq('user_id',currentUser.id).order('id')),
+    sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,fee_usd,trade_date,id').eq('user_id',currentUser.id).order('id')),
     sb.from('kosh_settings').select('*')
   ]);
   // older databases without the fee column: read again without it
-  if(tradesRes.error)tradesRes=await sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,id').eq('user_id',currentUser.id).order('id'));
+  if(tradesRes.error)tradesRes=await sbFetchAll(()=>sb.from('trades').select('portfolio_id,realized_pnl,trade_date,id').eq('user_id',currentUser.id).order('id'));
   Object.keys(realizedStore).forEach(k=>{delete realizedStore[k];});
   const feeByPf={};
   (tradesRes.data||[]).forEach(t=>{realizedStore[t.portfolio_id]=(realizedStore[t.portfolio_id]||0)+(t.realized_pnl||0);feeByPf[t.portfolio_id]=(feeByPf[t.portfolio_id]||0)+(t.fee_usd||0);});
@@ -2316,7 +2412,7 @@ async function computeCombinedDashboardData(){
     return{portfolio:p,tiers:pTiers,coins:pCoins,value:val,unrealized,priced,realized:realizedStore[p.id]||0,capital:cap,autoCapital:auto};
   });
   const sum=f=>perPortfolio.reduce((a,x)=>a+f(x),0);
-  return{allTiers,allCoins,perPortfolio,combinedTotal:sum(x=>x.value),combinedUnrealized:sum(x=>x.unrealized),pricedCount:sum(x=>x.priced),combinedRealized:sum(x=>x.realized),totalCapital:sum(x=>x.capital)};
+  return{allTiers,allCoins,perPortfolio,feeByPf,tradeRows:tradesRes.data||[],combinedTotal:sum(x=>x.value),combinedUnrealized:sum(x=>x.unrealized),pricedCount:sum(x=>x.priced),combinedRealized:sum(x=>x.realized),totalCapital:sum(x=>x.capital)};
 }
 
 let dashViewMode=localStorage.getItem('kosh-dash-view')||'both';
@@ -2405,6 +2501,7 @@ async function renderDashboard(){
       ${stockPidsSet.size?`<div style="flex:1 1 320px;min-width:280px" id="dash-analyst-slot">${dashAnalystRatingsHtml(stockCoinsForRatings)}</div>`:''}
     </div>`;
 
+    const ins=await dashInsightsData(combined);
     // ── Overview ──
     html+=head('Overview','all portfolios together, in USD');
     html+=`<div class="hero-card hero-flex">
@@ -2420,7 +2517,7 @@ async function renderDashboard(){
           <div><div style="font-size:10px;opacity:0.6">Realized</div><div class="hide-figure" style="font-size:0.86rem;font-weight:600;color:${combined.combinedRealized>=0?'var(--green)':'var(--red)'}">${signedDisplay(combined.combinedRealized)}</div></div>
         </div>
       </div>
-      <div class="hero-flex-right" id="trend-slot">${trendBlockHtml()}</div>
+      <div class="hero-flex-right" id="trend-slot">${heroSourcesHtml(ins)}</div>
     </div>`;
 
     // ── Portfolio cards, one line — value, 30d-style trend and ROI, with
@@ -2510,6 +2607,7 @@ async function renderDashboard(){
     html+=`</div>
       <button class="pf-row-arrow" onclick="scrollPfRow(1)" aria-label="Scroll right">›</button>
     </div>`;
+    html+=dashInsightsCardsHtml(ins);
 
     // ── One donut of portfolio proportions, plus top holdings combined ──
     // Futures isn't in combined.perPortfolio (kept out of the headline total),
