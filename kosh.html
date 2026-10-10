@@ -7033,6 +7033,265 @@ async function drawFuturesChart(sym){
   const note=document.getElementById('fchart-note-'+sym);
   if(note)note.innerHTML=futuresChartComment(sym,tf,full,p,{entry,liq,sl:slList,tp:tpList});
 }
+// ═══════════════════════════════
+//  FUNDING MONITOR · POSITION FUNDING · CARRY CHECK · COPY-TRADING EARNINGS
+// ═══════════════════════════════
+let fundMkt={};            // symbol -> {rate, next, mark, interval}
+let fundMktAt=0, fundVol={}; // fundVol: symbol -> 24h quote volume (USD)
+let fundMonOpen=false, fundMonMode='high', fundMonMinVol=20;
+async function loadFundingMarket(force){
+  if(!force&&Date.now()-fundMktAt<60000&&Object.keys(fundMkt).length)return true;
+  try{
+    const [r1,r2]=await Promise.all([
+      binanceFetch('public',{path:'/fapi/v1/premiumIndex'},'futures'),
+      binanceFetch('public',{path:'/fapi/v1/fundingInfo'},'futures')
+    ]);
+    if(!r1||!r1.ok)return false;
+    const idx=await r1.json();
+    const iv={};
+    try{if(r2&&r2.ok){(await r2.json()).forEach(x=>{iv[x.symbol]=parseFloat(x.fundingIntervalHours)||8;});}}catch(e){}
+    const m={};
+    (Array.isArray(idx)?idx:[]).forEach(x=>{
+      if(!x.symbol||x.nextFundingTime==null)return;
+      m[x.symbol]={rate:parseFloat(x.lastFundingRate),next:Number(x.nextFundingTime),mark:parseFloat(x.markPrice),interval:iv[x.symbol]||8};
+    });
+    fundMkt=m;fundMktAt=Date.now();
+    return true;
+  }catch(e){return false;}
+}
+async function loadFundingVolumes(){
+  if(Object.keys(fundVol).length&&Date.now()-fundMktAt<300000)return;
+  try{
+    const r=await binanceFetch('public',{path:'/fapi/v1/ticker/24hr'},'futures');
+    if(!r||!r.ok)return;
+    const rows=await r.json();const v={};
+    (Array.isArray(rows)?rows:[]).forEach(x=>{v[x.symbol]=parseFloat(x.quoteVolume)||0;});
+    fundVol=v;
+  }catch(e){}
+}
+function fundAprPct(m){return m&&isFinite(m.rate)?m.rate*(24/m.interval)*365*100:null;}
+function fundCountdown(ms){
+  const d=ms-Date.now();if(!(d>0))return'now';
+  const h=Math.floor(d/3600000),mi=Math.floor((d%3600000)/60000);
+  return h?`${h}h ${mi}m`:`${mi}m`;
+}
+function fmtRatePct(r){return(r*100).toFixed(4)+'%';}
+// Funding line shown inside each open-position card.
+function fundingLineHtml(p,side,notional){
+  const m=fundMkt[p.symbol];
+  const cum=futuresIncomeRows.filter(r=>r.symbol===p.symbol).reduce((s,r)=>s+(parseFloat(r.income)||0),0);
+  const hasCum=futuresIncomeRows.some(r=>r.symbol===p.symbol);
+  const cumTxt=hasCum?`<span style="color:${cum>=0?'var(--green)':'var(--red)'}">${cum>=0?'+':'−'}${fmtUsd(Math.abs(cum))}</span>`:'<span style="color:var(--ink3)">none synced</span>';
+  if(!m||!isFinite(m.rate))return`<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px;font-size:0.72rem;color:var(--ink3)">Funding: live rate unavailable · total on ${escapeHtml(p.symbol)} (synced) ${cumTxt}</div>`;
+  const pay=(side==='LONG'?-1:1)*notional*m.rate;   // + = you receive
+  const col=pay>=0?'var(--green)':'var(--red)';
+  const apr=fundAprPct(m);
+  return`<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">
+    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem"><span style="font-weight:700">Funding next</span><span class="hide-figure"><span style="color:${col};font-weight:700">${pay>=0?'you receive +':'you pay −'}${fmtUsd(Math.abs(pay))}</span> <span style="color:var(--ink3)">in ${fundCountdown(m.next)}</span></span></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.68rem;color:var(--ink3);margin-top:3px"><span>Rate ${fmtRatePct(m.rate)} / ${m.interval}h · ${apr>=0?'+':''}${apr.toFixed(1)}% a year (${side==='LONG'?'longs pay when positive':'shorts receive when positive'})</span><span class="hide-figure">Total on this pair: ${cumTxt}</span></div>
+  </div>`;
+}
+// ── Funding monitor ──
+function toggleFundMonitor(){
+  fundMonOpen=!fundMonOpen;
+  const b=document.getElementById('fundmon-body');if(b)b.style.display=fundMonOpen?'':'none';
+  const t=document.getElementById('fundmon-toggle');if(t)t.textContent=fundMonOpen?'Hide':'Open';
+  if(fundMonOpen)renderFundMonitor(true);
+}
+async function renderFundMonitor(refresh){
+  const box=document.getElementById('fundmon-list');if(!box)return;
+  box.innerHTML='<div style="font-size:0.74rem;color:var(--ink3);padding:8px 0">Loading live funding rates…</div>';
+  const ok=await loadFundingMarket(!!refresh);
+  await loadFundingVolumes();
+  if(!ok){box.innerHTML='<div style="font-size:0.74rem;color:var(--red)">Could not load funding rates from Binance. Make sure the binance-proxy function is deployed.</div>';return;}
+  const mine=new Set(futuresPositions.map(p=>p.symbol));
+  let rows=Object.entries(fundMkt).filter(([s,m])=>s.endsWith('USDT')&&isFinite(m.rate)&&(fundVol[s]||0)>=fundMonMinVol*1e6);
+  rows.sort((a,b)=>fundMonMode==='high'?b[1].rate*(24/b[1].interval)-a[1].rate*(24/a[1].interval):a[1].rate*(24/a[1].interval)-b[1].rate*(24/b[1].interval));
+  rows=rows.slice(0,20);
+  const th='padding:6px 8px;font-size:0.62rem;color:var(--ink3);text-transform:uppercase;text-align:right;font-weight:600';
+  box.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.76rem">
+    <thead><tr><th style="${th};text-align:left">Pair</th><th style="${th}">Rate</th><th style="${th}">Per year</th><th style="${th}">Next</th><th style="${th}">24h vol</th></tr></thead><tbody>
+    ${rows.map(([s,m])=>{const apr=fundAprPct(m);const c=apr>=0?'var(--green)':'var(--red)';
+      return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="carryPick('${s}')"><td style="padding:6px 8px;font-weight:600">${escapeHtml(s.replace('USDT',''))}${mine.has(s)?' <span style="font-size:0.6rem;color:var(--accent,#2a6)">● open</span>':''}${m.interval!==8?` <span style="font-size:0.6rem;color:var(--ink3)">${m.interval}h</span>`:''}</td><td style="padding:6px 8px;text-align:right">${fmtRatePct(m.rate)}</td><td style="padding:6px 8px;text-align:right;color:${c};font-weight:700">${apr>=0?'+':''}${apr.toFixed(1)}%</td><td style="padding:6px 8px;text-align:right;color:var(--ink3)">${fundCountdown(m.next)}</td><td style="padding:6px 8px;text-align:right;color:var(--ink3)">$${(fundVol[s]/1e6).toFixed(0)}M</td></tr>`;}).join('')||'<tr><td colspan="5" style="padding:10px;color:var(--ink3)">No pairs match this volume filter.</td></tr>'}
+    </tbody></table></div>
+    <div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.5">Positive rate = longs pay shorts; negative = shorts pay longs. "Per year" assumes today's rate never changes — it does, often within hours. Tap a row to test it in the carry check below.</div>`;
+}
+function setFundMonMode(m){fundMonMode=m;renderFundMonitor(false);const a=document.getElementById('fm-high'),b=document.getElementById('fm-low');if(a&&b){a.style.fontWeight=m==='high'?'700':'400';b.style.fontWeight=m==='low'?'700':'400';}}
+function setFundMonVol(v){fundMonMinVol=parseFloat(v)||0;renderFundMonitor(false);}
+// ── Carry check ──
+function carryPick(sym){
+  const i=document.getElementById('cc-sym');if(i){i.value=sym;i.scrollIntoView({behavior:'smooth',block:'center'});}
+  runCarryCheck();
+}
+async function runCarryCheck(){
+  const out=document.getElementById('cc-out');if(!out)return;
+  const sym=(document.getElementById('cc-sym').value||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const cap=parseFloat(document.getElementById('cc-cap').value)||0;
+  const lev=Math.max(1,parseFloat(document.getElementById('cc-lev').value)||1);
+  const days=Math.max(1,parseFloat(document.getElementById('cc-days').value)||1);
+  const sfee=(parseFloat(document.getElementById('cc-sfee').value)||0)/100;
+  const ffee=(parseFloat(document.getElementById('cc-ffee').value)||0)/100;
+  const basis=document.getElementById('cc-basis').value;
+  if(!sym.endsWith('USDT')){out.innerHTML='<div style="color:var(--red);font-size:0.76rem">Enter a USDT pair, e.g. BTCUSDT.</div>';return;}
+  if(!(cap>0)){out.innerHTML='<div style="color:var(--red);font-size:0.76rem">Enter the capital you would use.</div>';return;}
+  out.innerHTML='<div style="font-size:0.76rem;color:var(--ink3)">Checking…</div>';
+  await loadFundingMarket(false);
+  const m=fundMkt[sym];
+  if(!m){out.innerHTML='<div style="color:var(--red);font-size:0.76rem">No perpetual found for '+escapeHtml(sym)+'.</div>';return;}
+  let hist=[];
+  try{const r=await binanceFetch('public',{path:'/fapi/v1/fundingRate',symbol:sym,limit:'90'},'futures');if(r&&r.ok)hist=(await r.json()).map(x=>parseFloat(x.fundingRate)).filter(isFinite);}catch(e){}
+  const last30=hist.slice(-30);
+  const avg=last30.length?last30.reduce((a,b)=>a+b,0)/last30.length:null;
+  const pos=last30.length?last30.filter(x=>x>0).length/last30.length*100:null;
+  const minR=last30.length?Math.min(...last30):null;
+  const rate=(basis==='avg'&&avg!=null)?avg:m.rate;
+  const perDay=24/m.interval;
+  const N=cap/(1+1/lev);                         // spot leg = futures notional
+  const incomeDay=N*rate*perDay;
+  const fees=N*(2*sfee+2*ffee);                  // buy+sell spot, open+close perp
+  const net=incomeDay*days-fees;
+  const be=incomeDay>0?fees/incomeDay:null;
+  const aprCap=net/cap/days*365*100;
+  const liq=m.mark*(1+1/lev-0.005);
+  const spotPx=await (async()=>{try{const r=await binanceFetch('public',{path:'/api/v3/ticker/price',symbol:sym},'main');if(r&&r.ok)return parseFloat((await r.json()).price);}catch(e){}return null;})();
+  const bas=spotPx?(m.mark/spotPx-1)*100:null;
+  const g=v=>`<span class="hide-figure" style="color:${v>=0?'var(--green)':'var(--red)'};font-weight:700">${v>=0?'+':'−'}${fmtUsd(Math.abs(v))}</span>`;
+  const row=(l,v)=>`<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.76rem;padding:3px 0"><span style="color:var(--ink2)">${l}</span><span>${v}</span></div>`;
+  let verdict='';
+  if(rate<=0)verdict=`<div style="background:var(--red-bg);color:var(--red);padding:8px 10px;border-radius:8px;font-size:0.74rem;margin-bottom:8px">Funding is ${basis==='avg'?'on average ':''}negative here, so a short perp pays instead of earns. The classic carry (buy spot + short perp) loses money on this pair right now.</div>`;
+  else if(net<=0)verdict=`<div style="background:var(--red-bg);color:var(--red);padding:8px 10px;border-radius:8px;font-size:0.74rem;margin-bottom:8px">Over ${days} day(s) the fees (${fmtUsd(fees)}) are larger than the funding you would collect.</div>`;
+  else verdict=`<div style="background:var(--green-bg,rgba(40,160,90,.12));color:var(--green);padding:8px 10px;border-radius:8px;font-size:0.74rem;margin-bottom:8px">On today's numbers this would net ${fmtUsd(net)} over ${days} day(s) — only if the rate holds.</div>`;
+  out.innerHTML=verdict+
+    row('Pair / interval',escapeHtml(sym)+' · every '+m.interval+'h')+
+    row('Funding rate used ('+(basis==='avg'&&avg!=null?'30-settlement average':'current')+')',fmtRatePct(rate)+' → '+(rate*perDay*365*100).toFixed(1)+'% a year on the position')+
+    row('Position size (each leg)',fmtUsd(N)+' <span style="color:var(--ink3)">spot + short at '+lev+'x</span>')+
+    row('Funding per day',g(incomeDay))+
+    row('Round-trip fees',g(-fees))+
+    row('Net after '+days+' day(s)',g(net))+
+    row('Break-even',be!=null?be.toFixed(1)+' days':'never at this rate')+
+    row('Return on your capital',`<b style="color:${aprCap>=0?'var(--green)':'var(--red)'}">${aprCap.toFixed(1)}% a year</b>`)+
+    (avg!=null?row('Last 30 settlements',`avg ${fmtRatePct(avg)} · ${pos.toFixed(0)}% positive · lowest ${fmtRatePct(minR)}`):'')+
+    (bas!=null?row('Perp vs spot price',(bas>=0?'+':'')+bas.toFixed(3)+'%'):'')+
+    row('Short liquidation (approx.)',fmtPx(liq)+' <span style="color:var(--ink3)">('+((liq/m.mark-1)*100).toFixed(0)+'% above now)</span>')+
+    `<div style="font-size:0.64rem;color:var(--ink3);margin-top:8px;line-height:1.5">Estimate only: ignores spread/slippage, borrowing, changing rates and the exchange's real margin rules. If the price rises a lot, the short loses margin faster than the spot leg can top it up — keep spare USDT. Not financial advice.</div>`;
+}
+// ── Copy-trading earnings ──
+let copyShareRows=[], copyShareMissing=false, copyIncomeTypes=null;
+const KNOWN_INCOME={REALIZED_PNL:'Trading P&L',COMMISSION:'Trading fees',FUNDING_FEE:'Funding fees',TRANSFER:'Transfers in/out',INTERNAL_TRANSFER:'Internal transfers',WELCOME_BONUS:'Welcome bonus',INSURANCE_CLEAR:'Liquidation clearing',CROSS_COLLATERAL_TRANSFER:'Collateral transfers',AUTO_EXCHANGE:'Auto-exchange'};
+async function loadCopyShares(){
+  copyShareRows=[];copyShareMissing=false;
+  try{
+    const{data,error}=await sb.from('copy_profit_share').select('*').order('share_date',{ascending:false}).limit(1000);
+    if(error){copyShareMissing=true;return;}
+    copyShareRows=data||[];
+  }catch(e){copyShareMissing=true;}
+}
+async function scanCopyIncome(){
+  const out=document.getElementById('copy-scan');if(!out)return;
+  out.innerHTML='<div style="font-size:0.74rem;color:var(--ink3)">Scanning your Binance income records (last ~3 months)…</div>';
+  const DAY=86400000,now=Date.now(),start=now-88*DAY;
+  const totals={};let n=0;
+  try{
+    for(let ws=start;ws<now;ws+=7*DAY){
+      let from=ws;const we=Math.min(ws+7*DAY,now);
+      for(let guard=0;guard<30;guard++){
+        const r=await binanceFetch('futuresIncome',{startTime:String(from),endTime:String(we),limit:'1000'},'futures');
+        if(!r||!r.ok){out.innerHTML='<div style="color:var(--red);font-size:0.76rem">Binance request failed ('+(r?r.status:'no session')+').</div>';return;}
+        const rows=await r.json();if(!Array.isArray(rows)||!rows.length)break;
+        rows.forEach(x=>{const k=x.incomeType||'UNKNOWN';const t=totals[k]=totals[k]||{sum:0,n:0};t.sum+=parseFloat(x.income)||0;t.n++;n++;});
+        if(rows.length<1000)break;
+        from=Math.max(...rows.map(x=>Number(x.time)))+1;
+      }
+    }
+  }catch(e){out.innerHTML='<div style="color:var(--red);font-size:0.76rem">Scan failed: '+escapeHtml(e.message||String(e))+'</div>';return;}
+  copyIncomeTypes=totals;
+  const cand=/PROFIT|SHAR|COPY|LEAD|FOLLOW|REBATE|KICKBACK|REWARD|BONUS|COMMISSION_/i;
+  const keys=Object.keys(totals).sort((a,b)=>Math.abs(totals[b].sum)-Math.abs(totals[a].sum));
+  const found=keys.filter(k=>!KNOWN_INCOME[k]&&cand.test(k));
+  out.innerHTML=`<div style="font-size:0.7rem;color:var(--ink3);margin-bottom:6px">${n} records scanned</div>`+
+    keys.map(k=>{const v=totals[k].sum;const isC=found.includes(k);
+      return`<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.76rem;padding:3px 0;${isC?'background:var(--green-bg,rgba(40,160,90,.12));border-radius:6px;padding:3px 6px;':''}"><span>${escapeHtml(KNOWN_INCOME[k]||k)} <span style="color:var(--ink3)">(${totals[k].n})</span>${isC?' <b style="color:var(--green)">← possible profit share / rebate</b>':''}</span><span class="hide-figure" style="color:${v>=0?'var(--green)':'var(--red)'};font-weight:600">${v>=0?'+':'−'}${fmtUsd(Math.abs(v))}</span></div>`;}).join('')+
+    `<div style="font-size:0.64rem;color:var(--ink3);margin-top:6px;line-height:1.5">${found.length?'Binance reports these as income types of their own — they are real earnings credited to your Futures wallet.':'No separate profit-sharing record appears in the data Binance gives to API keys. If you receive profit share, log it below (copy it from Binance → Copy Trading → Profit Sharing).'}</div>`;
+}
+function copyShareTotals(){
+  const now=Date.now(),d30=now-30*86400000;
+  const tot=copyShareRows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const l30=copyShareRows.filter(r=>new Date(r.share_date).getTime()>=d30).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  return{tot,l30};
+}
+function copyEarningsHtml(){
+  if(copyShareMissing)return`<div class="card" style="margin-bottom:14px"><div style="font-weight:700;font-size:0.86rem">Copy-trading earnings</div><div style="font-size:0.74rem;color:var(--red);margin-top:6px">Run <b>migration-copy-profit-share.sql</b> in Supabase to enable the profit-share log, then reload.</div></div>`;
+  const t=copyShareTotals();
+  const today=new Date().toISOString().slice(0,10);
+  const byMonth={};copyShareRows.forEach(r=>{const k=String(r.share_date).slice(0,7);byMonth[k]=(byMonth[k]||0)+(parseFloat(r.amount)||0);});
+  const months=Object.keys(byMonth).sort().reverse().slice(0,6);
+  const inp='padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font-size:0.78rem;min-width:0';
+  return`<div class="card" style="margin-bottom:14px">
+    <div style="font-weight:700;font-size:0.86rem">Copy-trading earnings <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">profit share from people copying you</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+      <div style="text-align:center"><div style="font-size:0.64rem;color:var(--ink3)">All time</div><div class="hide-figure" style="font-weight:700;font-size:1.05rem;color:var(--green)">${fmtUsd(t.tot)}</div></div>
+      <div style="text-align:center"><div style="font-size:0.64rem;color:var(--ink3)">Last 30 days</div><div class="hide-figure" style="font-weight:700;font-size:1.05rem;color:var(--green)">${fmtUsd(t.l30)}</div></div>
+    </div>
+    ${months.length?`<div style="margin-top:8px;font-size:0.72rem;color:var(--ink2)">${months.map(k=>`<span style="margin-right:12px">${k}: <b class="hide-figure">${fmtUsd(byMonth[k])}</b></span>`).join('')}</div>`:''}
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+      <div style="font-size:0.7rem;color:var(--ink3);margin-bottom:6px">Log a profit-share payment</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <input id="cs-date" type="date" value="${today}" style="${inp}" onclick="try{this.showPicker()}catch(e){}">
+        <input id="cs-amt" type="number" step="any" inputmode="decimal" placeholder="USDT" style="${inp};width:90px">
+        <select id="cs-src" style="${inp}"><option value="futures">Futures copy trading</option><option value="spot">Spot copy trading</option></select>
+        <input id="cs-note" type="text" placeholder="Note (optional)" style="${inp};flex:1;min-width:110px">
+        <button class="btn-primary" style="padding:7px 14px" onclick="addCopyShare()">Add</button>
+      </div>
+      ${copyShareRows.length?`<div style="margin-top:8px;max-height:150px;overflow:auto">${copyShareRows.slice(0,12).map(r=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:0.72rem;padding:3px 0;border-top:1px solid var(--border)"><span style="color:var(--ink2)">${String(r.share_date).slice(0,10)} · ${r.source==='spot'?'Spot':'Futures'}${r.note?' · '+escapeHtml(r.note):''}</span><span><b class="hide-figure" style="color:var(--green)">+${fmtUsd(parseFloat(r.amount))}</b> <button class="link-btn" style="color:var(--red)" onclick="deleteCopyShare('${r.id}')">✕</button></span></div>`).join('')}</div>`:''}
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px">
+      <button class="link-btn" onclick="scanCopyIncome()">🔎 Scan Binance for profit-share records</button>
+      <div id="copy-scan" style="margin-top:6px"></div>
+    </div>
+    <div style="font-size:0.64rem;color:var(--ink3);margin-top:8px;line-height:1.5">Profit share lands in your wallet, so it is already inside the Binance balance above; Kosh shows it here so you can see what part of your growth is earned from followers rather than from your own trades.</div>
+  </div>`;
+}
+async function addCopyShare(){
+  const amt=parseFloat(document.getElementById('cs-amt').value);
+  const date=document.getElementById('cs-date').value;
+  if(!(amt>0)||!/^\d{4}-\d{2}-\d{2}$/.test(date)){showToast('Enter a date and an amount.');return;}
+  const{error}=await sb.from('copy_profit_share').insert({user_id:currentUser.id,share_date:date,amount:amt,source:document.getElementById('cs-src').value,note:document.getElementById('cs-note').value.trim()||null});
+  if(error){showToast('Error: '+error.message);return;}
+  showToast('Profit share added ✅');renderFutures();
+}
+async function deleteCopyShare(id){
+  if(!confirm('Delete this entry?'))return;
+  const{error}=await sb.from('copy_profit_share').delete().eq('id',id);
+  if(error){showToast('Error: '+error.message);return;}
+  renderFutures();
+}
+function fundingSectionsHtml(){
+  const inp='padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font-size:0.78rem;min-width:0;width:100%;box-sizing:border-box';
+  const f=(id,l,v,ph)=>`<label style="font-size:0.62rem;color:var(--ink3);display:block">${l}<input id="${id}" value="${v}" ${ph?`placeholder="${ph}"`:''} inputmode="decimal" style="${inp};margin-top:2px"></label>`;
+  return`<div class="dash-section" style="margin-top:18px"><h3>Funding</h3></div>
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:0.86rem">Funding monitor <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">live rates, next payment, per year</span></div><button class="link-btn" id="fundmon-toggle" onclick="toggleFundMonitor()">${fundMonOpen?'Hide':'Open'}</button></div>
+    <div id="fundmon-body" style="display:${fundMonOpen?'':'none'};margin-top:8px">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;font-size:0.74rem">
+        <button class="link-btn" id="fm-high" style="font-weight:${fundMonMode==='high'?'700':'400'}" onclick="setFundMonMode('high')">Shorts earn most</button>
+        <button class="link-btn" id="fm-low" style="font-weight:${fundMonMode==='low'?'700':'400'}" onclick="setFundMonMode('low')">Longs earn most</button>
+        <label style="color:var(--ink3)">Min 24h volume <select onchange="setFundMonVol(this.value)" style="${inp};width:auto"><option value="5" ${fundMonMinVol==5?'selected':''}>$5M</option><option value="20" ${fundMonMinVol==20?'selected':''}>$20M</option><option value="100" ${fundMonMinVol==100?'selected':''}>$100M</option></select></label>
+        <button class="link-btn" onclick="renderFundMonitor(true)">↻ Refresh</button>
+      </div>
+      <div id="fundmon-list"></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <div style="font-weight:700;font-size:0.86rem">Carry check <span style="font-weight:400;font-size:0.68rem;color:var(--ink3)">buy spot + short perp, collect funding</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-top:10px">
+      ${f('cc-sym','Pair','BTCUSDT')}${f('cc-cap','Capital (USDT)','1000')}${f('cc-lev','Short leverage','2')}${f('cc-days','Days to hold','30')}${f('cc-sfee','Spot fee % / side','0.1')}${f('cc-ffee','Futures fee % / side','0.05')}
+      <label style="font-size:0.62rem;color:var(--ink3);display:block">Rate to assume<select id="cc-basis" style="${inp};margin-top:2px"><option value="now">Current</option><option value="avg">30-settlement avg</option></select></label>
+    </div>
+    <div style="margin-top:10px"><button class="btn-primary" onclick="runCarryCheck()">Check</button></div>
+    <div id="cc-out" style="margin-top:10px"></div>
+  </div>`;
+}
+
 function futuresPositionRowHtml(p){
   const amt=parseFloat(p.positionAmt||0);
   const side=amt>0?'LONG':'SHORT';
@@ -7083,6 +7342,7 @@ function futuresPositionRowHtml(p){
       ${exitLine('Take profit',tp,'var(--green)')}
       ${otherLines}
     </div>
+    ${fundingLineHtml(p,side,notional)}
     <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">
       <button class="link-btn" id="fchart-btn-${p.symbol}" style="font-size:0.74rem" onclick="toggleFuturesChart('${p.symbol}')">${futuresChartOpen[p.symbol]?'📉 Hide chart':'📈 Show chart'}</button>
       <div id="fchart-${p.symbol}" style="display:${futuresChartOpen[p.symbol]?'':'none'}"></div>
@@ -7104,7 +7364,8 @@ async function renderFutures(){
   const el=document.getElementById('futures-content');
   if(!el)return;
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
-  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders(),loadFuturesAccount()]);
+  await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders(),loadFuturesAccount(),loadFundingMarket(false),loadCopyShares()]);
+  if(!futuresIncomeRows.length&&!futuresIncomeMissing){try{await loadFuturesIncome();}catch(e){}}
   const closed=futuresTrades.filter(t=>t.realized_pnl!=null&&t.realized_pnl!==0); // opening fills report 0 PnL — not a closed trade
   const wins=closed.filter(t=>t.realized_pnl>0);
   const winRate=closed.length?(wins.length/closed.length)*100:null;
@@ -7159,7 +7420,10 @@ async function renderFutures(){
     <div style="text-align:center;margin-top:14px">
       <button class="link-btn" onclick="switchTab('journal');setJournalViewMode('futures')">📒 View closed trades in Journal →</button>
     </div>
+    ${copyEarningsHtml()}
+    ${fundingSectionsHtml()}
   `;
+  if(fundMonOpen)renderFundMonitor(false);
   futuresPositions.forEach(p=>{if(futuresChartOpen[p.symbol])drawFuturesChart(p.symbol);});
 }
 
