@@ -6274,8 +6274,8 @@ function anGroupFills(fills){
     const seq=(pv&&f.ms-pv.ms<=GROUP_GAP_MS)?pv.seq:(pv?pv.seq+1:0);
     lastBy[base]={ms:f.ms,seq};
     const k=base+'|'+seq;
-    const o=g[k]||(g[k]={id:'ag-'+k.replace(/[^a-zA-Z0-9]/g,'_'),key:f.key,table:f.table,portfolioId:f.portfolioId,symbol:f.symbol,dir:f.dir,rows:[],pnl:0,value:0,ms:0,held:null,avgDown:false});
-    o.rows.push(f.row);o.pnl+=f.pnl;o.value+=f.value;
+    const o=g[k]||(g[k]={id:'ag-'+k.replace(/[^a-zA-Z0-9]/g,'_'),key:f.key,table:f.table,portfolioId:f.portfolioId,symbol:f.symbol,dir:f.dir,rows:[],pnl:0,net:0,value:0,ms:0,held:null,avgDown:false});
+    o.rows.push(f.row);o.pnl+=f.pnl;o.net+=anNetOf(f.row,f.table);o.value+=f.value;
     o.ms=Math.max(o.ms,f.ms);
     if(f.held!=null)o.held=Math.max(o.held||0,f.held);
     if(f.avgDown)o.avgDown=true;
@@ -6286,6 +6286,193 @@ function anGroupFills(fills){
     return o;
   });
 }
+// ═══ Net P&L helper, time slabs and leverage analysis ═══
+function anNetOf(row,table){
+  const g=row.realized_pnl||0;
+  if(table==='futures_trades'){
+    const c=futuresCostMap.get(row.id);
+    return c?g-c.fee+c.funding:g-futuresFeeUsd(row);
+  }
+  return g-(row.fee_usd||0);
+}
+let anSlabMode='4h', anSlabBy='close';
+try{anSlabMode=localStorage.getItem('kosh-slab-mode')||'4h';anSlabBy=localStorage.getItem('kosh-slab-by')||'close';}catch(e){}
+function setAnSlabMode(v){anSlabMode=v;try{localStorage.setItem('kosh-slab-mode',v);}catch(e){}renderAnalysisView(true);}
+function setAnSlabBy(v){anSlabBy=v;try{localStorage.setItem('kosh-slab-by',v);}catch(e){}renderAnalysisView(true);}
+const AN_MIN_N=8;
+function anSlabHtml(groups){
+  const pad=n=>String(n).padStart(2,'0');
+  let defs;
+  if(anSlabMode==='sess'){
+    defs=[{l:'Asia',s:'00–08 UTC',a:0,b:8},{l:'Europe',s:'08–13 UTC',a:8,b:13},{l:'US',s:'13–22 UTC',a:13,b:22},{l:'Late',s:'22–24 UTC',a:22,b:24}];
+  }else{
+    const sz=anSlabMode==='1h'?1:anSlabMode==='2h'?2:4;
+    defs=[];for(let a=0;a<24;a+=sz)defs.push({l:pad(a)+'–'+pad(a+sz),s:'',a,b:a+sz});
+  }
+  const utc=anSlabMode==='sess';
+  const rows=defs.map(d=>({d,n:0,w:0,net:0,gross:0}));
+  let used=0;
+  groups.forEach(g=>{
+    const ms=anSlabBy==='open'?(g.held!=null?g.ms-g.held:null):g.ms;
+    if(ms==null)return;
+    const dt=new Date(ms),h=utc?dt.getUTCHours():dt.getHours();
+    const r=rows.find(x=>h>=x.d.a&&h<x.d.b);if(!r)return;
+    r.n++;r.net+=g.net;r.gross+=g.pnl;if(g.net>0)r.w++;used++;
+  });
+  const act=rows.filter(r=>r.n>0);
+  const max=Math.max(1e-9,...act.map(r=>Math.abs(r.net)));
+  const body=rows.map(r=>{
+    if(!r.n)return`<tr style="color:var(--ink3)"><td style="padding:5px 6px">${r.d.l}${r.d.s?' <span style="font-size:0.6rem">'+r.d.s+'</span>':''}</td><td colspan="5" style="padding:5px 6px;text-align:center">·</td></tr>`;
+    const few=r.n<AN_MIN_N,bad=!few&&r.net<0,good=!few&&r.net>0;
+    const w=(Math.abs(r.net)/max*100).toFixed(0);
+    return`<tr style="border-top:1px solid var(--border);${few?'opacity:.6':''}"><td style="padding:6px;font-weight:600;white-space:nowrap">${r.d.l}${r.d.s?' <span style="font-size:0.6rem;color:var(--ink3);font-weight:400">'+r.d.s+'</span>':''}</td>
+      <td style="padding:6px;text-align:right">${r.n}</td><td style="padding:6px;text-align:right">${Math.round(r.w/r.n*100)}%</td>
+      <td style="padding:6px;min-width:70px"><div style="height:8px;border-radius:4px;background:${r.net>=0?'var(--green)':'var(--red)'};width:${w}%;opacity:.75"></div></td>
+      <td class="hide-figure ${anCol(r.net)}" style="padding:6px;text-align:right;font-weight:700">${anUsd(r.net)}</td>
+      <td style="padding:6px;text-align:right;font-size:0.66rem">${bad?'<span style="color:var(--red);font-weight:700">avoid</span>':good?'<span style="color:var(--green)">good</span>':'<span style="color:var(--ink3)">few trades</span>'}</td></tr>`;
+  }).join('');
+  const ok=act.filter(r=>r.n>=AN_MIN_N);
+  let hint='';
+  if(ok.length>=2){
+    const wr=ok.reduce((a,b)=>b.net<a.net?b:a),br=ok.reduce((a,b)=>b.net>a.net?b:a);
+    hint=(wr.net<0?`Weakest slab: <b>${wr.d.l}</b> (${anUsd(wr.net)} over ${wr.n} trades). `:'')+(br.net>0?`Strongest: <b>${br.d.l}</b> (${anUsd(br.net)}). `:'');
+  }else hint=`Slabs need at least ${AN_MIN_N} trades before they are marked good or avoid — until then they are greyed out.`;
+  const pill=(cur,v,l,fn)=>`<button class="an-pill ${cur===v?'on':''}" onclick="${fn}('${v}')">${l}</button>`;
+  return`<div class="an-sec"><h3>Time slabs</h3><span>net profit &amp; loss by time of day · ${used} trades</span></div>
+  <div class="an-card"><div class="an-pills" style="margin-bottom:8px">${pill(anSlabMode,'4h','4 hours','setAnSlabMode')}${pill(anSlabMode,'2h','2 hours','setAnSlabMode')}${pill(anSlabMode,'1h','1 hour','setAnSlabMode')}${pill(anSlabMode,'sess','Sessions','setAnSlabMode')}</div>
+  <div class="an-pills" style="margin-bottom:8px"><span style="font-size:0.66rem;color:var(--ink3);align-self:center">By time of</span>${pill(anSlabBy,'close','closing','setAnSlabBy')}${pill(anSlabBy,'open','opening','setAnSlabBy')}</div>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.76rem"><thead><tr style="font-size:0.6rem;color:var(--ink3);text-transform:uppercase"><th style="padding:4px 6px;text-align:left">Slab${utc?'':' (local)'}</th><th style="padding:4px 6px;text-align:right">Trades</th><th style="padding:4px 6px;text-align:right">Win</th><th></th><th style="padding:4px 6px;text-align:right">Net P&amp;L</th><th></th></tr></thead><tbody>${body}</tbody></table></div>
+  <div class="an-hint">${hint}</div>
+  <div style="font-size:0.62rem;color:var(--ink3);margin-top:4px;line-height:1.5">Net = after fees${''} (and funding for Futures). Use the portfolio selector at the top to look at one portfolio only. "Opening" shows when you entered the trades that ended up winning or losing.</div></div>`;
+}
+// ── Leverage ──
+let futuresLevLog=[], futuresLevMissing=false, futuresLevLoaded=false;
+async function loadFuturesLeverage(){
+  try{
+    const{data,error}=await sbFetchAll(()=>sb.from('futures_leverage').select('*').eq('user_id',currentUser.id).order('effective_from'));
+    if(error){futuresLevMissing=true;futuresLevLog=[];}
+    else{futuresLevMissing=false;futuresLevLog=data||[];}
+  }catch(e){futuresLevMissing=true;}
+  futuresLevLoaded=true;
+}
+// Called whenever positions are read: remember the leverage each open position is using.
+async function logFuturesLeverage(positions){
+  if(!currentUser||!positions||!positions.length)return;
+  if(!futuresLevLoaded)await loadFuturesLeverage();
+  if(futuresLevMissing)return;
+  const now=Date.now(),add=[];
+  positions.forEach(p=>{
+    const lev=parseInt(p.leverage);if(!(lev>0))return;
+    const last=futuresLevLog.filter(r=>r.source==='auto'&&r.symbol===p.symbol).reduce((a,r)=>(!a||new Date(r.effective_from)>new Date(a.effective_from))?r:a,null);
+    if(last&&Number(last.leverage)===lev&&now-new Date(last.effective_from).getTime()<15*60000)return;
+    const row={user_id:currentUser.id,symbol:p.symbol,leverage:lev,effective_from:new Date(now).toISOString(),source:'auto'};
+    futuresLevLog.push(row);add.push(row);
+  });
+  if(add.length){const{error}=await sb.from('futures_leverage').insert(add);if(error&&/relation|exist|schema/i.test(error.message))futuresLevMissing=true;}
+}
+// Round trips: flat → position → flat. Net P&L = realized − fees + funding while open.
+function anFuturesTrips(rows){
+  const bySym={};
+  rows.forEach(t=>{const k=t.symbol+'|'+(t.position_side||'BOTH');(bySym[k]=bySym[k]||[]).push(t);});
+  const trips=[];
+  Object.values(bySym).forEach(list=>{
+    list.sort((a,b)=>new Date(a.trade_time)-new Date(b.trade_time)||(a.binance_trade_id-b.binance_trade_id));
+    let run=0,cur=null;
+    const close=(ms)=>{
+      if(!cur)return;
+      cur.closeMs=ms;
+      cur.funding=futuresIncomeRows.filter(r=>r.symbol===cur.symbol&&new Date(r.income_time).getTime()>=cur.openMs&&new Date(r.income_time).getTime()<=ms).reduce((s,r)=>s+(parseFloat(r.income)||0),0);
+      cur.net=cur.gross-cur.fees+cur.funding;cur.held=ms-cur.openMs;
+      trips.push(cur);cur=null;
+    };
+    list.forEach(t=>{
+      const ms=new Date(t.trade_time).getTime(),q=t.qty||0,ps=t.position_side||'BOTH';
+      const s=ps==='SHORT'?(t.side==='sell'?q:-q):(t.side==='buy'?q:-q);
+      const before=run;run+=s;
+      if(Math.abs(before)<=AN_EPS&&Math.abs(run)>AN_EPS){
+        cur={id:'trip-'+t.symbol+'-'+ms,symbol:t.symbol,openMs:ms,gross:0,fees:0,dir:ps==='SHORT'?'Short':ps==='LONG'?'Long':(s>0?'Long':'Short')};
+      }
+      if(cur){cur.gross+=t.realized_pnl||0;cur.fees+=futuresFeeUsd(t);}
+      if(Math.abs(run)<=AN_EPS){run=0;close(ms);}
+      else if(Math.abs(before)>AN_EPS&&Math.sign(before)!==Math.sign(run)){close(ms);cur={id:'trip-'+t.symbol+'-'+ms,symbol:t.symbol,openMs:ms,gross:0,fees:0,dir:run>0?'Long':'Short'};}
+    });
+  });
+  return trips;
+}
+function anTripLeverage(trip){
+  const man=futuresLevLog.find(r=>r.source==='manual'&&r.symbol===trip.symbol&&Math.abs(new Date(r.effective_from).getTime()-trip.openMs)<=1000);
+  if(man)return{lev:Number(man.leverage),src:'manual'};
+  const obs=futuresLevLog.filter(r=>r.source==='auto'&&r.symbol===trip.symbol).map(r=>({t:new Date(r.effective_from).getTime(),l:Number(r.leverage)})).filter(o=>o.t>=trip.openMs-1000&&o.t<=trip.closeMs+60000).sort((a,b)=>a.t-b.t);
+  return obs.length?{lev:obs[0].l,src:'auto'}:{lev:null,src:null};
+}
+const AN_DUR=[['< 5 min',0,5*60e3],['5–15 min',5*60e3,15*60e3],['15–60 min',15*60e3,3600e3],['1–4 hours',3600e3,4*3600e3],['4–24 hours',4*3600e3,86400e3],['> 1 day',86400e3,Infinity]];
+let analysisTrips=[], anLevSel={lev:null,dur:null};
+function setAnLevSel(lev,dur){
+  lev=String(lev);const same=anLevSel.lev===lev&&anLevSel.dur===dur;
+  anLevSel=same?{lev:null,dur:null}:{lev,dur};
+  renderAnalysisView(true);
+}
+async function setTripLeverage(tripId,val){
+  const lev=parseFloat(val);const t=analysisTrips.find(x=>x.id===tripId);
+  if(!t||!(lev>0))return;
+  const row={user_id:currentUser.id,symbol:t.symbol,leverage:lev,effective_from:new Date(t.openMs).toISOString(),source:'manual'};
+  const{error}=await sb.from('futures_leverage').upsert(row,{onConflict:'user_id,symbol,effective_from'});
+  if(error){showToast(/relation|exist|schema/i.test(error.message)?'Run migration-futures-leverage.sql in Supabase first.':'Error: '+error.message);return;}
+  futuresLevLog=futuresLevLog.filter(r=>!(r.source==='manual'&&r.symbol===row.symbol&&r.effective_from===row.effective_from));
+  futuresLevLog.push(row);
+  renderAnalysisView(true);
+}
+async function applyBulkLeverage(){
+  const sym=document.getElementById('lev-bulk-sym').value;
+  const lev=parseFloat(document.getElementById('lev-bulk-val').value);
+  if(!(lev>0)){showToast('Enter a leverage, e.g. 10.');return;}
+  const targets=analysisTrips.filter(t=>anTripLeverage(t).lev==null&&(sym==='*'||t.symbol===sym));
+  if(!targets.length){showToast('No unknown-leverage trades for that pair.');return;}
+  if(!confirm('Set '+lev+'x on '+targets.length+' trade(s)'+(sym==='*'?'':' of '+sym)+'? You can still change any trade afterwards.'))return;
+  const rows=targets.map(t=>({user_id:currentUser.id,symbol:t.symbol,leverage:lev,effective_from:new Date(t.openMs).toISOString(),source:'manual'}));
+  const{error}=await sb.from('futures_leverage').upsert(rows,{onConflict:'user_id,symbol,effective_from'});
+  if(error){showToast(/relation|exist|schema/i.test(error.message)?'Run migration-futures-leverage.sql in Supabase first.':'Error: '+error.message);return;}
+  await loadFuturesLeverage();renderAnalysisView(true);showToast('Leverage saved ✅');
+}
+function anLeverageHtml(inRange){
+  if(futuresLevMissing)return`<div class="an-sec"><h3>Leverage</h3><span></span></div><div class="an-card" style="font-size:0.76rem;color:var(--red)">Run <b>migration-futures-leverage.sql</b> in Supabase, then reload, to record and analyse leverage.</div>`;
+  const trips=anFuturesTrips(analysisRaw.fut).filter(t=>inRange(t.closeMs));
+  analysisTrips=trips;
+  if(!trips.length)return`<div class="an-sec"><h3>Leverage</h3><span></span></div><div class="an-card" style="font-size:0.76rem;color:var(--ink3)">No closed Futures positions in this range yet.</div>`;
+  trips.forEach(t=>{const r=anTripLeverage(t);t.lev=r.lev;t.levSrc=r.src;});
+  const known=trips.filter(t=>t.lev!=null),unknown=trips.filter(t=>t.lev==null);
+  const levs=[...new Set(known.map(t=>t.lev))].sort((a,b)=>a-b);
+  const cols=[...levs.map(l=>({k:l,label:l+'x'})),...(unknown.length?[{k:null,label:'?'}]:[])];
+  const cellTrips=(c,di)=>trips.filter(t=>t.lev===c.k&&t.held>=AN_DUR[di][1]&&t.held<AN_DUR[di][2]);
+  const maxAbs=Math.max(1e-9,...cols.flatMap((c,)=>AN_DUR.map((_,di)=>Math.abs(cellTrips(c,di).reduce((s,t)=>s+t.net,0)))));
+  const sum=a=>a.reduce((s,t)=>s+t.net,0);
+  const cell=(c,di)=>{
+    const ts=cellTrips(c,di);if(!ts.length)return`<td style="padding:6px 4px;text-align:center;color:var(--ink3)">·</td>`;
+    const n=sum(ts),a=(0.12+0.55*Math.abs(n)/maxAbs).toFixed(2);
+    const sel=anLevSel.lev===(c.k==null?'u':String(c.k))&&anLevSel.dur===di;
+    return`<td style="padding:3px"><div onclick="setAnLevSel('${c.k==null?'u':c.k}',${di})" style="cursor:pointer;text-align:center;padding:5px 2px;border-radius:6px;background:${n>=0?`rgba(52,211,153,${a})`:`rgba(240,102,95,${a})`};${sel?'outline:2px solid var(--ink);':''}"><div class="hide-figure" style="font-weight:700;font-size:0.74rem">${n>=0?'+':'−'}${Math.abs(n)<10?Math.abs(n).toFixed(1):Math.round(Math.abs(n))}</div><div style="font-size:0.58rem;color:var(--ink3)">${ts.length} trade${ts.length===1?'':'s'}</div></div></td>`;
+  };
+  const matrix=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.74rem"><thead><tr><th style="padding:4px 6px;text-align:left;font-size:0.6rem;color:var(--ink3);text-transform:uppercase">Time in trade</th>${cols.map(c=>`<th style="padding:4px;font-size:0.72rem;cursor:pointer" onclick="setAnLevSel('${c.k==null?'u':c.k}',null)">${c.label}</th>`).join('')}</tr></thead><tbody>
+    ${AN_DUR.map((d,di)=>`<tr><td style="padding:6px;white-space:nowrap;color:var(--ink2)">${d[0]}</td>${cols.map(c=>cell(c,di)).join('')}</tr>`).join('')}
+    <tr style="border-top:1px solid var(--border)"><td style="padding:6px;font-weight:700">Total</td>${cols.map(c=>{const ts=trips.filter(t=>t.lev===c.k);const n=sum(ts);return`<td style="padding:6px 4px;text-align:center"><div class="hide-figure ${anCol(n)}" style="font-weight:700">${anUsd(n)}</div><div style="font-size:0.58rem;color:var(--ink3)">${ts.length} · ${ts.length?Math.round(ts.filter(t=>t.net>0).length/ts.length*100):0}% win</div></td>`;}).join('')}</tr>
+  </tbody></table></div>`;
+  const barRows=cols.map(c=>{const ts=trips.filter(t=>t.lev===c.k);return{label:c.label==='?'?'Unknown':c.label,pnl:sum(ts),sub:`${ts.length} trade${ts.length===1?'':'s'} · ${Math.round(ts.filter(t=>t.net>0).length/ts.length*100)}% win · avg ${anFmtHeld(ts.reduce((s,t)=>s+t.held,0)/ts.length)}`};});
+  let list='';
+  if(anLevSel.lev!=null){
+    const di=anLevSel.dur,lv=anLevSel.lev==='u'?null:parseFloat(anLevSel.lev);
+    const sel=trips.filter(t=>t.lev===lv&&(di==null||(t.held>=AN_DUR[di][1]&&t.held<AN_DUR[di][2]))).sort((a,b)=>b.closeMs-a.closeMs);
+    list=`<div class="an-ct" style="margin-top:10px">${lv==null?'Unknown leverage':lv+'x'}${di!=null?' · '+AN_DUR[di][0]:''} — ${sel.length} trade${sel.length===1?'':'s'}, net <span class="${anCol(sum(sel))} hide-figure">${anUsd(sum(sel))}</span></div>
+    <div style="overflow-x:auto"><table class="an-table"><thead><tr><th>Closed</th><th>Pair</th><th>Held</th><th style="text-align:right">Net P&amp;L</th><th>Leverage</th></tr></thead><tbody>${sel.slice(0,40).map(t=>`<tr><td>${new Date(t.closeMs).toLocaleDateString('en-US',{day:'numeric',month:'short'})} ${new Date(t.closeMs).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}</td><td><b>${escapeHtml(t.symbol)}</b> <span style="color:var(--ink3);font-size:0.62rem">${t.dir}</span></td><td>${anFmtHeld(t.held)}</td><td style="text-align:right" class="${anCol(t.net)} hide-figure"><b>${anUsd(t.net)}</b></td><td><input type="number" step="any" inputmode="decimal" value="${t.lev!=null?t.lev:''}" placeholder="x" class="an-note" style="width:56px" onchange="setTripLeverage('${t.id}',this.value)">${t.levSrc==='manual'?'<span style="font-size:0.58rem;color:var(--ink3)"> set by you</span>':''}</td></tr>`).join('')}</tbody></table></div>`;
+  }else list=`<div style="font-size:0.66rem;color:var(--ink3);margin-top:8px">Tap a cell (or a leverage heading) to list the trades behind it.</div>`;
+  const syms=[...new Set(unknown.map(t=>t.symbol))].sort();
+  const bulk=unknown.length?`<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px"><div style="font-size:0.7rem;color:var(--ink2);margin-bottom:6px"><b>${unknown.length}</b> of ${trips.length} trades have no leverage recorded (Binance does not store it on past trades). Kosh records it from now on whenever it sees an open position. For older trades, set it here:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"><select id="lev-bulk-sym" class="an-select" style="width:auto"><option value="*">All pairs</option>${syms.map(s=>`<option>${s}</option>`).join('')}</select><input id="lev-bulk-val" type="number" step="any" inputmode="decimal" placeholder="leverage, e.g. 10" class="an-note" style="width:130px"><button class="btn-outline" style="padding:7px 12px;font-size:0.74rem" onclick="applyBulkLeverage()">Apply to unknown trades</button></div>
+    <div style="font-size:0.62rem;color:var(--ink3);margin-top:4px">Or tap the "?" column and fill the leverage trade by trade.</div></div>`:'';
+  return`<div class="an-sec"><h3>Leverage</h3><span>net profit &amp; loss by leverage and time in trade · after fees &amp; funding</span></div>
+  <div class="an-card"><div class="an-ct">Each position counted once, from open to fully closed</div>${matrix}${list}${bulk}</div>
+  <div class="an-card"><div class="an-ct">Net P&amp;L by leverage</div>${anBars(barRows,{labelW:70})}${(()=>{const k=barRows.filter(r=>r.label!=='Unknown');if(k.length<2)return'';const w=k.reduce((a,b)=>b.pnl<a.pnl?b:a),b2=k.reduce((a,b)=>b.pnl>a.pnl?b:a);return`<div class="an-hint">${w.pnl<0?`Biggest drain: <b>${w.label}</b> (${anUsd(w.pnl)}). `:''}${b2.pnl>0?`Best: <b>${b2.label}</b> (${anUsd(b2.pnl)}).`:''}</div>`;})()}</div>`;
+}
+
 function anCompute(){
   let fills=[],entries=[];
   if(analysisScope!=='futures'){
@@ -6411,6 +6598,7 @@ async function renderAnalysis(){
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
   try{analysisRaw.spot=await loadAllTradesForJournal();}catch(e){analysisRaw.spot=[];}
   try{await loadFuturesTrades();analysisRaw.fut=futuresTrades;}catch(e){analysisRaw.fut=[];}
+  try{await loadFuturesLeverage();}catch(e){}
   if(analysisScope!=='all'&&analysisScope!=='futures'&&!portfolios.some(p=>p.id===analysisScope))analysisScope='all';
   renderAnalysisView();
 }
@@ -6468,6 +6656,8 @@ function renderAnalysisView(keepScroll){
   const hrows=bk.map(([l,a,b])=>{const gs=groups.filter(g=>g.held!=null&&g.held>=a&&g.held<b);return gs.length?{label:l,pnl:gs.reduce((s,g)=>s+g.pnl,0),sub:`${gs.length} trade${gs.length===1?'':'s'}`}:null;}).filter(Boolean);
   const hold=hrows.length?`<div class="an-card"><div class="an-ct">By holding time</div>${anBars(hrows,{labelW:84})}${(()=>{const w=hrows.reduce((a,b)=>b.pnl<a.pnl?b:a);return`<div class="an-hint">${w.pnl<0?`Biggest drain: trades held ${w.label} (${anUsd(w.pnl)}).`:'No holding-time bucket is losing overall.'}</div>`;})()}</div>`:'';
   h+=`<div class="an-sec"><h3>When you lose</h3><span>find your bad hours and habits</span></div><div class="an-cols">${heat}${hold}</div>`;
+  h+=anSlabHtml(groups);
+  if(analysisScope==='all'||analysisScope==='futures')h+=anLeverageHtml(st0=>{const d=anDay(st0);return(!journalDateFrom||d>=journalDateFrom)&&(!journalDateTo||d<=journalDateTo);});
   // flags
   h+=`<div class="an-sec"><h3>Possible mistakes</h3><span>patterns detected in your trades — tap to see them</span></div>`+flags.map((f,i)=>`<div class="an-flag ${f.sev}"><div>${f.sev==='bad'?'🔴':f.sev==='warn'?'🟠':'🟢'}</div><div><b>${escapeHtml(f.title)}</b>${escapeHtml(f.text)}</div>${f.ids?`<button class="an-go" onclick="showAnalysisFlag(${i})">View ${f.ids.size} →</button>`:''}</div>`).join('');
   // streaks
@@ -6774,6 +6964,7 @@ async function loadFuturesPositions(){
   futuresPositionsError=null;
   const rows=await res.json();
   futuresPositions=(Array.isArray(rows)?rows:[]).filter(p=>Math.abs(parseFloat(p.positionAmt||0))>0);
+  try{await logFuturesLeverage(futuresPositions);}catch(e){}
 }
 // One-off: pull older Futures fills. userTrades with no fromId only returns the
 // last 7 days, so anything older than your first sync was never saved. This walks
