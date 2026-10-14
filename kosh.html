@@ -2488,6 +2488,7 @@ async function renderDashboard(){
   let allocDonutQueue=[]; // [{canvasId, tierStats}] rendered into Chart.js after innerHTML is set
 
   if(dashViewMode==='both'){
+    try{if(await reconcileLeadHoldings(false)){await loadAllData();}}catch(e){}
     const combined=await computeCombinedDashboardData();
     // Futures is part of your money (capital moves to/from it via Transfer), so it
     // counts in the headline: value = capital deployed + realized + unrealized,
@@ -6065,6 +6066,51 @@ async function reconcileQuoteAssetBalances(){
     }
   }
 }
+// Makes the Lead Trading holdings match the REAL Lead wallet on Binance. Units for every coin come from
+// Binance's live balance (not from replaying trades, which drifts when a sell is missed or a coin is
+// recorded twice). Duplicate records of one coin are kept at zero so nothing is counted twice.
+// Avg buy prices stay as they are. Returns true when it ran.
+let _leadReconAt=0;
+async function reconcileLeadHoldings(force){
+  const lead=portfolios.find(p=>p.name==='Lead Trading');
+  if(!lead||!currentUser)return false;
+  if(!force&&Date.now()-_leadReconAt<3*60000)return false;
+  let res;
+  try{res=await binanceFetch('account',{},'lead');}catch(e){return false;}
+  if(!res||!res.ok)return false;
+  let data;try{data=await res.json();}catch(e){return false;}
+  if(!data||!Array.isArray(data.balances))return false;
+  const bal={};
+  data.balances.forEach(b=>{const a=(b.asset||'').toUpperCase();if(!a||a.startsWith('LD'))return;bal[a]=(bal[a]||0)+parseFloat(b.free||0)+parseFloat(b.locked||0);});
+  const{data:tr}=await sb.from('tiers').select('id').eq('portfolio_id',lead.id);
+  const tids=(tr||[]).map(t=>t.id);
+  const all=tids.length?((await sb.from('coins').select('*').in('tier_id',tids)).data||[]):[];
+  const groups={};
+  all.forEach(c=>{const k=(c.ticker||'').toUpperCase();if(k)(groups[k]=groups[k]||[]).push(c);});
+  for(const [tk,list] of Object.entries(groups)){
+    const real=bal[tk]||0;
+    list.sort((a,b)=>Math.abs(b.units_held||0)-Math.abs(a.units_held||0));
+    const upd=(c,units)=>{
+      const patch={units_held:units};
+      if(BINANCE_QUOTE_ASSET_SET.has(tk))patch.avg_cost_usd=1;
+      if(Math.abs((c.units_held||0)-units)<1e-9&&!BINANCE_QUOTE_ASSET_SET.has(tk))return null;
+      return sb.from('coins').update(patch).eq('id',c.id);
+    };
+    const jobs=[upd(list[0],real),...list.slice(1).map(c=>(c.units_held||0)!==0?sb.from('coins').update({units_held:0}).eq('id',c.id):null)].filter(Boolean);
+    await Promise.all(jobs);
+  }
+  // coins that are in the wallet but not tracked yet
+  for(const [asset,real] of Object.entries(bal)){
+    if(!(real>0)||groups[asset])continue;
+    try{
+      const gid=BINANCE_QUOTE_ASSET_SET.has(asset)?(asset==='USDT'?'tether':asset.toLowerCase()):await resolveCoingeckoId(asset);
+      const coin=await ensureCoinInPortfolio(lead.id,lead.kind,{name:asset,ticker:asset,coingecko_id:gid});
+      if(coin)await sb.from('coins').update({units_held:real,...(BINANCE_QUOTE_ASSET_SET.has(asset)?{avg_cost_usd:1}:{})}).eq('id',coin.id);
+    }catch(e){console.warn('could not add',asset,e);}
+  }
+  _leadReconAt=Date.now();
+  return true;
+}
 // The Funding wallet (Binance app → Wallet → Funding) is a separate pool of
 // balances from Spot — money moves in and out of it by internal transfer,
 // not by trading, so there's no fill history to replay like Lead
@@ -6182,6 +6228,7 @@ async function syncBinanceNowInner(){
   }
   setSyncStatus('Reconciling cash balances…');
   await reconcileQuoteAssetBalances();
+  try{await reconcileLeadHoldings(true);}catch(e){}
   setSyncStatus('Syncing Funding wallet…');
   await syncFundingWallet();
   // One equity snapshot per affected portfolio, for the equity-curve chart
@@ -7652,7 +7699,7 @@ async function renderLead(){
   const lead=portfolios.find(p=>p.name==='Lead Trading');
   if(!lead){el.innerHTML='<div class="empty-state"><div class="ic">🪙</div><div>No portfolio named "Lead Trading" yet.</div><div style="font-size:0.72rem;margin-top:6px">Create it in Settings → Binance sync, then it appears here.</div></div>';return;}
   try{await Promise.all([loadBinanceDefaultPortfolio(),loadCopyShares(),loadWalletFlows()]);}catch(e){}
-  try{await refreshReserveFromBinance(lead);}catch(e){}   // live USDT from the Lead wallet
+  try{await reconcileLeadHoldings(true);}catch(e){}   // coins + USDT read live from the Lead wallet
   const tiersR=await sb.from('tiers').select('id').eq('portfolio_id',lead.id);
   const tids=(tiersR.data||[]).map(t=>t.id);
   const lcoins=tids.length?((await sb.from('coins').select('*').in('tier_id',tids)).data||[]):[];
