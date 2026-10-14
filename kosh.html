@@ -988,6 +988,43 @@ function fmtDisplay(usdValue){
   const symbols={INR:'₹',EUR:'€',GBP:'£'};
   return(symbols[displayCurrency]||displayCurrency+' ')+(usdValue*rate).toLocaleString('en-US',{maximumFractionDigits:2});
 }
+// Repairs a coin that exists as several records in one portfolio: keeps the largest, adds the units,
+// averages the buy price by units, re-points the Journal rows, and deletes the extras.
+async function mergeDuplicateCoins(portfolioId,ticker){
+  const{data:tr}=await sb.from('tiers').select('id').eq('portfolio_id',portfolioId);
+  const tids=(tr||[]).map(t=>t.id);
+  const{data:all}=tids.length?await sb.from('coins').select('*').in('tier_id',tids):{data:[]};
+  const list=(all||[]).filter(c=>(c.ticker||'').toUpperCase()===ticker.toUpperCase());
+  if(list.length<2){showToast('Nothing to merge.');return;}
+  list.sort((a,b)=>(b.units_held||0)-(a.units_held||0));
+  const keep=list[0],others=list.slice(1);
+  const units=list.reduce((s,c)=>s+(c.units_held||0),0);
+  const wa=list.filter(c=>c.avg_cost_usd!=null&&(c.units_held||0)>0),wu=wa.reduce((s,c)=>s+c.units_held,0);
+  const avg=wu>0?wa.reduce((s,c)=>s+c.avg_cost_usd*c.units_held,0)/wu:keep.avg_cost_usd;
+  const detail=list.map(c=>`• ${c.units_held} units (id ${String(c.coingecko_id||'—')})`).join('\n');
+  if(!confirm(`${ticker} exists as ${list.length} records in this portfolio:\n${detail}\n\nMerging adds them into ONE record of ${+units.toPrecision(10)} units.\n\nIf both records came from the same Binance balance (a sync duplicate), the total will be too high — in that case Cancel and tell me.\n\nMerge?`))return;
+  const ids=others.map(c=>c.id);
+  let e=(await sb.from('trades').update({coin_id:keep.id}).in('coin_id',ids)).error;
+  if(e&&!/coin_id/.test(e.message))console.warn(e);
+  e=(await sb.from('coins').update({units_held:units,avg_cost_usd:avg}).eq('id',keep.id)).error;
+  if(e){showToast('Error: '+e.message);return;}
+  e=(await sb.from('coins').delete().in('id',ids)).error;
+  if(e){showToast('Error deleting extras: '+e.message);return;}
+  showToast('Merged ✅');
+  await loadAllData();renderDashboard();
+}
+// Price-style formatting in the selected display currency, with extra decimals for sub-cent coins.
+function fmtDisplayPx(usd){
+  if(usd==null||isNaN(usd))return'—';
+  const dec=v=>{const a=Math.abs(v);return a>=1?2:a>=0.01?4:a>=0.0001?6:8;};
+  if(displayCurrency==='USD'){return'$'+usd.toLocaleString('en-US',{minimumFractionDigits:Math.min(2,dec(usd)),maximumFractionDigits:dec(usd)});}
+  if(displayCurrency==='BTC'){const p=cryptoRefPrices.BTC;if(!p)return fmtDisplayPx0(usd);return(usd/p).toLocaleString('en-US',{maximumFractionDigits:10})+' BTC';}
+  if(displayCurrency==='USDT'){const p=cryptoRefPrices.USDT||1,v=usd/p;return v.toLocaleString('en-US',{maximumFractionDigits:dec(v)})+' USDT';}
+  const rate=fiatRates[displayCurrency];if(!rate)return fmtDisplayPx0(usd);
+  const v=usd*rate,symbols={INR:'₹',EUR:'€',GBP:'£'};
+  return(symbols[displayCurrency]||displayCurrency+' ')+v.toLocaleString('en-US',{minimumFractionDigits:Math.min(2,dec(v)),maximumFractionDigits:dec(v)});
+}
+function fmtDisplayPx0(usd){const a=Math.abs(usd),d=a>=1?2:a>=0.01?4:a>=0.0001?6:8;return'$'+usd.toLocaleString('en-US',{minimumFractionDigits:Math.min(2,d),maximumFractionDigits:d});}
 function currencySelectorHtml(theme){
   const opts=['USD','INR','EUR','GBP','BTC','USDT'];
   const style=theme==='light'
@@ -2674,15 +2711,23 @@ async function renderDashboard(){
     html+=head('Holdings','every position, by portfolio');
     combined.perPortfolio.forEach((pp,i)=>{
       const p=pp.portfolio,color=pfPalette[i%pfPalette.length];
-      const openCoins=pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8&&(coinValue(c)||0)>=DUST_THRESHOLD_USD);
-      const rows=openCoins.map(c=>{
-        const v=coinValue(c)||0,alloc=pp.value>0?(v/pp.value*100):0;
+      // Same ticker held as several records in one portfolio → one combined row.
+      const byTicker={};
+      pp.coins.filter(c=>Math.abs(c.units_held||0)>1e-8).forEach(c=>{(byTicker[(c.ticker||c.name||'').toUpperCase()]=byTicker[(c.ticker||c.name||'').toUpperCase()]||[]).push(c);});
+      const rows=Object.values(byTicker).map(list=>{
+        list.sort((a,b)=>(coinValue(b)||0)-(coinValue(a)||0));
+        const c=list[0];
+        const units=list.reduce((s,x)=>s+(x.units_held||0),0);
+        const v=list.reduce((s,x)=>s+(coinValue(x)||0),0),alloc=pp.value>0?(v/pp.value*100):0;
         const price=livePrices[c.coingecko_id];
-        const avgCost=c.avg_cost_usd;
+        const withAvg=list.filter(x=>x.avg_cost_usd!=null);
+        const avgUnits=withAvg.reduce((s,x)=>s+(x.units_held||0),0);
+        const avgCost=withAvg.length&&avgUnits>0?withAvg.reduce((s,x)=>s+x.avg_cost_usd*(x.units_held||0),0)/avgUnits:null;
         const pct=(avgCost>0&&price!=null)?((price-avgCost)/avgCost*100):null;
-        const unrealized=(avgCost!=null&&price!=null)?(price-avgCost)*(c.units_held||0):null;
-        return{c,v,alloc,pct,price,avgCost,unrealized};
-      }).sort((a,b)=>b.v-a.v);
+        let unrealized=null;
+        list.forEach(x=>{const pr=livePrices[x.coingecko_id];if(x.avg_cost_usd!=null&&pr!=null)unrealized=(unrealized||0)+(pr-x.avg_cost_usd)*(x.units_held||0);});
+        return{c,v,alloc,pct,price,avgCost,unrealized,units,n:list.length};
+      }).filter(r=>r.v>=DUST_THRESHOLD_USD).sort((a,b)=>b.v-a.v);
       html+=`<div style="column-span:all">
         <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
           <span style="width:8px;height:8px;border-radius:50%;background:${color}"></span>
@@ -2693,20 +2738,21 @@ async function renderDashboard(){
           ${rows.length?rows.map(r=>`<div class="holding-row">
             <div class="hr-name">
               <div style="font-size:0.78rem;font-weight:600">${escapeHtml(r.c.ticker)}</div>
-              <div style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.c.name)}</div>
+              <div class="hide-figure" style="font-size:0.68rem;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(r.c.name&&r.c.name.toUpperCase()!==(r.c.ticker||'').toUpperCase())?escapeHtml(r.c.name)+' · ':''}${+r.units.toPrecision(8)} units</div>
+              ${r.n>1?`<div style="font-size:0.6rem;color:var(--amber-dark,#B7791F)">${r.n} records · <a href="#" style="color:inherit;text-decoration:underline" onclick="mergeDuplicateCoins('${p.id}','${escapeHtml(r.c.ticker||'')}');return false">merge</a></div>`:''}
             </div>
             <div class="hr-value">
-              <div class="hide-figure" style="font-size:0.78rem">${fmtUsd(r.v)}</div>
+              <div class="hide-figure" style="font-size:0.78rem">${fmtDisplay(r.v)}</div>
               <div style="font-size:0.66rem;color:var(--ink3)">${r.alloc.toFixed(1)}% of portfolio</div>
             </div>
             <div class="hr-stats">
               <div>
                 <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Avg buy</div>
-                <div class="hide-figure" style="font-size:0.74rem">${r.avgCost!=null?fmtUsd(r.avgCost):'—'}</div>
+                <div class="hide-figure" style="font-size:0.74rem">${r.avgCost!=null?fmtDisplayPx(r.avgCost):'—'}</div>
               </div>
               <div>
                 <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Price</div>
-                <div style="font-size:0.74rem">${r.price!=null?fmtUsd(r.price):'—'}</div>
+                <div style="font-size:0.74rem">${r.price!=null?fmtDisplayPx(r.price):'—'}</div>
               </div>
               <div>
                 <div style="font-size:0.58rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em">Unrealized</div>
