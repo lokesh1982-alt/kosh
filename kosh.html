@@ -7787,7 +7787,27 @@ async function resetLeadHistory(){
 // ═══════════════════════════════
 //  ALPHA — erase history, import transactions from Excel
 // ═══════════════════════════════
-function alphaPortfolio(){return portfolios.find(p=>p.name==='Alpha')||null;}
+function alphaPortfolio(){
+  let id=null;try{id=localStorage.getItem('kosh-alpha-pf');}catch(e){}
+  return portfolios.find(p=>p.id===id)||portfolios.find(p=>/alpha/i.test(p.name||''))||null;
+}
+async function ensureAlphaPortfolio(){
+  const f=alphaPortfolio();if(f)return f;
+  const cand=portfolios.filter(p=>p.name!=='Lead Trading'&&p.kind!=='stocks'&&!/stock/i.test(p.name||''));
+  const list=cand.map((p,i)=>(i+1)+' = '+p.name).join('\n');
+  const a=prompt('No portfolio named "Alpha" was found. Which portfolio is your Alpha trading?\n\n'+(list?list+'\n':'')+'0 = create a new portfolio called "Alpha"\n\nType the number:');
+  if(a==null||a.trim()==='')return null;
+  const n=parseInt(a);
+  let pf=null;
+  if(n===0){
+    const{data,error}=await sb.from('portfolios').insert({user_id:currentUser.id,name:'Alpha',kind:'spot',sort_order:portfolios.length}).select().single();
+    if(error){showToast('Could not create Alpha: '+error.message);return null;}
+    pf=data;try{await loadAllData();}catch(e){}
+  }else pf=cand[n-1]||null;
+  if(!pf){showToast('That number is not in the list.');return null;}
+  try{localStorage.setItem('kosh-alpha-pf',pf.id);}catch(e){}
+  return pf;
+}
 let _alphaBusy=false;
 function downloadAlphaTemplate(){
   if(typeof XLSX==='undefined'){showToast('Excel library still loading — try again in a moment.');return;}
@@ -7951,11 +7971,11 @@ function alphaReplay(rows){
   return{holdings:st,realized,over};
 }
 async function eraseAlphaHistory(skipConfirm){
-  const pf=alphaPortfolio();
-  if(!pf){showToast('No portfolio named "Alpha" found.');return false;}
+  const pf=await ensureAlphaPortfolio();
+  if(!pf)return false;
   if(!skipConfirm){
     const{count}=await sb.from('trades').select('id',{count:'exact',head:true}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id);
-    if(!confirm(`Erase ALL ${count||0} transaction(s) of "Alpha"?\n\nThe Journal history is deleted for good, and the token holdings are set to zero (your USDT/stablecoin balance is kept). You can then import your Excel file.\n\nThis cannot be undone.`))return false;
+    if(!confirm(`Erase ALL ${count||0} transaction(s) of "${pf.name}"?\n\nThe Journal history is deleted for good, and the token holdings are set to zero (your USDT/stablecoin balance is kept). You can then import your Excel file.\n\nThis cannot be undone.`))return false;
     if(!confirm('Really erase the whole Alpha history?'))return false;
   }
   let e=(await sb.from('trades').delete().eq('user_id',currentUser.id).eq('portfolio_id',pf.id)).error;
@@ -7977,8 +7997,8 @@ async function eraseAlphaHistory(skipConfirm){
 }
 async function importAlphaFile(file){
   if(!file||_alphaBusy)return;
-  const pf=alphaPortfolio();
-  if(!pf){showToast('No portfolio named "Alpha" found.');return;}
+  const pf=await ensureAlphaPortfolio();
+  if(!pf)return;
   _alphaBusy=true;
   try{
     const probe=await sb.from('trades').select('import_key').limit(1);
