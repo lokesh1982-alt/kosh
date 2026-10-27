@@ -154,6 +154,7 @@ button{cursor:pointer;}
   z-index:60;
   max-width:520px;margin:0 auto;
 }
+body.no-futures [data-tab="futures"]{display:none!important}
 .menu-tile{background:none;border:none;border-radius:var(--radius-sm);padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;}
 .menu-tile.active{background:var(--card2);}
 .menu-tile .ic{font-size:17px;}
@@ -470,6 +471,8 @@ select option{color:#14181D;background:#fff;}
       </div>
       <div class="card" id="settings-futures-card">
         <div class="card-title">Futures</div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:0.8rem;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="futures-on-toggle" onchange="setFuturesOn(this.checked)"> Track Binance Futures <span style="font-size:0.66rem;color:var(--ink3)">(off hides the Futures tab, card and reports; saved history is kept)</span></label>
+        <div id="futures-settings-body">
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:10px;line-height:1.45">Traded Futures pairs are picked up automatically when you sync — nothing to add here.</div>
         <div style="font-size:0.72rem;color:var(--ink3);margin-bottom:8px;line-height:1.45">Futures isn't a portfolio Kosh tracks trades against, so set how much you've actually deployed there by hand — bump it up whenever you move more in from Binance.</div>
         <div class="form-group"><label class="form-label">Capital deployed (USDT)</label>
@@ -477,6 +480,27 @@ select option{color:#14181D;background:#fff;}
             <input class="form-input" type="number" id="futures-capital-input" placeholder="e.g. 900" style="flex:1"/>
             <button class="btn-outline" onclick="saveFuturesCapitalDeployed()">Save</button>
           </div>
+        </div>
+        </div>
+      </div>
+      <div class="card" id="settings-lead-card">
+        <div class="card-title">Lead Trading connection</div>
+        <div style="font-size:0.72rem;color:var(--ink3);line-height:1.55;margin-bottom:10px">The Lead Trading API key is kept safely in Supabase, never in this app. To switch to a new key:<br>
+          1. On Binance create the new key: <b>Trade → Copy Trading → Spot → your portfolio → [API] → Create Copy Trading API</b> (reading only).<br>
+          2. In Supabase → Edge Functions → <b>binance-proxy</b> → Secrets, replace <code>BINANCE_LEAD_API_KEY</code> and <code>BINANCE_LEAD_API_SECRET</code>, then redeploy the function.<br>
+          3. Press <b>Test connection</b> below. If the coins it lists are the new portfolio's, you are connected.<br>
+          4. If the new key is a different portfolio, use <b>Start fresh</b> so old trades don't mix in, then press 🔄 Sync Binance.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn-outline" onclick="testLeadConnection()">🔌 Test connection</button><button class="btn-outline" style="color:var(--red)" onclick="resetLeadHistory()">🗑 Start fresh (clear Lead history)</button></div>
+        <div id="lead-test-out" style="margin-top:10px"></div>
+      </div>
+      <div class="card" id="settings-alpha-card">
+        <div class="card-title">Alpha transactions</div>
+        <div style="font-size:0.72rem;color:var(--ink3);line-height:1.5;margin-bottom:10px">Erase the whole Alpha history, then upload your transactions from an Excel file. Uploading the same file again only adds new rows. Your USDT balance is not changed by the import — fix it with "Correct" if needed.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-outline" onclick="downloadAlphaTemplate()">⬇️ Excel template</button>
+          <button class="btn-outline" onclick="document.getElementById('alpha-file').click()">⬆️ Import Excel / CSV</button>
+          <button class="btn-outline" style="color:var(--red)" onclick="eraseAlphaHistory()">🗑 Erase all history</button>
+          <input type="file" id="alpha-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importAlphaFile(this.files[0])">
         </div>
       </div>
       <div class="card" id="settings-data-card">
@@ -1095,6 +1119,7 @@ function showToast(msg){
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function switchTab(name){
+  if(name==='futures'&&!futuresOn())name='dashboard';
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+name).classList.add('active');
   const dashLink=document.getElementById('back-row-dashboard-link');
@@ -4086,7 +4111,7 @@ async function renderJournal(){
   // a transient network error) must never take down the Spot/Crypto Journal
   // — it should just mean "no Futures sub-tab shown" for this render.
   try{await loadFuturesSymbols();}catch(e){console.error('loadFuturesSymbols failed:',e);futuresSymbols=[];}
-  const hasFutures=futuresSymbols.length>0;
+  const hasFutures=futuresOn()&&futuresSymbols.length>0;
   // One dropdown instead of tabs: every portfolio gets its own Journal, plus
   // combined views and Futures (separate data shape, own renderer below).
   const cryptoPfs=portfolios.filter(p=>!isStockKind(p.kind)),stockPfs=portfolios.filter(p=>isStockKind(p.kind));
@@ -4112,7 +4137,9 @@ async function renderJournal(){
   allJournalTrades=rawTrades.filter(t=>(journalViewMode==='stocks'?stockPortfolioIds.has(t.portfolio_id):!stockPortfolioIds.has(t.portfolio_id))&&(!journalPortfolioId||t.portfolio_id===journalPortfolioId));
 
   const vestedBtn=journalViewMode==='stocks'?`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:6px" onclick="openVestedImport()">⬆️ Import Vested file (.xlsx)</button><input type="file" id="vested-file" accept=".xlsx,.xls" style="display:none" onchange="importVestedFile(this.files[0])"><div style="font-size:0.66rem;color:var(--ink3);margin-bottom:12px">Upload the whole file you download from Vested — Kosh reads the Trades, Transfers and Income sheets. Uploading the same file again only adds what's new.</div>`:'';
-  const addPastBtn=vestedBtn+`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
+  const alphaSel=journalViewMode!=='stocks'&&alphaPortfolio()&&journalPortfolioId===alphaPortfolio().id;
+  const alphaBtn=alphaSel?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"><button class="btn-outline" style="flex:1;font-size:0.76rem" onclick="document.getElementById('alpha-file').click()">⬆️ Import Excel</button><button class="btn-outline" style="font-size:0.76rem" onclick="downloadAlphaTemplate()">⬇️ Template</button><button class="btn-outline" style="font-size:0.76rem;color:var(--red)" onclick="eraseAlphaHistory()">🗑 Erase</button></div>`:'';
+  const addPastBtn=vestedBtn+alphaBtn+`<button class="btn-outline" style="width:100%;font-size:0.76rem;margin-bottom:12px" onclick="openPastTradeModal()">+ Add a past trade</button>`;
   if(!allJournalTrades.length){
     el.innerHTML=toggleHtml+addPastBtn+`<div class="empty-state"><div class="ic">📒</div><div>No trades logged yet.</div></div>`;
     return;
@@ -4572,6 +4599,7 @@ function buildFuturesCostMap(){
   return m;
 }
 async function loadFuturesIncome(){
+  if(!futuresOn()){futuresClear();return;}
   futuresIncomeRows=[];
   try{
     for(let from=0;from<20000;from+=1000){
@@ -5302,7 +5330,7 @@ async function getPortfolioCoins(portfolioId){
 function openTransferModal(){
   if(!portfolios.length){showToast('Create a portfolio first.');return;}
   const fromSel=document.getElementById('tr-from-select');
-  fromSel.innerHTML=portfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')+`<option value="__futures__">🧮 Futures (USDT margin)</option>`;
+  fromSel.innerHTML=portfolios.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')+(futuresOn()?`<option value="__futures__">🧮 Futures (USDT margin)</option>`:'');
   fromSel.value=currentPortfolioId||portfolios[0].id;
   document.getElementById('tr-new-name').value='';
   document.getElementById('tr-new-kind').value='spot';
@@ -5365,7 +5393,7 @@ async function transferSourceChanged(){
   const prevDest=destSel.value;
   const others=portfolios.filter(p=>p.id!==sourceId);
   destSel.innerHTML=others.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (${portfolioKindLabel(p.kind)})</option>`).join('')
-    +(sourceId==='__futures__'?'':`<option value="__futures__">🧮 Futures (USDT margin)</option>`)
+    +((sourceId==='__futures__'||!futuresOn())?'':`<option value="__futures__">🧮 Futures (USDT margin)</option>`)
     +`<option value="__new__">+ New portfolio…</option>`;
   if(prevDest==='__futures__'||others.some(p=>p.id===prevDest))destSel.value=prevDest;
   transferDestChanged();
@@ -6802,7 +6830,7 @@ async function renderAnalysis(){
   try{analysisRaw.spot=await loadAllTradesForJournal();}catch(e){analysisRaw.spot=[];}
   try{await loadFuturesTrades();analysisRaw.fut=futuresTrades;}catch(e){analysisRaw.fut=[];}
   try{await loadFuturesLeverage();}catch(e){}
-  if(analysisScope!=='all'&&analysisScope!=='futures'&&!portfolios.some(p=>p.id===analysisScope))analysisScope='all';
+  if((analysisScope==='futures'&&!futuresOn())||(analysisScope!=='all'&&analysisScope!=='futures'&&!portfolios.some(p=>p.id===analysisScope)))analysisScope='all';
   renderAnalysisView();
 }
 function renderAnalysisView(keepScroll){
@@ -6817,7 +6845,7 @@ function renderAnalysisView(keepScroll){
   const sel=`<select class="an-select" onchange="setAnalysisScope(this.value)">
     <option value="all" ${analysisScope==='all'?'selected':''}>🌐 All portfolios</option>
     ${portfolios.map(p=>`<option value="${p.id}" ${analysisScope===p.id?'selected':''}>${portfolioIcon(p.kind)} ${escapeHtml(p.name)}</option>`).join('')}
-    <option value="futures" ${analysisScope==='futures'?'selected':''}>🧮 Futures</option>
+    ${futuresOn()?`<option value="futures" ${analysisScope==='futures'?'selected':''}>🧮 Futures</option>`:''}
   </select>`;
   let h=`<div class="an-filters">${sel}</div>`+journalDateRangeHtml('setAnalysisDateRange');
   if(!st.n){
@@ -6860,7 +6888,7 @@ function renderAnalysisView(keepScroll){
   const hold=hrows.length?`<div class="an-card"><div class="an-ct">By holding time</div>${anBars(hrows,{labelW:84})}${(()=>{const w=hrows.reduce((a,b)=>b.pnl<a.pnl?b:a);return`<div class="an-hint">${w.pnl<0?`Biggest drain: trades held ${w.label} (${anUsd(w.pnl)}).`:'No holding-time bucket is losing overall.'}</div>`;})()}</div>`:'';
   h+=`<div class="an-sec"><h3>When you lose</h3><span>find your bad hours and habits</span></div><div class="an-cols">${heat}${hold}</div>`;
   h+=anSlabHtml(groups);
-  if(analysisScope==='all'||analysisScope==='futures')h+=anLeverageHtml(st0=>{const d=anDay(st0);return(!journalDateFrom||d>=journalDateFrom)&&(!journalDateTo||d<=journalDateTo);});
+  if(futuresOn()&&(analysisScope==='all'||analysisScope==='futures'))h+=anLeverageHtml(st0=>{const d=anDay(st0);return(!journalDateFrom||d>=journalDateFrom)&&(!journalDateTo||d<=journalDateTo);});
   // flags
   h+=`<div class="an-sec"><h3>Possible mistakes</h3><span>patterns detected in your trades — tap to see them</span></div>`+flags.map((f,i)=>`<div class="an-flag ${f.sev}"><div>${f.sev==='bad'?'🔴':f.sev==='warn'?'🟠':'🟢'}</div><div><b>${escapeHtml(f.title)}</b>${escapeHtml(f.text)}</div>${f.ids?`<button class="an-go" onclick="showAnalysisFlag(${i})">View ${f.ids.size} →</button>`:''}</div>`).join('');
   // streaks
@@ -6916,10 +6944,12 @@ let futuresTrades=[];
 let futuresLastSyncedAt=null;
 let futuresCapitalDeployed=0;
 async function loadFuturesSymbols(){
+  if(!futuresOn()){futuresClear();return;}
   const{data}=await sb.from('futures_symbols').select('*').eq('user_id',currentUser.id).order('symbol');
   futuresSymbols=data||[];
 }
 async function loadFuturesSyncSettings(){
+  if(!futuresOn()){futuresClear();return;}
   const{data}=await sb.from('futures_sync_settings').select('*').eq('user_id',currentUser.id).maybeSingle();
   futuresLastSyncedAt=data?data.last_synced_at:null;
   futuresCapitalDeployed=data?(data.capital_deployed||0):0;
@@ -6987,11 +7017,15 @@ async function sbFetchAll(build){
   return{data:out,error:null};
 }
 async function loadFuturesTrades(){
+  if(!futuresOn()){futuresClear();return;}
   const{data}=await sbFetchAll(()=>sb.from('futures_trades').select('*').eq('user_id',currentUser.id).order('trade_time',{ascending:false}).order('id'));
   futuresTrades=data||[];
   await loadFuturesIncome();
 }
 function renderFuturesSettingsCard(){
+  const _on=futuresOn(),_chk=document.getElementById('futures-on-toggle'),_body=document.getElementById('futures-settings-body');
+  if(_chk)_chk.checked=_on;if(_body)_body.style.display=_on?'':'none';
+  if(!_on)return;
   Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings()]).then(()=>{
     const list=document.getElementById('futures-symbol-list');
     if(list){
@@ -7087,6 +7121,7 @@ let futuresOrdersNote=null;
 // plus Binance's newer "algo" conditional orders (stop-loss / take-profit
 // triggers). Each source is optional: a failure just leaves that source empty.
 async function loadFuturesOpenOrders(){
+  if(!futuresOn()){futuresClear();return;}
   futuresOpenOrders=[];futuresOrdersNote=null;
   const norm=(o,algo)=>({
     symbol:o.symbol,positionSide:o.positionSide||'BOTH',side:o.side,
@@ -7112,6 +7147,7 @@ async function loadFuturesOpenOrders(){
 // trades were never synced. wallet = excludes open P&L; margin = wallet + open P&L.
 let futuresAccount=null;
 async function loadFuturesAccount(){
+  if(!futuresOn()){futuresClear();return;}
   futuresAccount=null;
   try{
     const r=await binanceFetch('futuresAccount',{},'futures');
@@ -7155,6 +7191,7 @@ function fmtPx(v){
 // (e.g. the server secret not set, or a Binance permission/IP error) so a
 // misconfiguration shows up on screen instead of just an empty list.
 async function loadFuturesPositions(){
+  if(!futuresOn()){futuresClear();return;}
   const res=await binanceFetch('futuresPositions',{},'futures');
   if(!res){futuresPositions=[];futuresPositionsError='Your session expired — please sign in again.';return;}
   if(!res.ok){
@@ -7692,6 +7729,337 @@ function fundingSectionsHtml(){
 // ═══════════════════════════════
 //  LEAD TRADING TAB (Spot copy trading — Binance "lead" wallet)
 // ═══════════════════════════════
+// ═══════════════════════════════
+//  FUTURES ON/OFF
+// ═══════════════════════════════
+function futuresOn(){try{return localStorage.getItem('kosh-futures-on')==='1';}catch(e){return false;}}
+function applyFuturesVisibility(){try{document.body.classList.toggle('no-futures',!futuresOn());}catch(e){}}
+function futuresClear(){
+  futuresSymbols=[];futuresTrades=[];futuresPositions=[];futuresOpenOrders=[];futuresAccount=null;
+  futuresIncomeRows=[];futuresCapitalDeployed=0;futuresPositionsError=null;futuresLastSyncedAt=null;
+}
+function setFuturesOn(on){
+  try{localStorage.setItem('kosh-futures-on',on?'1':'0');}catch(e){}
+  applyFuturesVisibility();
+  const body=document.getElementById('futures-settings-body');if(body)body.style.display=on?'':'none';
+  if(on){renderFuturesSettingsCard();showToast('Futures is shown again ✅');}
+  else{futuresClear();showToast('Futures hidden — your saved Futures history is kept.');}
+  try{renderAll();}catch(e){}
+}
+applyFuturesVisibility();
+// ═══════════════════════════════
+//  LEAD TRADING — change API key / test connection / start fresh
+// ═══════════════════════════════
+async function testLeadConnection(){
+  const out=document.getElementById('lead-test-out');if(!out)return;
+  out.innerHTML='<div style="font-size:0.74rem;color:var(--ink3)">Testing…</div>';
+  let res;
+  try{res=await binanceFetch('account',{},'lead');}catch(e){out.innerHTML='<div style="color:var(--red);font-size:0.74rem">Could not reach the binance-proxy function: '+escapeHtml(e.message||String(e))+'</div>';return;}
+  if(!res){out.innerHTML='<div style="color:var(--red);font-size:0.74rem">Your session expired — sign in again.</div>';return;}
+  let body=null,txt='';
+  try{txt=await res.text();body=JSON.parse(txt);}catch(e){}
+  if(!res.ok||!body||!Array.isArray(body.balances)){
+    const msg=(body&&(body.error||body.msg))||txt.slice(0,200)||('HTTP '+res.status);
+    out.innerHTML=`<div style="background:var(--red-bg);color:var(--red);padding:9px 11px;border-radius:8px;font-size:0.74rem;line-height:1.5"><b>Not connected.</b> ${escapeHtml(String(msg))}<br><span style="font-size:0.68rem">Check that BINANCE_LEAD_API_KEY and BINANCE_LEAD_API_SECRET are saved in Supabase, the key has "Enable Reading", and — if you restricted IPs — that Supabase's IP is allowed (or use "Unrestricted"). Then redeploy binance-proxy and test again.</span></div>`;
+    return;
+  }
+  const held=body.balances.map(b=>({a:b.asset,t:parseFloat(b.free||0)+parseFloat(b.locked||0)})).filter(x=>x.t>0&&!String(x.a).startsWith('LD')).sort((x,y)=>y.t-x.t);
+  out.innerHTML=`<div style="background:var(--green-bg);color:var(--green);padding:9px 11px;border-radius:8px;font-size:0.74rem;line-height:1.5"><b>Connected ✅</b> — this key sees ${held.length} asset${held.length===1?'':'s'} with a balance${held.length?': '+held.slice(0,8).map(x=>escapeHtml(x.a)+' '+(+x.t.toPrecision(7))).join(', ')+(held.length>8?' …':''):' (empty wallet)'}.<br><span style="font-size:0.68rem;opacity:.85">If these are not the coins in your Lead portfolio, you are still using the old key.</span></div>`;
+}
+async function resetLeadHistory(){
+  const lead=portfolios.find(p=>p.name==='Lead Trading');
+  if(!lead){showToast('No portfolio named "Lead Trading" found.');return;}
+  if(!confirm('Start Lead Trading fresh?\n\nThis permanently deletes, for "Lead Trading" only:\n• all its trades in the Journal\n• its profit curve snapshots\n• its manual deposit/withdrawal entries\n• the sync bookmarks (so history is read again from Binance)\n\nCoin balances are set to zero and then rebuilt from your new Lead wallet when you press Sync Binance.\n\nThis cannot be undone. Continue?'))return;
+  if(!confirm('Last check: you have already saved the NEW Lead API key in Supabase and tested it here. Delete Lead Trading history now?'))return;
+  try{
+    let e=(await sb.from('trades').delete().eq('user_id',currentUser.id).eq('portfolio_id',lead.id)).error;
+    if(e){showToast('Could not delete trades: '+e.message);return;}
+    try{await sb.from('portfolio_equity_snapshots').delete().eq('user_id',currentUser.id).eq('portfolio_id',lead.id);}catch(x){}
+    try{await sb.from('wallet_flows').delete().eq('user_id',currentUser.id).eq('wallet','lead');}catch(x){}
+    try{await sb.from('binance_sync_cursor').delete().eq('user_id',currentUser.id).eq('portfolio_id',lead.id);}catch(x){}
+    const{data:tr}=await sb.from('tiers').select('id').eq('portfolio_id',lead.id);
+    const tids=(tr||[]).map(t=>t.id);
+    if(tids.length)await sb.from('coins').update({units_held:0,avg_cost_usd:null}).in('tier_id',tids);
+    try{await loadAllData();renderAll();}catch(x){}
+    showToast('Lead Trading cleared ✅ — now press 🔄 Sync Binance');
+  }catch(e){showToast('Reset failed: '+(e.message||e));}
+}
+// ═══════════════════════════════
+//  ALPHA — erase history, import transactions from Excel
+// ═══════════════════════════════
+function alphaPortfolio(){return portfolios.find(p=>p.name==='Alpha')||null;}
+let _alphaBusy=false;
+function downloadAlphaTemplate(){
+  if(typeof XLSX==='undefined'){showToast('Excel library still loading — try again in a moment.');return;}
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([['Date (UTC)','Type','Coin','Quantity','Price (USDT)','Fee (USDT)']]);
+  ws['!cols']=[{wch:20},{wch:8},{wch:10},{wch:14},{wch:14},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Transactions');
+  const help=XLSX.utils.aoa_to_sheet([
+    ['How to fill the Transactions sheet'],
+    ['Date (UTC)','2026-10-02 14:35:10  (date and time of the trade, UTC)'],
+    ['Type','Buy or Sell'],
+    ['Coin','The token, e.g. SIGN  (a pair like SIGNUSDT also works)'],
+    ['Quantity','How many tokens you bought or sold'],
+    ['Price (USDT)','Price of one token in USDT'],
+    ['Fee (USDT)','Fee paid in USDT (leave 0 or empty if none)'],
+    [''],
+    ['Tips'],
+    ['One row per trade. You can upload the same file again later — rows already imported are skipped.'],
+    ['Binance export columns (Date, Pair, Side, Price, Executed, Amount, Fee) are also recognised.']
+  ]);
+  help['!cols']=[{wch:16},{wch:70}];
+  XLSX.utils.book_append_sheet(wb,help,'How to fill');
+  XLSX.writeFile(wb,'kosh-alpha-template.xlsx');
+}
+function _aNum(v){
+  if(v==null||v==='')return null;
+  if(typeof v==='number')return isFinite(v)?v:null;
+  const m=String(v).replace(/,/g,'').match(/-?\d*\.?\d+(?:e[-+]?\d+)?/i);
+  return m?parseFloat(m[0]):null;
+}
+function _aDate(v){
+  if(v==null||v==='')return null;
+  if(typeof v==='number')return v>20000&&v<80000?Math.round((v-25569)*86400000):(v>1e11?v:null);
+  if(v instanceof Date)return v.getTime();
+  let s=String(v).trim().replace(/\//g,'-');
+  if(/^\d{2}-\d{2}-\d{4}/.test(s)){const[d,m,y]=s.split(/[- ]/);s=y+'-'+m+'-'+d+s.slice(10);}
+  if(!/[zZ]|[+-]\d{2}:?\d{2}$/.test(s))s=s.replace(' ','T')+(s.length<=10?'T00:00:00':'')+'Z';
+  const t=Date.parse(s);return isNaN(t)?null:t;
+}
+const _A_QUOTES=['USDT','USDC','FDUSD','BUSD','TUSD','USD','BTC','ETH','BNB'];
+function _aTicker(v){
+  if(v==null)return'';
+  let s=String(v).trim().toUpperCase().replace(/^[\d.,\s]+/,'').replace(/[^A-Z0-9/_-]/g,'');
+  if(s.includes('/'))s=s.split('/')[0];
+  if(s.includes('_'))s=s.split('_')[0];
+  if(s.includes('-'))s=s.split('-')[0];
+  for(const q of _A_QUOTES){if(s.length>q.length&&s.endsWith(q))return s.slice(0,-q.length);}
+  return s;
+}
+
+const _A_STABLE=new Set(['USDT','USDC','FDUSD','BUSD','TUSD','USD','DAI']);
+async function _aUsdPrice(sym,ms,cache){
+  if(_A_STABLE.has(sym))return 1;
+  const k=sym+'|'+Math.floor(ms/60000);if(k in cache)return cache[k];
+  let v=null;
+  try{
+    const r=await fetch('https://api.binance.com/api/v3/klines?symbol='+sym+'USDT&interval=1m&startTime='+Math.floor(ms/60000)*60000+'&limit=1');
+    const j=await r.json();if(Array.isArray(j)&&j[0])v=(parseFloat(j[0][1])+parseFloat(j[0][4]))/2;
+  }catch(e){}
+  cache[k]=v;return v;
+}
+async function parseBinanceAlphaGrid(grid,hi){
+  const heads=grid[hi].map(h=>String(h==null?'':h).trim().toLowerCase());
+  const ix=n=>heads.indexOf(n);
+  const cT=ix('time'),cNo=ix('orderno'),cDir=ix('direction'),cB=ix('base asset'),cQ=ix('quote asset'),cP=ix('avgtrading price'),cF=ix('filled'),cTot=ix('total'),cSt=ix('status'),cFee=ix('network fee');
+  let off=0;
+  for(let r=0;r<hi;r++){for(const c of (grid[r]||[])){const m=/UTC\s*([+-]\d+)/i.exec(String(c||''));if(m){off=parseInt(m[1]);}}}
+  const unit=v=>{const m=/([A-Za-z][A-Za-z0-9]*)\s*$/.exec(String(v||'').trim());return m?m[1].toUpperCase():'';};
+  const rows=[],warn={},cache={};const w=k=>warn[k]=(warn[k]||0)+1;
+  for(let r=hi+1;r<grid.length;r++){
+    const g=grid[r];if(!g||!g[cT])continue;
+    if(String(g[cSt]||'').toUpperCase()!=='FILLED'){w('unfilled/cancelled orders ignored');continue;}
+    let ms=_aDate(g[cT]);if(ms==null){w('rows skipped (bad date)');continue;}
+    ms-=off*3600000;
+    const side=/sell/i.test(g[cDir])?'sell':'buy';
+    const tk=unit(g[cF]),cur=unit(g[cTot])||unit(g[cP]);
+    const qty=_aNum(g[cF]),total=_aNum(g[cTot]);
+    if(!tk||!cur||!(qty>0)||!(total>0)){w('rows skipped (no quantity / total)');continue;}
+    const fx=await _aUsdPrice(cur,ms,cache);
+    if(fx==null){w('rows skipped (could not price '+cur+')');continue;}
+    const usd=total*fx,price=usd/qty;
+    const fee=_aNum(g[cFee])||0;
+    const iso=new Date(ms).toISOString().replace('.000Z','Z'),no=String(g[cNo]||r);
+    rows.push({key:'a|'+no,iso,ms,ticker:tk,action:side,qty,price,fee});
+    if(!_A_STABLE.has(cur)){
+      rows.push({key:'a|'+no+'|leg',iso,ms,ticker:cur,action:side==='buy'?'sell':'buy',qty:total,price:fx,fee:0});
+      w('swap legs paid/received in non-stable coins priced via Binance spot (counter-leg added)');
+    }
+  }
+  if(!rows.length)throw new Error('No filled transactions found in this file.');
+  rows.sort((a,b)=>a.ms-b.ms||(a.action==='buy'?-1:1));
+  return{rows,warn};
+}
+async function parseAlphaWorkbook(buf){
+  const wb=XLSX.read(buf,{type:'array',cellDates:false});
+  const name=wb.SheetNames.find(n=>/transaction|trade|order|history|alpha/i.test(n))||wb.SheetNames[0];
+  const grid=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,raw:true});
+  const bi=grid.findIndex(r=>r&&r.some(x=>/^direction$/i.test(String(x||'').trim()))&&r.some(x=>/^base asset$/i.test(String(x||'').trim())));
+  if(bi>=0)return await parseBinanceAlphaGrid(grid,bi);
+  let hi=grid.findIndex(r=>r&&r.filter(x=>x!=null&&String(x).trim()!=='').length>=3&&r.some(x=>/date|time/i.test(String(x||''))));
+  if(hi<0)throw new Error('Could not find a header row with a Date column.');
+  const heads=grid[hi].map(h=>String(h==null?'':h).trim().toLowerCase());
+  const col=(...pats)=>{for(const p of pats){const i=heads.findIndex(h=>p.test(h));if(i>=0)return i;}return -1;};
+  const cDate=col(/^date\s*\(?utc/,/^date/,/time/);
+  const cSide=col(/^type$/,/^side$/,/^action$/,/direction/,/type|side/);
+  const cCoin=col(/^coin$/,/^token$/,/^asset$/,/^ticker$/,/^pair$/,/^symbol$/,/market/,/coin|token|pair|symbol/);
+  const cQty=col(/^quantity/,/^qty/,/^executed/,/^filled/,/^units/,/quantity|executed|filled/);
+  const cPrice=col(/^price\s*\(/,/^avg.*price/,/^price/,/price/);
+  const cTotal=col(/^total/,/^amount\s*\(usdt/,/^quote/,/^value/,/^amount$/);
+  const cFee=col(/^fee\s*\(/,/^fee$/,/^commission/,/fee/);
+  const cFeeAsset=col(/fee.*(coin|asset|currency)/,/commission.*asset/);
+  if(cDate<0||cSide<0||cCoin<0)throw new Error('Needed columns not found. Use the template: Date (UTC), Type, Coin, Quantity, Price (USDT), Fee (USDT).');
+  const rows=[],warn={};const w=k=>warn[k]=(warn[k]||0)+1;
+  const seen={};
+  for(let r=hi+1;r<grid.length;r++){
+    const g=grid[r];if(!g||g.every(x=>x==null||x===''))continue;
+    const ms=_aDate(g[cDate]);
+    const sideRaw=String(g[cSide]||'').toLowerCase();
+    const side=/sell|sold|short/.test(sideRaw)?'sell':/buy|bought|long/.test(sideRaw)?'buy':null;
+    let tk=_aTicker(g[cCoin]);
+    if(!tk&&cQty>=0)tk=_aTicker(String(g[cQty]||'').replace(/^[\d.,\s]+/,''));
+    let qty=_aNum(cQty>=0?g[cQty]:null),price=cPrice>=0?_aNum(g[cPrice]):null,total=cTotal>=0?_aNum(g[cTotal]):null;
+    if(ms==null||!side||!tk){w('rows skipped (no date / type / coin)');continue;}
+    if(!(qty>0)&&price>0&&total>0)qty=total/price;
+    if(!(price>0)&&qty>0&&total>0)price=total/qty;
+    if(!(qty>0)||!(price>0)){w('rows skipped (no quantity / price)');continue;}
+    let fee=0;
+    if(cFee>=0&&g[cFee]!=null&&g[cFee]!==''){
+      const fv=_aNum(g[cFee])||0,txt=(String(g[cFee])+' '+(cFeeAsset>=0?g[cFeeAsset]:'')).toUpperCase();
+      if(fv){
+        if(/USDT|USDC|FDUSD|BUSD|USD/.test(txt)||(!/[A-Z]{2,}/.test(String(g[cFee]).toUpperCase().replace(/E[-+]?\d+/,''))&&cFeeAsset<0))fee=fv;
+        else if(new RegExp('\\b'+tk+'\\b').test(txt))fee=fv*price;
+        else w('fees in another coin (e.g. BNB) not converted');
+      }
+    }
+    const iso=new Date(ms).toISOString().replace('.000Z','Z');
+    const base=['a',iso,tk,side,+qty.toPrecision(10),+price.toPrecision(10)].join('|');
+    seen[base]=(seen[base]||0)+1;
+    rows.push({key:base+(seen[base]>1?'#'+seen[base]:''),iso,ms,ticker:tk,action:side,qty,price,fee});
+  }
+  if(!rows.length)throw new Error('No usable transactions found in this file.');
+  rows.sort((a,b)=>a.ms-b.ms||(a.action==='buy'?-1:1));
+  return{rows,warn};
+}
+function alphaReplay(rows){
+  const st={},realized=new Map();let over=0;
+  rows.forEach(r=>{
+    const s=st[r.ticker]||(st[r.ticker]={units:0,avg:0});
+    if(r.action==='buy'){
+      const nu=s.units+r.qty;
+      s.avg=nu>0?(s.avg*s.units+r.price*r.qty)/nu:r.price;s.units=nu;
+      realized.set(r.key,null);
+    }else{
+      let basis=s.avg;
+      if(r.qty>s.units+1e-9){over++;if(s.units<=1e-9)basis=r.price;}
+      realized.set(r.key,(r.price-basis)*r.qty);
+      s.units=Math.max(0,s.units-r.qty);
+      if(s.units<=1e-9){s.units=0;s.avg=0;}
+    }
+  });
+  return{holdings:st,realized,over};
+}
+async function eraseAlphaHistory(skipConfirm){
+  const pf=alphaPortfolio();
+  if(!pf){showToast('No portfolio named "Alpha" found.');return false;}
+  if(!skipConfirm){
+    const{count}=await sb.from('trades').select('id',{count:'exact',head:true}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id);
+    if(!confirm(`Erase ALL ${count||0} transaction(s) of "Alpha"?\n\nThe Journal history is deleted for good, and the token holdings are set to zero (your USDT/stablecoin balance is kept). You can then import your Excel file.\n\nThis cannot be undone.`))return false;
+    if(!confirm('Really erase the whole Alpha history?'))return false;
+  }
+  let e=(await sb.from('trades').delete().eq('user_id',currentUser.id).eq('portfolio_id',pf.id)).error;
+  if(e){showToast('Could not erase: '+e.message);return false;}
+  try{await sb.from('portfolio_equity_snapshots').delete().eq('user_id',currentUser.id).eq('portfolio_id',pf.id);}catch(x){}
+  const{data:tr}=await sb.from('tiers').select('id').eq('portfolio_id',pf.id);
+  const tids=(tr||[]).map(t=>t.id);
+  if(tids.length){
+    const{data:cs}=await sb.from('coins').select('id,ticker').in('tier_id',tids);
+    const ids=(cs||[]).filter(c=>!BINANCE_QUOTE_ASSET_SET.has((c.ticker||'').toUpperCase())).map(c=>c.id);
+    if(ids.length)await sb.from('coins').update({units_held:0,avg_cost_usd:null}).in('id',ids);
+  }
+  if(!skipConfirm){
+    try{await loadAllData();renderAll();}catch(x){}
+    try{if(document.getElementById('sec-journal')?.classList.contains('active'))await renderJournal();}catch(x){}
+    showToast('Alpha history erased ✅');
+  }
+  return true;
+}
+async function importAlphaFile(file){
+  if(!file||_alphaBusy)return;
+  const pf=alphaPortfolio();
+  if(!pf){showToast('No portfolio named "Alpha" found.');return;}
+  _alphaBusy=true;
+  try{
+    const probe=await sb.from('trades').select('import_key').limit(1);
+    if(probe.error){showToast('Run migration-vested-import.sql in Supabase first (adds the import columns), then reload.');return;}
+    if(typeof XLSX==='undefined'){showToast('Excel library still loading — try again in a moment.');return;}
+    showToast('Reading file…');
+    let parsed;
+    try{parsed=await parseAlphaWorkbook(await file.arrayBuffer());}catch(e){showToast(e.message||'Could not read this file.');return;}
+    const[ex,other]=await Promise.all([
+      sbFetchAll(()=>sb.from('trades').select('id,import_key,coin_ticker,action,units,price_per_unit,trade_date,realized_pnl').eq('user_id',currentUser.id).eq('portfolio_id',pf.id).not('import_key','is',null).order('id')),
+      sb.from('trades').select('id',{count:'exact',head:true}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id).is('import_key',null)
+    ]);
+    const have=new Set((ex.data||[]).map(r=>r.import_key));
+    const fresh=parsed.rows.filter(r=>!have.has(r.key));
+    const otherCount=other.count||0;
+    if(!fresh.length&&!otherCount){showToast('Already up to date — nothing new in this file ✅');return;}
+    const hist=(ex.data||[]).map(r=>({key:r.import_key,iso:new Date(r.trade_date).toISOString(),ms:new Date(r.trade_date).getTime(),ticker:(r.coin_ticker||'').toUpperCase(),action:r.action,qty:r.units,price:r.price_per_unit,fee:0}));
+    const all=hist.concat(fresh).sort((a,b)=>a.ms-b.ms||(a.action==='buy'?-1:1));
+    const rp=alphaReplay(all);
+    const held=Object.entries(rp.holdings).filter(([,s])=>s.units>1e-9);
+    const first=fresh.length?new Date(fresh[0].ms).toISOString().slice(0,10):'—',last=fresh.length?new Date(fresh[fresh.length-1].ms).toISOString().slice(0,10):'—';
+    const warnTxt=Object.keys(parsed.warn).length?'\n\nNotes: '+Object.entries(parsed.warn).map(([k,v])=>v+' '+k).join('; ')+'.':'';
+    const msg=`Import into "${pf.name}"?\n\n• ${fresh.length} new transaction(s), ${first} → ${last}\n`
+      +(otherCount?`• DELETE ${otherCount} existing transaction(s) that did not come from an Excel file — the file replaces them\n`:'')
+      +`\nHoldings after import: ${held.length?held.map(([t,s])=>t+' '+(+s.units.toFixed(4))).join(', '):'none'}`
+      +(rp.over?`\n\n⚠️ ${rp.over} sell(s) were larger than the tokens on record — earlier history may be missing from the file.`:'')+warnTxt;
+    if(!confirm(msg))return;
+    if(otherCount){
+      const{error}=await sb.from('trades').delete().eq('user_id',currentUser.id).eq('portfolio_id',pf.id).is('import_key',null);
+      if(error){showToast('Could not delete old entries: '+error.message);return;}
+    }
+    // tiers & coins
+    const{data:tierRows}=await sb.from('tiers').select('*').eq('portfolio_id',pf.id).order('sort_order');
+    let tl=tierRows||[];
+    const tids=tl.map(t=>t.id);
+    const{data:coinRows}=tids.length?await sb.from('coins').select('*').in('tier_id',tids):{data:[]};
+    let cl=coinRows||[];
+    const isReserve=t=>/stable|reserve|cash/i.test(t.name);
+    let tier=tl.find(t=>t.name==='Holdings')||tl.find(t=>!isReserve(t));
+    if(!tier){const{data}=await sb.from('tiers').insert({user_id:currentUser.id,portfolio_id:pf.id,name:'Holdings',target_pct:1,sort_order:0}).select().single();tier=data;if(data)tl.push(data);}
+    if(!tier){showToast('Could not create a tier for the coins.');return;}
+    showToast('Preparing coins…');
+    const tickers=[...new Set(all.map(r=>r.ticker))];
+    const coinOf=tk=>cl.find(c=>(c.ticker||'').toUpperCase()===tk);
+    for(const tk of tickers){
+      if(coinOf(tk))continue;
+      let gid=tk.toLowerCase();
+      try{gid=await resolveCoingeckoId(tk)||gid;}catch(e){}
+      const{data}=await sb.from('coins').insert({user_id:currentUser.id,tier_id:tier.id,name:tk,ticker:tk,coingecko_id:gid,weight_in_tier:0,exchanges:'',rationale:'',units_held:0,sort_order:0}).select().single();
+      if(data)cl.push(data);
+    }
+    showToast('Saving transactions…');
+    const out=fresh.map(r=>{const c=coinOf(r.ticker);return{
+      user_id:currentUser.id,portfolio_id:pf.id,coin_id:c?c.id:null,coin_name:r.ticker,coin_ticker:r.ticker,action:r.action,
+      units:r.qty,price_per_unit:r.price,total_usd:+(r.qty*r.price).toFixed(6),realized_pnl:r.action==='sell'?rp.realized.get(r.key):null,
+      trade_date:r.iso,notes:'Alpha import',fee_usd:r.fee,fee_amount:r.fee,fee_asset:'USDT',import_key:r.key};});
+    for(let i=0;i<out.length;i+=200){
+      const{error}=await sb.from('trades').insert(out.slice(i,i+200));
+      if(error){showToast('Import failed: '+error.message);return;}
+    }
+    for(const r of (ex.data||[])){
+      if(r.action!=='sell')continue;
+      const want=rp.realized.get(r.import_key);
+      if(want!=null&&Math.abs((r.realized_pnl||0)-want)>0.005)await sb.from('trades').update({realized_pnl:want}).eq('id',r.id);
+    }
+    // holdings from the full replay
+    const heldSet=new Set(held.map(([t])=>t));
+    for(const c of cl){
+      const tk=(c.ticker||'').toUpperCase();if(BINANCE_QUOTE_ASSET_SET.has(tk))continue;
+      if(!heldSet.has(tk)&&(c.units_held||0)!==0)await sb.from('coins').update({units_held:0}).eq('id',c.id);
+    }
+    for(const[tk,s]of held){const c=coinOf(tk);if(c)await sb.from('coins').update({units_held:s.units,avg_cost_usd:s.avg}).eq('id',c.id);}
+    for(const tk of tickers){const c=coinOf(tk);if(c)await sb.from('trades').update({coin_id:c.id}).eq('user_id',currentUser.id).eq('portfolio_id',pf.id).eq('coin_ticker',tk).is('coin_id',null);}
+    try{await loadAllData();}catch(e){}
+    try{renderAll();}catch(e){}
+    try{if(document.getElementById('sec-journal')?.classList.contains('active'))await renderJournal();}catch(e){}
+    showToast(`Imported ${out.length} transaction(s) ✅ — set your USDT balance with "Correct" if needed`);
+  }catch(e){console.error('Alpha import failed',e);showToast('Import failed: '+(e.message||e));}
+  finally{_alphaBusy=false;const inp=document.getElementById('alpha-file');if(inp)inp.value='';}
+}
+
 async function renderLead(){
   const el=document.getElementById('lead-content');
   if(!el)return;
@@ -8089,6 +8457,7 @@ function futuresTradeRowHtml(t){
 async function renderFutures(){
   const el=document.getElementById('futures-content');
   if(!el)return;
+  if(!futuresOn()){el.innerHTML='<div class="empty-state"><div class="ic">🧮</div><div>Futures tracking is switched off.</div><div style="font-size:0.72rem;margin-top:6px">Turn it on again in Settings → Futures.</div></div>';return;}
   el.innerHTML='<div class="empty-state"><div>Loading…</div></div>';
   await Promise.all([loadFuturesSymbols(),loadFuturesSyncSettings(),loadFuturesTrades(),loadFuturesPositions(),loadFuturesOpenOrders(),loadFuturesAccount(),loadFundingMarket(false),loadCopyShares()]);
   if(!futuresIncomeRows.length&&!futuresIncomeMissing){try{await loadFuturesIncome();}catch(e){}}
